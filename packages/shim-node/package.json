@@ -1,0 +1,33 @@
+{
+  "name": "@typespex/shim-node",
+  "version": "0.1.0",
+  "description": "Node.js http adapter for @typespex/runtime HTTP router",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spilne/typespex.git",
+    "directory": "packages/shim-node"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@typespex/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

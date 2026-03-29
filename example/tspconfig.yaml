@@ -1,0 +1,5 @@
+emit:
+  - "@typespex/emitter"
+options:
+  "@typespex/emitter":
+    emitter-output-dir: "{output-dir}"
