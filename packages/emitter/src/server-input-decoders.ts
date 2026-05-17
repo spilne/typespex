@@ -28,6 +28,18 @@ import { typeToTs } from "./type-reference.js";
 
 type DecoderMode = "json" | "text";
 
+/** Tracks hoisted lazy decoders for recursive models during a single emitDecoder call. */
+interface DecoderEmitContext {
+  /** model name → variable name for hoisted lazy decoders. */
+  readonly lazyDecoders: Map<string, string>;
+  /** Tracks which lazy decoders have been fully emitted (not just referenced). */
+  readonly emittedLazy: Set<string>;
+}
+
+function createDecoderEmitContext(): DecoderEmitContext {
+  return { lazyDecoders: new Map(), emittedLazy: new Set() };
+}
+
 const SERVER_INPUT_DECODER_IMPORTS = [
   "Decoders",
   "RequestDecoders",
@@ -57,6 +69,8 @@ export interface DecoderEmission {
   readonly needsPathParams: boolean;
   /** Whether decodeInput is async (body involved). */
   readonly isAsync: boolean;
+  /** Hoisted lazy decoder declarations for recursive models. */
+  readonly hoistedDecoders: readonly string[];
 }
 
 /**
@@ -69,6 +83,7 @@ export function emitDecoder(
   inputsRef: string,
   opName: string,
 ): DecoderEmission {
+  const dec = createDecoderEmitContext();
   const pathParams = op.parameters.parameters.filter((p) => p.type === "path");
   const queryParams = op.parameters.parameters.filter((p) => p.type === "query");
   const headerParams = op.parameters.parameters.filter((p) => p.type === "header");
@@ -82,11 +97,11 @@ export function emitDecoder(
   for (const param of pathParams) {
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.path(${JSON.stringify(param.param.name)}, ${emitDecoderExpression(ctx, param.param.type, "text", new Set(), param.param)})`,
+      expr: `RequestDecoders.path(${JSON.stringify(param.param.name)}, ${emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param)})`,
     });
   }
   for (const param of queryParams) {
-    const valueDecoder = emitDecoderExpression(ctx, param.param.type, "text", new Set(), param.param);
+    const valueDecoder = emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param);
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     requestEntries.push({
       name: param.param.name,
@@ -94,7 +109,7 @@ export function emitDecoder(
     });
   }
   for (const param of headerParams) {
-    const valueDecoder = emitDecoderExpression(ctx, param.param.type, "text", new Set(), param.param);
+    const valueDecoder = emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param);
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     requestEntries.push({
       name: param.param.name,
@@ -102,13 +117,15 @@ export function emitDecoder(
     });
   }
   for (const param of cookieParams) {
-    const valueDecoder = emitDecoderExpression(ctx, param.param.type, "text", new Set(), param.param);
+    const valueDecoder = emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param);
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     requestEntries.push({
       name: param.param.name,
       expr: `RequestDecoders.cookie(${JSON.stringify(param.name)}, ${decoder})`,
     });
   }
+
+  const hoistedDecoders = buildHoistedDecoders(ctx, dec);
 
   // Case 1: no params, no body — sync, returns Right directly
   if (!hasRequestInput && !hasBody) {
@@ -117,6 +134,7 @@ export function emitDecoder(
       decodeExpression: `Either.right({} as Record<string, never>)`,
       needsPathParams: false,
       isAsync: false,
+      hoistedDecoders,
     };
   }
 
@@ -128,6 +146,7 @@ export function emitDecoder(
       decodeExpression: `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
       needsPathParams: true,
       isAsync: false,
+      hoistedDecoders,
     };
   }
 
@@ -135,10 +154,11 @@ export function emitDecoder(
   if (!hasRequestInput && hasBody) {
     const ref = `${inputsRef}.${opName}`;
     return {
-      inputEntries: [emitBodyDecoderEntry(opName, ctx, op)],
+      inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op)],
       decodeExpression: `decodeJsonBody<${inputType}>(request, ${ref})`,
       needsPathParams: false,
       isAsync: true,
+      hoistedDecoders: buildHoistedDecoders(ctx, dec),
     };
   }
 
@@ -150,11 +170,12 @@ export function emitDecoder(
   return {
     inputEntries: [
       emitRequestDecoderEntry(`${opName}Request`, requestEntries),
-      emitBodyDecoderEntry(`${opName}Body`, ctx, op),
+      emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op),
     ],
     decodeExpression: `decodeRequestInputAndBody<${requestType}, ${bodyType}>(${requestRef}, ${bodyRef}, request, pathParams)`,
     needsPathParams: true,
     isAsync: true,
+    hoistedDecoders: buildHoistedDecoders(ctx, dec),
   };
 }
 
@@ -184,6 +205,7 @@ function emitRequestDecoderEntry(
 function emitBodyDecoderEntry(
   name: string,
   ctx: EmitterCtx,
+  dec: DecoderEmitContext,
   op: HttpOperation,
 ): InputDecoderEntry {
   const lines: string[] = [];
@@ -194,13 +216,13 @@ function emitBodyDecoderEntry(
     const tsType = typeToTs(ctx, bodyType);
     lines.push(`  ${name}: Decoders.object<${tsType}>({`);
     for (const prop of bodyType.properties.values()) {
-      const propertyDecoder = emitDecoderExpression(ctx, prop.type, "json", new Set(), prop);
+      const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set(), prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
       lines.push(`    ${JSON.stringify(prop.name)}: ${expr},`);
     }
     lines.push(`  }),`);
   } else {
-    const decoderExpr = emitDecoderExpression(ctx, bodyType, "json");
+    const decoderExpr = emitDecoderExpression(ctx, dec, bodyType, "json");
     lines.push(`  ${name}: ${decoderExpr},`);
   }
   return { lines };
@@ -222,6 +244,7 @@ function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
 
 function emitDecoderExpression(
   ctx: EmitterCtx,
+  dec: DecoderEmitContext,
   type: Type,
   mode: DecoderMode,
   seenModels: ReadonlySet<string> = new Set(),
@@ -236,18 +259,18 @@ function emitDecoderExpression(
     case "Model":
       if (isArrayModelType(ctx.program, type)) {
         const arrayFn = mode === "json" ? "Decoders.strictArray" : "Decoders.array";
-        expression = `${arrayFn}(${emitDecoderExpression(ctx, type.indexer!.value, mode, seenModels)})`;
+        expression = `${arrayFn}(${emitDecoderExpression(ctx, dec, type.indexer!.value, mode, seenModels)})`;
         break;
       }
       if (isRecordModelType(ctx.program, type)) {
-        expression = `Decoders.record(${emitDecoderExpression(ctx, type.indexer!.value, mode, seenModels)})`;
+        expression = `Decoders.record(${emitDecoderExpression(ctx, dec, type.indexer!.value, mode, seenModels)})`;
         break;
       }
-      expression = emitObjectDecoder(ctx, type, mode, seenModels);
+      expression = emitObjectDecoder(ctx, dec, type, mode, seenModels);
       break;
 
     case "Union":
-      expression = emitUnionDecoder(ctx, type, mode, seenModels);
+      expression = emitUnionDecoder(ctx, dec, type, mode, seenModels);
       break;
 
     case "Enum":
@@ -290,16 +313,16 @@ function emitDecoderExpression(
 
     case "Tuple":
       expression = `Decoders.tuple<${typeToTs(ctx, type)}>([${type.values
-        .map((value) => emitDecoderExpression(ctx, value, mode, seenModels))
+        .map((value) => emitDecoderExpression(ctx, dec, value, mode, seenModels))
         .join(", ")}])`;
       break;
 
     case "UnionVariant":
-      expression = emitDecoderExpression(ctx, type.type, mode, seenModels);
+      expression = emitDecoderExpression(ctx, dec, type.type, mode, seenModels);
       break;
 
     case "ModelProperty":
-      return emitDecoderExpression(ctx, type.type, mode, seenModels, type);
+      return emitDecoderExpression(ctx, dec, type.type, mode, seenModels, type);
 
     default:
       expression = "Decoders.unknown";
@@ -322,6 +345,7 @@ function emitScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
 
 function emitObjectDecoder(
   ctx: EmitterCtx,
+  dec: DecoderEmitContext,
   model: Model,
   mode: DecoderMode,
   seenModels: ReadonlySet<string>,
@@ -331,13 +355,20 @@ function emitObjectDecoder(
   const modelName = typeof model.name === "string" && model.name !== ""
     ? model.name
     : undefined;
-  if (modelName && seenModels.has(modelName)) return "Decoders.unknown";
+
+  if (modelName && seenModels.has(modelName)) {
+    // Cycle detected — register a hoisted lazy decoder and return reference
+    if (!dec.lazyDecoders.has(modelName)) {
+      dec.lazyDecoders.set(modelName, `_lazy${modelName}`);
+    }
+    return dec.lazyDecoders.get(modelName)!;
+  }
 
   const nextSeen = modelName ? new Set([...seenModels, modelName]) : seenModels;
 
   const fields = [...model.properties.values()]
     .map((prop) => {
-      const propertyDecoder = emitDecoderExpression(ctx, prop.type, mode, nextSeen, prop);
+      const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, mode, nextSeen, prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
       return `${JSON.stringify(prop.name)}: ${expr}`;
     })
@@ -348,14 +379,64 @@ function emitObjectDecoder(
 
 function emitUnionDecoder(
   ctx: EmitterCtx,
+  dec: DecoderEmitContext,
   union: Union,
   mode: DecoderMode,
   seenModels: ReadonlySet<string>,
 ): string {
   const variants = [...union.variants.values()]
-    .map((variant) => emitDecoderExpression(ctx, variant.type, mode, seenModels))
+    .map((variant) => emitDecoderExpression(ctx, dec, variant.type, mode, seenModels))
     .join(", ");
   return `Decoders.union<${typeToTs(ctx, union)}>([${variants}])`;
+}
+
+/**
+ * Builds hoisted `Decoders.lazy(() => ...)` declarations for any recursive models
+ * that were detected during decoder emission.
+ */
+function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[] {
+  if (dec.lazyDecoders.size === 0) return [];
+
+  const lines: string[] = [];
+  // We need to emit each lazy decoder with a full object decoder inside.
+  // The model was seen during emission but its decoder was deferred — emit it now.
+  for (const [modelName, varName] of dec.lazyDecoders) {
+    if (dec.emittedLazy.has(modelName)) continue;
+    dec.emittedLazy.add(modelName);
+
+    // Find the model in the program's namespace
+    const model = findModelByName(ctx, modelName);
+    if (!model) continue;
+
+    const fields = [...model.properties.values()]
+      .map((prop) => {
+        const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set([modelName]), prop);
+        const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
+        return `${JSON.stringify(prop.name)}: ${expr}`;
+      })
+      .join(", ");
+
+    lines.push(`const ${varName}: Decoder<${modelName}> = Decoders.lazy(() => Decoders.object<${modelName}>({ ${fields} }));`);
+  }
+  return lines;
+}
+
+function findModelByName(ctx: EmitterCtx, name: string): Model | undefined {
+  function search(ns: any): Model | undefined {
+    if (ns.models) {
+      for (const [, m] of ns.models) {
+        if (m.name === name) return m;
+      }
+    }
+    if (ns.namespaces) {
+      for (const [, child] of ns.namespaces) {
+        const found = search(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+  return search(ctx.service.namespace);
 }
 
 function emitEnumDecoder(enumType: Enum, mode: DecoderMode): string {

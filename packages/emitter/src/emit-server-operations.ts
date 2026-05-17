@@ -24,7 +24,7 @@ export function emitServerOperations(
   lines.push("");
 
   // --- Imports (multi-line) ---
-  lines.push('import type { ServerOperation } from "@typespex/runtime/server";');
+  lines.push('import type { Decoder, ServerOperation } from "@typespex/runtime/server";');
   lines.push("import {");
   lines.push("  Either,");
   lines.push("  createHints,");
@@ -48,11 +48,19 @@ export function emitServerOperations(
     const decodersByOpId = new Map<string, DecoderEmission>();
     const allEntries: InputDecoderEntry[] = [];
 
+    const allHoisted: string[] = [];
     for (const operation of group.operations) {
       const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.name);
       allEntries.push(...decoder.inputEntries);
+      allHoisted.push(...decoder.hoistedDecoders);
       decodersByOpId.set(operation.operationId, decoder);
     }
+
+    // Emit hoisted lazy decoders for recursive models
+    for (const line of allHoisted) {
+      lines.push(line);
+    }
+    if (allHoisted.length > 0) lines.push("");
 
     // Emit grouped input decoders object
     if (allEntries.length > 0) {

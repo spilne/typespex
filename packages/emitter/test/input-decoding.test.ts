@@ -95,6 +95,24 @@ interface Users {
 }
 `;
 
+const recursiveSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "TreeApi" })
+namespace TreeApi;
+
+model TreeNode {
+  value: string;
+  children?: TreeNode[];
+}
+
+@route("/tree")
+interface Tree {
+  @post create(@body body: TreeNode): TreeNode;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -124,5 +142,14 @@ describe("input decoding", () => {
 
     expect(r.readFile("cookie-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("cookie-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("recursive model uses Decoders.lazy", () => {
+    const r = compileFixture("recursive", recursiveSpec);
+
+    const ops = r.readFile("tree-api", "server-operations.ts");
+    expect(ops).toContain("Decoders.lazy");
+    expect(ops).toContain("_lazyTreeNode");
+    expect(ops).toMatchSnapshot();
   });
 });
