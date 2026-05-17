@@ -2,16 +2,18 @@
 
 import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/server";
 import type {
+  ConflictError,
   CreatePetInput,
+  ForbiddenError,
   NotFoundError,
   Pet
 } from "./models.js";
 
 export interface PetsServer<Ctx = MatchedRequestContext> {
   readonly list: OperationHandler<{ limit?: number; offset?: number }, never, Pet[], Ctx>;
-  readonly create: OperationHandler<CreatePetInput, never, Pet, Ctx>;
+  readonly create: OperationHandler<CreatePetInput, ConflictError, Pet, Ctx>;
   readonly read: OperationHandler<{ petId: string }, NotFoundError, Pet, Ctx>;
-  readonly delete: OperationHandler<{ petId: string }, NotFoundError, void, Ctx>;
+  readonly delete: OperationHandler<{ petId: string }, NotFoundError | ForbiddenError, void, Ctx>;
 }
 
 export interface PetStoreServer<Ctx = MatchedRequestContext> {

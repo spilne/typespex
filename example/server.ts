@@ -1,7 +1,7 @@
 import { Either, type MatchedRequestContext } from "@typespex/runtime/server";
 import { toBunHandler } from "@typespex/shim-bun";
-import type { PetStoreServer } from "./generated/server.js";
-import { createPetStoreServerRouter } from "./generated/server-router.js";
+import type { PetStoreServer } from "./generated/pet-store/server.js";
+import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
 
 // In-memory pet store
 const pets = new Map<string, { id: string; name: string; tag?: string }>();
@@ -29,6 +29,7 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return Either.left({
+          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         });
@@ -41,6 +42,7 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return Either.left({
+          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         });
