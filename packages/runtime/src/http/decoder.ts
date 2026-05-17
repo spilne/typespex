@@ -195,6 +195,11 @@ const bytesDecoder: Decoder<Uint8Array> = Decoder.of((input) => {
     return fail("", "Expected a base64 string or byte array.");
 });
 
+const fileDecoder: Decoder<File> = Decoder.of((input) => {
+    if (input instanceof File) return succeed(input);
+    return fail("", "Expected a file.");
+});
+
 const unknownDecoder: Decoder<unknown> = Decoder.of((input) => {
     return succeed(input);
 });
@@ -426,6 +431,7 @@ export const Decoders = {
   bigint: bigintDecoder,
   boolean: booleanDecoder,
   bytes: bytesDecoder,
+  file: fileDecoder,
   unknown: unknownDecoder,
   optional,
   literal: literalDecoder,
@@ -521,6 +527,25 @@ export async function decodeFormBody<A>(
     }
   } catch {
     return Either.left(new ValidationError([{ path: root, message: "Body must contain valid form data." }]));
+  }
+  return toValidationResult(decoder.decode(value), root);
+}
+
+/** Parses and validates a multipart/form-data body. Returns Either<ValidationError, A>. */
+export async function decodeMultipartBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  root = "$body",
+): Promise<EitherT<ValidationError, A>> {
+  let value: Record<string, unknown>;
+  try {
+    const formData = await request.formData();
+    value = Object.create(null);
+    for (const [key, val] of formData) {
+      value[key] = val;
+    }
+  } catch {
+    return Either.left(new ValidationError([{ path: root, message: "Body must contain valid multipart form data." }]));
   }
   return toValidationResult(decoder.decode(value), root);
 }

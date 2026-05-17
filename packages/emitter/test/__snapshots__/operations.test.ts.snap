@@ -29,6 +29,7 @@ import {
   decodeRequestInputAndBody,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { HealthStatus } from "./models.js";
@@ -100,6 +101,7 @@ import {
   decodeRequestInputAndBody,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Config } from "./models.js";
@@ -162,6 +164,7 @@ import {
   decodeRequestInputAndBody,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 

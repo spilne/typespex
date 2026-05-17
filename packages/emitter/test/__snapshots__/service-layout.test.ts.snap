@@ -65,6 +65,7 @@ import {
   decodeRequestInputAndBody,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./PublicApi.server-hints.js";
 import type { Item } from "./PublicApi.models.js";
@@ -139,6 +140,7 @@ import {
   decodeRequestInputAndBody,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.gen.js";
 import type { Invoice } from "./models.gen.js";

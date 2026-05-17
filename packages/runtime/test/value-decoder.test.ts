@@ -8,6 +8,7 @@ import {
   decodeJsonBodyOrThrow,
   decodeJsonBody,
   decodeFormBody,
+  decodeMultipartBody,
   decodeOptional,
   decodeOptionalOrThrow,
   decodeOrThrow,
@@ -635,6 +636,64 @@ describe("http decoder - throw adapters", () => {
         name: Decoders.string.validate(Validators.minLength(1)),
       }),
     );
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.issues.some((i) => i.path.includes("name"))).toBe(true);
+    }
+  });
+
+  test("Decoders.file accepts File instances", () => {
+    const file = new File(["hello"], "test.txt", { type: "text/plain" });
+    expect(Decoders.file.decode(file)).toEqual(succeed(file));
+  });
+
+  test("Decoders.file rejects non-File values", () => {
+    const result = Decoders.file.decode("not a file");
+    expect(result._tag).toBe("Left");
+  });
+
+  test("decodeMultipartBody parses multipart form data", async () => {
+    const formData = new FormData();
+    formData.append("name", "Alice");
+    formData.append("avatar", new File(["img"], "avatar.png", { type: "image/png" }));
+
+    const request = new Request("http://localhost/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const result = await decodeMultipartBody(
+      request,
+      Decoders.object<{ name: string; avatar: File }>({
+        name: Decoders.string,
+        avatar: Decoders.file,
+      }),
+    );
+
+    expect(result._tag).toBe("Right");
+    if (result._tag === "Right") {
+      expect(result.right.name).toBe("Alice");
+      expect(result.right.avatar).toBeInstanceOf(File);
+      expect(result.right.avatar.name).toBe("avatar.png");
+    }
+  });
+
+  test("decodeMultipartBody validates fields", async () => {
+    const formData = new FormData();
+    formData.append("name", "");
+
+    const request = new Request("http://localhost/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const result = await decodeMultipartBody(
+      request,
+      Decoders.object<{ name: string }>({
+        name: Decoders.string.validate(Validators.minLength(1)),
+      }),
+    );
+
     expect(result._tag).toBe("Left");
     if (result._tag === "Left") {
       expect(result.left.issues.some((i) => i.path.includes("name"))).toBe(true);

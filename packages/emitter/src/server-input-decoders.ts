@@ -48,6 +48,7 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "decodeRequestInputAndBody",
   "decodeJsonBody",
   "decodeFormBody",
+  "decodeMultipartBody",
 ] as const;
 
 export function getServerInputDecoderImports(): readonly string[] {
@@ -181,13 +182,18 @@ export function emitDecoder(
   };
 }
 
-/** Picks decodeJsonBody or decodeFormBody based on the operation's body content type. */
+/** Picks the right body decode function based on content type and body kind. */
 function pickBodyDecodeFn(op: HttpOperation): string {
   const body = op.parameters.body;
-  if (!body || !("contentTypes" in body)) return "decodeJsonBody";
-  const contentTypes = body.contentTypes;
-  if (contentTypes.some((ct) => ct === "application/x-www-form-urlencoded")) {
-    return "decodeFormBody";
+  if (!body) return "decodeJsonBody";
+  if ("bodyKind" in body && body.bodyKind === "multipart") return "decodeMultipartBody";
+  if ("contentTypes" in body) {
+    if (body.contentTypes.some((ct) => ct === "application/x-www-form-urlencoded")) {
+      return "decodeFormBody";
+    }
+    if (body.contentTypes.some((ct) => ct.startsWith("multipart/"))) {
+      return "decodeMultipartBody";
+    }
   }
   return "decodeJsonBody";
 }
@@ -222,7 +228,14 @@ function emitBodyDecoderEntry(
   op: HttpOperation,
 ): InputDecoderEntry {
   const lines: string[] = [];
-  const bodyType = op.parameters.body!.type;
+  const body = op.parameters.body!;
+
+  // Multipart body — emit per-part decoders
+  if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
+    return emitMultipartDecoderEntry(name, ctx, dec, body as any);
+  }
+
+  const bodyType = body.type;
 
   // Multi-line for object types
   if (bodyType.kind === "Model" && !isArrayModelType(ctx.program, bodyType) && !isRecordModelType(ctx.program, bodyType)) {
@@ -238,6 +251,34 @@ function emitBodyDecoderEntry(
     const decoderExpr = emitDecoderExpression(ctx, dec, bodyType, "json");
     lines.push(`  ${name}: ${decoderExpr},`);
   }
+  return { lines };
+}
+
+function emitMultipartDecoderEntry(
+  name: string,
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  body: { parts: ReadonlyArray<{ name?: string; body: { bodyKind: string; type: Type }; optional: boolean; multi: boolean }> },
+): InputDecoderEntry {
+  const lines: string[] = [];
+  const fields: string[] = [];
+
+  for (const part of body.parts) {
+    if (!part.name) continue;
+    const isFile = part.body.bodyKind === "file";
+    let partDecoder = isFile
+      ? "Decoders.file"
+      : emitDecoderExpression(ctx, dec, part.body.type, "json");
+    if (part.multi) {
+      partDecoder = `Decoders.strictArray(${partDecoder})`;
+    }
+    if (part.optional) {
+      partDecoder = `Decoders.optional(${partDecoder})`;
+    }
+    fields.push(`${JSON.stringify(part.name)}: ${partDecoder}`);
+  }
+
+  lines.push(`  ${name}: Decoders.object({ ${fields.join(", ")} }),`);
   return { lines };
 }
 
