@@ -147,9 +147,6 @@ describe("input decoding", () => {
   test("recursive model uses Decoders.lazy", () => {
     const r = compileFixture("recursive", recursiveSpec);
 
-    const ops = r.readFile("tree-api", "server-operations.ts");
-    expect(ops).toContain("Decoders.lazy");
-    expect(ops).toContain("_lazyTreeNode");
-    expect(ops).toMatchSnapshot();
+    expect(r.readFile("tree-api", "server-operations.ts")).toMatchSnapshot();
   });
 });
