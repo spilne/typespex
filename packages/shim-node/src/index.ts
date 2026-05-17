@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { HttpRouter } from "@typespex/runtime/server";
+import { type HttpRouter, type Logger, consoleLogger } from "@typespex/runtime/server";
+
+export interface NodeHandlerOptions {
+  readonly logger?: Logger;
+}
 
 /**
  * Creates a Node.js http.createServer-compatible handler from an HttpRouter.
- * Converts IncomingMessage → Request, dispatches, then writes Response → ServerResponse.
  *
  * @example
  * import http from "node:http";
@@ -11,14 +14,20 @@ import type { HttpRouter } from "@typespex/runtime/server";
  */
 export function toNodeHandler(
   router: HttpRouter,
+  options?: NodeHandlerOptions,
 ): (req: IncomingMessage, res: ServerResponse) => void {
+  const logger = options?.logger ?? consoleLogger;
   return async (req, res) => {
     try {
       const request = incomingMessageToRequest(req);
       const response = await router.handle(request);
       await writeResponse(response, res);
     } catch (error) {
-      console.error("[typespex] Unhandled error in request handler:", error);
+      logger.error("Unhandled error in request handler", {
+        error,
+        method: req.method,
+        url: req.url,
+      });
       res.statusCode = 500;
       res.end("Internal Server Error");
     }
