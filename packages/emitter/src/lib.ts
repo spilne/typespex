@@ -2,6 +2,9 @@ import { createTypeSpecLibrary, type JSONSchemaType } from "@typespec/compiler";
 
 export interface TypespexEmitterOptions {
   "output-dir"?: string;
+  "service-output"?: "auto" | "flat" | "prefix" | "directory";
+  "service-folder-pattern"?: string;
+  "file-name-pattern"?: string;
 }
 
 const EmitterOptionsSchema: JSONSchemaType<TypespexEmitterOptions> = {
@@ -9,6 +12,13 @@ const EmitterOptionsSchema: JSONSchemaType<TypespexEmitterOptions> = {
   additionalProperties: false,
   properties: {
     "output-dir": { type: "string", nullable: true },
+    "service-output": {
+      type: "string",
+      enum: ["auto", "flat", "prefix", "directory"],
+      nullable: true,
+    },
+    "service-folder-pattern": { type: "string", nullable: true },
+    "file-name-pattern": { type: "string", nullable: true },
   },
   required: [],
 };

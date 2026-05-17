@@ -17,7 +17,7 @@ export function emitServer(
   if (modelImports.length > 0) {
     lines.push("import type {");
     lines.push(`  ${modelImports.join(",\n  ")}`);
-    lines.push('} from "./models.js";');
+    lines.push(`} from "./${ctx.fileNames.models}.js";`);
     lines.push("");
   }
 

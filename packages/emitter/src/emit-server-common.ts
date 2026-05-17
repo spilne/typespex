@@ -1,6 +1,7 @@
-import type { Model, Type } from "@typespec/compiler";
-import { isErrorModel } from "@typespec/compiler";
+import type { Model, Type, Union } from "@typespec/compiler";
+import { getDiscriminator, isArrayModelType, isErrorModel, isRecordModelType } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
+import { isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { typeToTs } from "./type-reference.js";
 
@@ -18,11 +19,12 @@ const BUILTIN_TYPE_NAMES = new Set([
 ]);
 
 export function collectModelImports(
+  ctx: EmitterCtx,
   operations: HttpOperation[],
 ): string[] {
   const names = new Set<string>();
   for (const op of operations) {
-    collectTypeNames(op, names);
+    collectTypeNames(ctx, op, names);
   }
   return [...names]
     .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
@@ -30,40 +32,66 @@ export function collectModelImports(
 }
 
 function collectTypeNames(
+  ctx: EmitterCtx,
   op: HttpOperation,
   names: Set<string>,
 ): void {
   for (const param of op.parameters.parameters) {
-    addModelName(param.param.type, names);
+    addModelName(ctx, param.param.type, names, new Set());
   }
 
   if (op.parameters.body?.type) {
-    addModelName(op.parameters.body.type, names);
+    addModelName(ctx, op.parameters.body.type, names, new Set());
   }
 
   for (const resp of op.responses) {
-    addModelName(resp.type, names);
+    addModelName(ctx, resp.type, names, new Set());
     for (const respBody of resp.responses) {
       if (respBody.body?.type) {
-        addModelName(respBody.body.type, names);
+        addModelName(ctx, respBody.body.type, names, new Set());
       }
     }
   }
 }
 
 function addModelName(
+  ctx: EmitterCtx,
   type: Type,
   names: Set<string>,
+  seen: Set<Type>,
 ): void {
+  if (seen.has(type)) return;
+  seen.add(type);
+
   if (type.kind === "Model" && typeof type.name === "string" && type.name !== "") {
+    if (isArrayModelType(ctx.program, type) || isRecordModelType(ctx.program, type)) {
+      if (type.indexer) {
+        addModelName(ctx, type.indexer.value, names, seen);
+      }
+      return;
+    }
     if (BUILTIN_TYPE_NAMES.has(type.name)) return;
     names.add(type.name);
+
+    for (const prop of type.properties.values()) {
+      addModelName(ctx, prop.type, names, seen);
+    }
   }
 
   if (type.kind === "Union") {
     for (const v of type.variants.values()) {
-      addModelName(v.type, names);
+      addModelName(ctx, v.type, names, seen);
     }
+  }
+
+  if (type.kind === "Tuple") {
+    for (const value of type.values) {
+      addModelName(ctx, value, names, seen);
+    }
+  }
+
+  if (type.kind === "ModelProperty" || type.kind === "UnionVariant") {
+    addModelName(ctx, type.type, names, seen);
   }
 }
 
@@ -161,11 +189,15 @@ export function toColonPath(path: string): string {
   return path.replace(/\{([^}]+)\}/g, ":$1");
 }
 
-/** Success encoder — returns an expression string (no `return`, no `;`). */
-export function emitSuccessExpression(
+export interface SuccessResponseEncoding {
+  readonly statusCode: number;
+  readonly isVoid: boolean;
+}
+
+export function getSuccessResponseEncoding(
   ctx: EmitterCtx,
   op: HttpOperation,
-): string {
+): SuccessResponseEncoding {
   let successStatus = 200;
   let isVoid = false;
 
@@ -180,86 +212,221 @@ export function emitSuccessExpression(
   }
 
   if (isVoid) {
-    return `new Response(null, { status: ${successStatus === 200 ? 204 : successStatus} })`;
+    return { statusCode: successStatus === 200 ? 204 : successStatus, isVoid: true };
   }
-  return `Response.json(output, { status: ${successStatus} })`;
+  return { statusCode: successStatus, isVoid: false };
 }
 
-/** Error encoder result — either a single expression or a block body. */
-export type ErrorEncoderEmission =
-  | { readonly kind: "expression"; readonly expression: string }
-  | { readonly kind: "block"; readonly lines: readonly string[] };
-
-/** Error encoder — returns expression or block lines. */
-export function emitErrorEncoder(
+/** Success response encoder expression used in generated output encoder objects. */
+export function emitSuccessResponseEncoder(
   ctx: EmitterCtx,
   op: HttpOperation,
-): ErrorEncoderEmission {
-  const errorResponses: Array<{
-    statusCode: number;
-    model: Model;
-  }> = [];
+  successType: string,
+): string {
+  const response = getSuccessResponseEncoding(ctx, op);
+  if (response.isVoid) {
+    return `ResponseEncoders.empty(${response.statusCode})`;
+  }
+  return `ResponseEncoders.json<${successType}>(${response.statusCode})`;
+}
+
+/** Emits an error encoder expression for a grouped errors object. */
+export function emitErrorEncoderExpression(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  errorType: string,
+): string {
+  const errorResponses = collectErrorResponses(ctx, op);
+
+  if (errorResponses.length === 0) {
+    return `ErrorEncoders.json<never>(500)`;
+  }
+
+  // Single error type — no discrimination needed
+  if (errorResponses.length === 1) {
+    return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
+  }
+
+  // Multiple error types — need runtime discrimination
+  // Priority 1: @discriminator or unique literal field values
+  const discriminant = resolveDiscriminant(ctx, op, errorResponses);
+  if (discriminant) {
+    const entries = discriminant.variants
+      .map((v) => `${JSON.stringify(v.value)}: ${v.status}`)
+      .join(", ");
+    return `ErrorEncoders.discriminated<${errorType}>(${JSON.stringify(discriminant.field)}, { ${entries} })`;
+  }
+
+  // Priority 2: unique property existence
+  const propertyMapping = findUniquePropertyMapping(ctx, errorResponses);
+  if (propertyMapping) {
+    const entries = propertyMapping
+      .map((e) => `${JSON.stringify(e.property)}: ${e.status}`)
+      .join(", ");
+    return `ErrorEncoders.byProperty<${errorType}>({ ${entries} })`;
+  }
+
+  // Fallback — no discrimination possible
+  return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
+}
+
+// ---------------------------------------------------------------------------
+// Error response collection
+// ---------------------------------------------------------------------------
+
+interface ErrorResponse {
+  readonly statusCode: number;
+  readonly model: Model;
+}
+
+function collectErrorResponses(ctx: EmitterCtx, op: HttpOperation): ErrorResponse[] {
+  const results: ErrorResponse[] = [];
 
   for (const resp of op.responses) {
     if (resp.type.kind !== "Model" || !isErrorModel(ctx.program, resp.type)) continue;
 
-    const rawStatus = resp.statusCodes;
-    const statusCode =
-      typeof rawStatus === "number"
-        ? rawStatus
-        : inferErrorStatusCode(resp.type);
+    const statusCode = typeof resp.statusCodes === "number"
+      ? resp.statusCodes
+      : resolveStatusCodeFromModel(ctx, resp.type) ?? 500;
 
-    errorResponses.push({
-      statusCode,
-      model: resp.type,
-    });
+    results.push({ statusCode, model: resp.type });
   }
 
-  if (errorResponses.length === 0) {
-    return { kind: "expression", expression: "absurd(error)" };
-  }
-
-  const lines: string[] = [];
-  for (const err of errorResponses) {
-    const discriminant = findDiscriminant(err.model);
-    if (!discriminant) continue;
-
-    lines.push(
-      `      if (error != null && typeof error === "object" && ${JSON.stringify(discriminant.field)} in error && (error as Record<string, unknown>).${discriminant.field} === ${JSON.stringify(discriminant.value)}) {`,
-    );
-    lines.push(`        return Response.json(error, { status: ${err.statusCode} });`);
-    lines.push("      }");
-  }
-
-  const fallbackStatus = errorResponses[0].statusCode;
-  lines.push(`      return Response.json(error, { status: ${fallbackStatus} });`);
-
-  return { kind: "block", lines };
+  return results;
 }
 
-function inferErrorStatusCode(model: Model): number {
-  const name = (model.name ?? "").toLowerCase();
-  if (name.includes("notfound") || name.includes("not_found")) return 404;
-  if (name.includes("badrequest") || name.includes("bad_request")) return 400;
-  if (name.includes("unauthorized")) return 401;
-  if (name.includes("forbidden")) return 403;
-  if (name.includes("conflict")) return 409;
-  if (name.includes("validation")) return 422;
-  return 500;
-}
-
-function findDiscriminant(
-  model: Model,
-): { field: string; value: string | number } | undefined {
+/** Resolves status code from a @statusCode property on the model. */
+function resolveStatusCodeFromModel(ctx: EmitterCtx, model: Model): number | undefined {
   for (const [, prop] of model.properties) {
-    if (prop.type.kind === "String") {
-      return { field: prop.name, value: prop.type.value };
+    if (isStatusCode(ctx.program, prop) && prop.type.kind === "Number") {
+      return prop.type.value;
     }
+  }
+  return undefined;
+}
 
-    if (prop.type.kind === "Number") {
-      return { field: prop.name, value: prop.type.value };
+
+// ---------------------------------------------------------------------------
+// Discriminant resolution — respects TypeSpec's @discriminator and union semantics
+// ---------------------------------------------------------------------------
+
+interface DiscriminantMapping {
+  readonly field: string;
+  readonly variants: ReadonlyArray<{ value: string; status: number }>;
+}
+
+function resolveDiscriminant(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  errorResponses: ErrorResponse[],
+): DiscriminantMapping | undefined {
+  // 1. Check for @discriminator on the operation's return type (if it's a union)
+  const returnType = op.operation.returnType;
+  if (returnType.kind === "Union") {
+    const disc = getDiscriminator(ctx.program, returnType);
+    if (disc) {
+      return buildMappingFromField(ctx, disc.propertyName, errorResponses);
     }
+  }
+
+  // 2. Find a property with a unique literal value across ALL error variants
+  return findImplicitDiscriminant(ctx, errorResponses);
+}
+
+/** Builds a discriminant mapping from a known field name. */
+function buildMappingFromField(
+  ctx: EmitterCtx,
+  field: string,
+  errorResponses: ErrorResponse[],
+): DiscriminantMapping | undefined {
+  const variants: Array<{ value: string; status: number }> = [];
+
+  for (const err of errorResponses) {
+    const prop = err.model.properties.get(field);
+    if (!prop) return undefined;
+    if (isStatusCode(ctx.program, prop)) return undefined; // skip metadata
+    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
+    variants.push({ value: String(prop.type.value), status: err.statusCode });
+  }
+
+  // All variants must have unique values
+  const values = new Set(variants.map((v) => v.value));
+  if (values.size !== variants.length) return undefined;
+
+  return { field, variants };
+}
+
+/** Finds a property with a unique literal value in every error model. */
+function findImplicitDiscriminant(
+  ctx: EmitterCtx,
+  errorResponses: ErrorResponse[],
+): DiscriminantMapping | undefined {
+  // Collect all candidate fields (properties with literal types), skipping metadata
+  const candidateFields = new Set<string>();
+  for (const err of errorResponses) {
+    for (const [, prop] of err.model.properties) {
+      if (isStatusCode(ctx.program, prop)) continue;
+      if (prop.type.kind === "String" || prop.type.kind === "Number") {
+        candidateFields.add(prop.name);
+      }
+    }
+  }
+
+  // Find a field where EVERY error model has a unique literal value
+  for (const field of candidateFields) {
+    const mapping = buildMappingFromField(ctx, field, errorResponses);
+    if (mapping) return mapping;
   }
 
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Unique property existence — fallback when no literal discriminant exists
+// ---------------------------------------------------------------------------
+
+interface PropertyMapping {
+  readonly property: string;
+  readonly status: number;
+}
+
+/**
+ * Finds a required property unique to each error model.
+ * Mirrors the official http-server-js emitter's "unique property existence" strategy.
+ */
+function findUniquePropertyMapping(
+  ctx: EmitterCtx,
+  errorResponses: ErrorResponse[],
+): PropertyMapping[] | undefined {
+  const allPropertyNames = new Set<string>();
+  const modelProps = errorResponses.map((err) => {
+    const props = new Set<string>();
+    for (const [, prop] of err.model.properties) {
+      if (!prop.optional && !isStatusCode(ctx.program, prop)) {
+        props.add(prop.name);
+        allPropertyNames.add(prop.name);
+      }
+    }
+    return props;
+  });
+
+  const mapping: PropertyMapping[] = [];
+
+  for (let i = 0; i < errorResponses.length; i++) {
+    let uniqueProp: string | undefined;
+
+    for (const prop of modelProps[i]) {
+      // Check that no other model has this property
+      const isUnique = modelProps.every((otherProps, j) => j === i || !otherProps.has(prop));
+      if (isUnique) {
+        uniqueProp = prop;
+        break;
+      }
+    }
+
+    if (!uniqueProp) return undefined; // Can't differentiate all models
+    mapping.push({ property: uniqueProp, status: errorResponses[i].statusCode });
+  }
+
+  return mapping;
 }

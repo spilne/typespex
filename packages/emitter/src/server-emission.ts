@@ -61,7 +61,7 @@ export function buildServerEmission(
 
   return {
     serviceName: ctx.serviceName,
-    modelImports: collectModelImports(httpOperations),
+    modelImports: collectModelImports(ctx, httpOperations),
     groups,
   };
 }

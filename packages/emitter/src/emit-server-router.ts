@@ -14,10 +14,10 @@ export function emitServerRouter(
     'import type { HttpInterpreterOptions, HttpRouter, MatchedRequestContext } from "@typespex/runtime/server";',
   );
   lines.push('import { bindRoute, createHttpRouter } from "@typespex/runtime/server";');
-  lines.push(`import type { ${ctx.serviceName}Server } from "./server.js";`);
+  lines.push(`import type { ${ctx.serviceName}Server } from "./${ctx.fileNames.server}.js";`);
 
   const operationConsts = emission.groups.map((group) => `${group.exportName}Operations`);
-  lines.push(`import { ${operationConsts.join(", ")} } from "./server-operations.js";`);
+  lines.push(`import { ${operationConsts.join(", ")} } from "./${ctx.fileNames.serverOperations}.js";`);
   lines.push("");
 
   lines.push(

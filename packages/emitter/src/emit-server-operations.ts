@@ -1,15 +1,15 @@
 import type { EmitterCtx } from "./ctx.js";
 import type { HttpOperation } from "@typespec/http";
 import {
-  emitErrorEncoder,
-  emitSuccessExpression,
+  emitErrorEncoderExpression,
+  emitSuccessResponseEncoder,
 } from "./emit-server-common.js";
 import {
-  type CodecEntry,
+  type InputDecoderEntry,
   type DecoderEmission,
   emitDecoder,
-  getServerCodecImports,
-} from "./server-codecs.js";
+  getServerInputDecoderImports,
+} from "./server-input-decoders.js";
 import { buildServerEmission } from "./server-emission.js";
 
 export function emitServerOperations(
@@ -27,34 +27,36 @@ export function emitServerOperations(
   lines.push('import type { ServerOperation } from "@typespex/runtime/server";');
   lines.push("import {");
   lines.push("  Either,");
-  lines.push("  absurd,");
   lines.push("  createHints,");
   lines.push("  emptyHints,");
-  for (const name of getServerCodecImports()) {
+  lines.push("  ResponseEncoders,");
+  lines.push("  ErrorEncoders,");
+  for (const name of getServerInputDecoderImports()) {
     lines.push(`  ${name},`);
   }
   lines.push('} from "@typespex/runtime/server";');
-  lines.push('import * as ServerHints from "./server-hints.js";');
+  lines.push(`import * as ServerHints from "./${ctx.fileNames.serverHints}.js";`);
   if (emission.modelImports.length > 0) {
-    lines.push(`import type { ${emission.modelImports.join(", ")} } from "./models.js";`);
+    lines.push(`import type { ${emission.modelImports.join(", ")} } from "./${ctx.fileNames.models}.js";`);
   }
   lines.push("");
 
-  // --- Codecs + Operations per group ---
+  // --- Input decoders + Operations per group ---
   for (const group of emission.groups) {
-    const codecsName = `${group.exportName}Codecs`;
+    const inputsName = `${group.exportName}Input`;
+    const outputsName = `${group.exportName}Output`;
     const decodersByOpId = new Map<string, DecoderEmission>();
-    const allEntries: CodecEntry[] = [];
+    const allEntries: InputDecoderEntry[] = [];
 
     for (const operation of group.operations) {
-      const decoder = emitDecoder(ctx, operation.httpOperation, codecsName, operation.name);
-      allEntries.push(...decoder.codecEntries);
+      const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.name);
+      allEntries.push(...decoder.inputEntries);
       decodersByOpId.set(operation.operationId, decoder);
     }
 
-    // Emit grouped codecs object
+    // Emit grouped input decoders object
     if (allEntries.length > 0) {
-      lines.push(`const ${codecsName} = {`);
+      lines.push(`const ${inputsName} = {`);
       for (const entry of allEntries) {
         for (const line of entry.lines) {
           lines.push(line);
@@ -63,6 +65,23 @@ export function emitServerOperations(
       lines.push("};");
       lines.push("");
     }
+
+    // Emit grouped output encoders object
+    lines.push(`const ${outputsName} = {`);
+    for (const operation of group.operations) {
+      lines.push(`  ${operation.name}: ${emitSuccessResponseEncoder(ctx, operation.httpOperation, operation.successType)},`);
+    }
+    lines.push("};");
+    lines.push("");
+
+    // Emit grouped error encoders object
+    const errorsName = `${group.exportName}Errors`;
+    lines.push(`const ${errorsName} = {`);
+    for (const operation of group.operations) {
+      lines.push(`  ${operation.name}: ${emitErrorEncoderExpression(ctx, operation.httpOperation, operation.errorType)},`);
+    }
+    lines.push("};");
+    lines.push("");
 
     // Emit operations
     lines.push(`export const ${group.exportName}Operations = {`);
@@ -84,8 +103,8 @@ export function emitServerOperations(
       }
       lines.push(`      ${decoder.decodeExpression},`);
 
-      emitSuccessEncoderLine(lines, ctx, operation);
-      emitErrorEncoderLines(lines, ctx, operation);
+      emitSuccessEncoderLine(lines, operation, outputsName);
+      emitErrorEncoderLine(lines, operation, errorsName);
 
       lines.push(
         `  } satisfies ServerOperation<${operation.inputType}, ${operation.errorType}, ${operation.successType}>,`,
@@ -150,32 +169,22 @@ function emitEndpoint(
 
 function emitSuccessEncoderLine(
   lines: string[],
-  ctx: EmitterCtx,
-  operation: { successType: string; httpOperation: HttpOperation },
+  operation: { name: string; successType: string; httpOperation: HttpOperation },
+  outputsName: string,
 ): void {
-  const expr = emitSuccessExpression(ctx, operation.httpOperation);
   if (operation.successType === "void") {
-    lines.push(`    encodeOutput: () => ${expr},`);
+    lines.push(`    encodeOutput: () => ${outputsName}.${operation.name}.encode(undefined),`);
   } else {
-    lines.push(`    encodeOutput: (output: ${operation.successType}) => ${expr},`);
+    lines.push(`    encodeOutput: (output: ${operation.successType}) => ${outputsName}.${operation.name}.encode(output),`);
   }
 }
 
-function emitErrorEncoderLines(
+function emitErrorEncoderLine(
   lines: string[],
-  ctx: EmitterCtx,
-  operation: { errorType: string; httpOperation: HttpOperation },
+  operation: { name: string; errorType: string },
+  errorsName: string,
 ): void {
-  const result = emitErrorEncoder(ctx, operation.httpOperation);
-  if (result.kind === "expression") {
-    lines.push(`    encodeError: (error: ${operation.errorType}) => ${result.expression},`);
-  } else {
-    lines.push(`    encodeError: (error: ${operation.errorType}) => {`);
-    for (const line of result.lines) {
-      lines.push(line);
-    }
-    lines.push("    },");
-  }
+  lines.push(`    encodeError: (error: ${operation.errorType}) => ${errorsName}.${operation.name}.encode(error),`);
 }
 
 // ---------------------------------------------------------------------------
