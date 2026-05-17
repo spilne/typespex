@@ -79,6 +79,24 @@ interface Data {
 }
 `;
 
+const contentTypeSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ContentApi" })
+namespace ContentApi;
+
+@route("/text")
+interface Text {
+  @get plain(): { @header contentType: "text/plain"; @body body: string };
+}
+
+@route("/binary")
+interface Binary {
+  @get download(): { @header contentType: "application/octet-stream"; @body body: bytes };
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -109,5 +127,11 @@ describe("response encoding", () => {
 
     expect(r.readFile("headers-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("headers-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("text and binary content types use correct encoders", () => {
+    const r = compileFixture("content-types", contentTypeSpec);
+
+    expect(r.readFile("content-api", "server-operations.ts")).toMatchSnapshot();
   });
 });

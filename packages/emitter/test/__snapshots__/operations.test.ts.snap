@@ -166,7 +166,7 @@ import {
 import * as ServerHints from "./server-hints.js";
 
 const SecureApiOutput = {
-  admin: ResponseEncoders.json<string>(200),
+  admin: ResponseEncoders.text(200),
 };
 
 const SecureApiErrors = {

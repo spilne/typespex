@@ -7,7 +7,8 @@ export type HttpMethod =
   | "PUT"
   | "PATCH"
   | "DELETE"
-  | "HEAD";
+  | "HEAD"
+  | "OPTIONS";
 
 /** Runtime metadata for the generated TypeSpec service. */
 export interface ServiceMeta {

@@ -192,6 +192,7 @@ export function toColonPath(path: string): string {
 export interface SuccessResponseEncoding {
   readonly statusCode: number;
   readonly isVoid: boolean;
+  readonly contentType: string | undefined;
 }
 
 export function getSuccessResponseEncoding(
@@ -200,6 +201,7 @@ export function getSuccessResponseEncoding(
 ): SuccessResponseEncoding {
   let successStatus = 200;
   let isVoid = false;
+  let contentType: string | undefined;
 
   for (const resp of op.responses) {
     const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
@@ -208,13 +210,19 @@ export function getSuccessResponseEncoding(
     const rawStatus = resp.statusCodes;
     successStatus = typeof rawStatus === "number" ? rawStatus : 200;
     isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
+
+    for (const content of resp.responses) {
+      if (content.body?.contentTypes.length) {
+        contentType = content.body.contentTypes[0];
+      }
+    }
     break;
   }
 
   if (isVoid) {
-    return { statusCode: successStatus === 200 ? 204 : successStatus, isVoid: true };
+    return { statusCode: successStatus === 200 ? 204 : successStatus, isVoid: true, contentType };
   }
-  return { statusCode: successStatus, isVoid: false };
+  return { statusCode: successStatus, isVoid: false, contentType };
 }
 
 /** Success response encoder expression used in generated output encoder objects. */
@@ -229,14 +237,29 @@ export function emitSuccessResponseEncoder(
   }
 
   const headers = collectResponseHeaders(ctx, op);
-  if (headers.length > 0) {
+  const encoder = pickEncoderForContentType(response.contentType, successType, response.statusCode);
+
+  if (headers.length > 0 && encoder.startsWith("ResponseEncoders.json")) {
     const entries = headers
       .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
       .join(", ");
     return `ResponseEncoders.jsonWithHeaders<${successType}>(${response.statusCode}, [${entries}])`;
   }
 
-  return `ResponseEncoders.json<${successType}>(${response.statusCode})`;
+  return encoder;
+}
+
+function pickEncoderForContentType(contentType: string | undefined, tsType: string, status: number): string {
+  if (!contentType || contentType.includes("json")) {
+    return `ResponseEncoders.json<${tsType}>(${status})`;
+  }
+  if (contentType === "text/plain" || contentType.startsWith("text/")) {
+    return `ResponseEncoders.text(${status})`;
+  }
+  if (contentType === "application/octet-stream") {
+    return `ResponseEncoders.bytes(${status})`;
+  }
+  return `ResponseEncoders.json<${tsType}>(${status})`;
 }
 
 interface ResponseHeader {
