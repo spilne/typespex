@@ -108,7 +108,6 @@ export interface Pet {
 }
 
 export interface NotFoundError {
-  statusCode: 404;
   code: "NOT_FOUND";
   message: string;
 }

@@ -1,5 +1,6 @@
 import type { Model, Enum, Union, Type } from "@typespec/compiler";
 import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
+import { isMetadata } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { typeToTs } from "./type-reference.js";
 
@@ -67,6 +68,7 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   const props = [...model.properties.values()];
   lines.push(`export interface ${model.name} {`);
   for (const prop of props) {
+    if (isMetadata(ctx.program, prop)) continue;
     const optional = prop.optional ? "?" : "";
     const tsType = typeToTs(ctx, prop.type);
     lines.push(`  ${prop.name}${optional}: ${tsType};`);
