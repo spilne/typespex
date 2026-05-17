@@ -1,5 +1,5 @@
 import type { Either } from "../core/either.js";
-import type { ValidationError } from "./codec.js";
+import type { ValidationError } from "./validation.js";
 import type { EndpointMeta } from "./metadata.js";
 
 /** Decode result: synchronous Either or async Promise of Either. */

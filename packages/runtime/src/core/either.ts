@@ -1,4 +1,4 @@
-/** Minimal FP either used by codecs and decoders. */
+/** Minimal FP either used by decoders and handlers. */
 export type Either<E, A> =
   | { readonly _tag: "Left"; readonly left: E }
   | { readonly _tag: "Right"; readonly right: A };

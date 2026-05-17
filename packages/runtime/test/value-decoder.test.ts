@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  Decoders,
   Either,
+  Validators,
   ValidationError,
-  arrayCodec,
-  bigintCodec,
-  booleanCodec,
-  bytesCodec,
   decode,
   decodeJsonBodyOrThrow,
   decodeJsonBody,
@@ -14,34 +12,17 @@ import {
   decodeOrThrow,
   decodeRequired,
   decodeRequiredOrThrow,
-  discriminatedCodec,
   fail,
   isRight,
-  lazyCodec,
-  literalCodec,
-  mapCodec,
-  nullableCodec,
-  numberCodec,
-  objectCodec,
-  optional,
   prefixIssues,
-  recordCodec,
-  refineCodec,
-  strictArrayCodec,
-  strictLiteralCodec,
-  strictNullableCodec,
-  stringCodec,
   succeed,
   toValidationResult,
   traverseEither,
-  tupleCodec,
-  unionCodec,
-  unknownCodec,
 } from "../src/server.js";
 
-/** Assert a Left with expected issues. Codec.decode returns issue arrays directly. */
+/** Assert a Left with expected issues. Decoder.decode returns issue arrays directly. */
 function expectLeftIssues(
-  decoded: ReturnType<typeof stringCodec.decode>,
+  decoded: ReturnType<typeof Decoders.string.decode>,
   issues: readonly { path: string; message: string }[],
 ): void {
   expect(decoded._tag).toBe("Left");
@@ -50,7 +31,18 @@ function expectLeftIssues(
   }
 }
 
-describe("http codec - primitives", () => {
+describe("http decoder - primitives", () => {
+  test("Decoders namespace exposes preferred value decoders", () => {
+    const decoder = Decoders.object<{ name: string; age?: number }>({
+      name: Decoders.string,
+      age: Decoders.optional(Decoders.number),
+    });
+
+    expect(decoder.decode({ name: "Ada", age: "42" })).toEqual(
+      Either.right({ name: "Ada", age: 42 }),
+    );
+  });
+
   test("Either.getOrElse", () => {
     expect(Either.getOrElse(Either.right(42), 0)).toBe(42);
     expect(Either.getOrElse(Either.left("nope"), 0)).toBe(0);
@@ -94,177 +86,177 @@ describe("http codec - primitives", () => {
     expect(Either.orElse(Either.left("a"), () => Either.left("b"))).toEqual(Either.left("b"));
   });
 
-  test("stringCodec", () => {
-    expect(stringCodec.decode("ok")).toEqual(Either.right("ok"));
+  test("Decoders.string", () => {
+    expect(Decoders.string.decode("ok")).toEqual(Either.right("ok"));
     expectLeftIssues(
-      stringCodec.decode(42),
+      Decoders.string.decode(42),
       [{ path: "", message: "Expected a string." }],
     );
   });
 
-  test("numberCodec", () => {
-    expect(numberCodec.decode(42)).toEqual(Either.right(42));
-    expect(numberCodec.decode("42.5")).toEqual(Either.right(42.5));
-    expect(numberCodec.decode(0)).toEqual(Either.right(0));
-    expect(numberCodec.decode(-3.14)).toEqual(Either.right(-3.14));
+  test("Decoders.number", () => {
+    expect(Decoders.number.decode(42)).toEqual(Either.right(42));
+    expect(Decoders.number.decode("42.5")).toEqual(Either.right(42.5));
+    expect(Decoders.number.decode(0)).toEqual(Either.right(0));
+    expect(Decoders.number.decode(-3.14)).toEqual(Either.right(-3.14));
     expectLeftIssues(
-      numberCodec.decode("Infinity"),
+      Decoders.number.decode("Infinity"),
       [{ path: "", message: "Expected a finite number." }],
     );
     expectLeftIssues(
-      numberCodec.decode(Infinity),
+      Decoders.number.decode(Infinity),
       [{ path: "", message: "Expected a finite number." }],
     );
     expectLeftIssues(
-      numberCodec.decode(-Infinity),
+      Decoders.number.decode(-Infinity),
       [{ path: "", message: "Expected a finite number." }],
     );
     expectLeftIssues(
-      numberCodec.decode("NaN"),
+      Decoders.number.decode("NaN"),
       [{ path: "", message: "Expected a finite number." }],
     );
   });
 
-  test("bigintCodec", () => {
-    expect(bigintCodec.decode(42n)).toEqual(Either.right(42n));
-    expect(bigintCodec.decode(42)).toEqual(Either.right(42n));
-    expect(bigintCodec.decode("42")).toEqual(Either.right(42n));
+  test("Decoders.bigint", () => {
+    expect(Decoders.bigint.decode(42n)).toEqual(Either.right(42n));
+    expect(Decoders.bigint.decode(42)).toEqual(Either.right(42n));
+    expect(Decoders.bigint.decode("42")).toEqual(Either.right(42n));
     expectLeftIssues(
-      bigintCodec.decode("42.1"),
+      Decoders.bigint.decode("42.1"),
       [{ path: "", message: "Expected a valid integer." }],
     );
   });
 
-  test("booleanCodec", () => {
-    expect(booleanCodec.decode(true)).toEqual(Either.right(true));
-    expect(booleanCodec.decode("true")).toEqual(Either.right(true));
-    expect(booleanCodec.decode("false")).toEqual(Either.right(false));
+  test("Decoders.boolean", () => {
+    expect(Decoders.boolean.decode(true)).toEqual(Either.right(true));
+    expect(Decoders.boolean.decode("true")).toEqual(Either.right(true));
+    expect(Decoders.boolean.decode("false")).toEqual(Either.right(false));
     expectLeftIssues(
-      booleanCodec.decode("TRUE"),
+      Decoders.boolean.decode("TRUE"),
       [{ path: "", message: 'Expected "true" or "false".' }],
     );
   });
 
-  test("bytesCodec", () => {
-    expect(bytesCodec.decode(new Uint8Array([1, 2, 3]))).toEqual(
+  test("Decoders.bytes", () => {
+    expect(Decoders.bytes.decode(new Uint8Array([1, 2, 3]))).toEqual(
       Either.right(new Uint8Array([1, 2, 3])),
     );
 
-    const fromBase64 = bytesCodec.decode("AQID");
+    const fromBase64 = Decoders.bytes.decode("AQID");
     expect(fromBase64._tag).toBe("Right");
     if (fromBase64._tag === "Right") {
       expect([...fromBase64.right]).toEqual([1, 2, 3]);
     }
 
-    expect(bytesCodec.decode([0, 255])).toEqual(Either.right(new Uint8Array([0, 255])));
+    expect(Decoders.bytes.decode([0, 255])).toEqual(Either.right(new Uint8Array([0, 255])));
     expectLeftIssues(
-      bytesCodec.decode([0, 999]),
+      Decoders.bytes.decode([0, 999]),
       [{ path: "[1]", message: "Expected a byte value between 0 and 255." }],
     );
     expectLeftIssues(
-      bytesCodec.decode({ nope: true }),
+      Decoders.bytes.decode({ nope: true }),
       [{ path: "", message: "Expected a base64 string or byte array." }],
     );
   });
 
-  test("unknownCodec", () => {
+  test("Decoders.unknown", () => {
     const value = { any: ["shape"] };
-    expect(unknownCodec.decode(value)).toEqual(Either.right(value));
+    expect(Decoders.unknown.decode(value)).toEqual(Either.right(value));
   });
 });
 
-describe("http codec - combinators", () => {
-  test("literalCodec", () => {
-    expect(literalCodec("x").decode("x")).toEqual(Either.right("x"));
-    expect(literalCodec(5).decode("5")).toEqual(Either.right(5));
-    expect(literalCodec(true).decode("true")).toEqual(Either.right(true));
-    expect(literalCodec(null).decode("null")).toEqual(Either.right(null));
+describe("http decoder - combinators", () => {
+  test("Decoders.literal", () => {
+    expect(Decoders.literal("x").decode("x")).toEqual(Either.right("x"));
+    expect(Decoders.literal(5).decode("5")).toEqual(Either.right(5));
+    expect(Decoders.literal(true).decode("true")).toEqual(Either.right(true));
+    expect(Decoders.literal(null).decode("null")).toEqual(Either.right(null));
     expectLeftIssues(
-      literalCodec("x").decode("y"),
+      Decoders.literal("x").decode("y"),
       [{ path: "", message: 'Expected literal "x".' }],
     );
   });
 
-  test("arrayCodec supports array input and text singleton input", () => {
-    expect(arrayCodec(numberCodec).decode([1, "2"])).toEqual(Either.right([1, 2]));
-    expect(arrayCodec(numberCodec).decode("3")).toEqual(Either.right([3]));
+  test("Decoders.array supports array input and text singleton input", () => {
+    expect(Decoders.array(Decoders.number).decode([1, "2"])).toEqual(Either.right([1, 2]));
+    expect(Decoders.array(Decoders.number).decode("3")).toEqual(Either.right([3]));
     expectLeftIssues(
-      arrayCodec(numberCodec).decode({ nope: true }),
+      Decoders.array(Decoders.number).decode({ nope: true }),
       [{ path: "", message: "Expected an array." }],
     );
     expectLeftIssues(
-      arrayCodec(numberCodec).decode(["1", "bad"]),
+      Decoders.array(Decoders.number).decode(["1", "bad"]),
       [{ path: "[1]", message: "Expected a finite number." }],
     );
   });
 
-  test("strictArrayCodec rejects non-array inputs", () => {
-    expect(strictArrayCodec(numberCodec).decode([1, "2"])).toEqual(Either.right([1, 2]));
-    // Unlike arrayCodec, strictArrayCodec rejects lone strings
+  test("Decoders.strictArray rejects non-array inputs", () => {
+    expect(Decoders.strictArray(Decoders.number).decode([1, "2"])).toEqual(Either.right([1, 2]));
+    // Unlike Decoders.array, Decoders.strictArray rejects lone strings
     expectLeftIssues(
-      strictArrayCodec(numberCodec).decode("3"),
+      Decoders.strictArray(Decoders.number).decode("3"),
       [{ path: "", message: "Expected an array." }],
     );
     expectLeftIssues(
-      strictArrayCodec(numberCodec).decode({ nope: true }),
+      Decoders.strictArray(Decoders.number).decode({ nope: true }),
       [{ path: "", message: "Expected an array." }],
     );
     expectLeftIssues(
-      strictArrayCodec(numberCodec).decode(["1", "bad"]),
+      Decoders.strictArray(Decoders.number).decode(["1", "bad"]),
       [{ path: "[1]", message: "Expected a finite number." }],
     );
   });
 
-  test("tupleCodec validates length and item codecs", () => {
-    const codec = tupleCodec<[string, number]>([stringCodec, numberCodec]);
-    expect(codec.decode(["a", "1"])).toEqual(Either.right(["a", 1]));
+  test("Decoders.tuple validates length and item decoders", () => {
+    const decoder = Decoders.tuple<[string, number]>([Decoders.string, Decoders.number]);
+    expect(decoder.decode(["a", "1"])).toEqual(Either.right(["a", 1]));
     expectLeftIssues(
-      codec.decode(["a"]),
+      decoder.decode(["a"]),
       [{ path: "", message: "Expected a tuple of length 2." }],
     );
     expectLeftIssues(
-      codec.decode(["a", "x"]),
+      decoder.decode(["a", "x"]),
       [{ path: "[1]", message: "Expected a finite number." }],
     );
   });
 
-  test("recordCodec", () => {
-    const codec = recordCodec(numberCodec);
-    expect(codec.decode({ a: "1", b: 2 })).toEqual(Either.right({ a: 1, b: 2 }));
+  test("Decoders.record", () => {
+    const decoder = Decoders.record(Decoders.number);
+    expect(decoder.decode({ a: "1", b: 2 })).toEqual(Either.right({ a: 1, b: 2 }));
     expectLeftIssues(
-      codec.decode([]),
+      decoder.decode([]),
       [{ path: "", message: "Expected an object." }],
     );
     expectLeftIssues(
-      codec.decode({ a: "bad" }),
+      decoder.decode({ a: "bad" }),
       [{ path: ".a", message: "Expected a finite number." }],
     );
   });
 
-  test("objectCodec required/optional/unknown fields", () => {
-    const codec = objectCodec<{
+  test("Decoders.object required/optional/unknown fields", () => {
+    const decoder = Decoders.object<{
       name: string;
       age?: number;
     }>({
-      name: stringCodec,
-      age: optional(numberCodec),
+      name: Decoders.string,
+      age: Decoders.optional(Decoders.number),
     });
 
-    expect(codec.decode({ name: "ok" })).toEqual(Either.right({ name: "ok" }));
-    expect(codec.decode({ name: "ok", age: "2" })).toEqual(Either.right({ name: "ok", age: 2 }));
+    expect(decoder.decode({ name: "ok" })).toEqual(Either.right({ name: "ok" }));
+    expect(decoder.decode({ name: "ok", age: "2" })).toEqual(Either.right({ name: "ok", age: 2 }));
 
     expectLeftIssues(
-      codec.decode({ age: 2 }),
+      decoder.decode({ age: 2 }),
       [{ path: ".name", message: "Expected a string." }],
     );
 
     expectLeftIssues(
-      codec.decode({ name: "ok", extra: true }),
+      decoder.decode({ name: "ok", extra: true }),
       [{ path: ".extra", message: "Unexpected field." }],
     );
 
-    const allowUnknown = objectCodec<{ name: string }>(
-      { name: stringCodec },
+    const allowUnknown = Decoders.object<{ name: string }>(
+      { name: Decoders.string },
       { allowUnknown: true },
     );
     expect(allowUnknown.decode({ name: "ok", extra: true })).toEqual(
@@ -272,8 +264,8 @@ describe("http codec - combinators", () => {
     );
   });
 
-  test("unionCodec and nullableCodec", () => {
-    const union = unionCodec<string | number>([stringCodec, numberCodec]);
+  test("Decoders.union and Decoders.nullable", () => {
+    const union = Decoders.union<string | number>([Decoders.string, Decoders.number]);
     expect(union.decode("x")).toEqual(Either.right("x"));
     expect(union.decode(2)).toEqual(Either.right(2));
     expectLeftIssues(
@@ -281,17 +273,17 @@ describe("http codec - combinators", () => {
       [{ path: "", message: "Value did not match any allowed variant." }],
     );
 
-    const nullable = nullableCodec(numberCodec);
+    const nullable = Decoders.nullable(Decoders.number);
     expect(nullable.decode(null)).toEqual(Either.right(null));
     expect(nullable.decode("null")).toEqual(Either.right(null));
     expect(nullable.decode("2")).toEqual(Either.right(2));
   });
 
-  test("lazyCodec resolves once and delegates decoding", () => {
+  test("Decoders.lazy resolves once and delegates decoding", () => {
     let resolved = 0;
-    const lazy = lazyCodec(() => {
+    const lazy = Decoders.lazy(() => {
       resolved += 1;
-      return unionCodec<number | null>([numberCodec, literalCodec(null)]);
+      return Decoders.union<number | null>([Decoders.number, Decoders.literal(null)]);
     });
 
     expect(lazy.decode("2")).toEqual(Either.right(2));
@@ -299,75 +291,75 @@ describe("http codec - combinators", () => {
     expect(resolved).toBe(1);
   });
 
-  test("discriminatedCodec dispatches by tag field", () => {
-    const catCodec = objectCodec<{ type: "cat"; lives: number }>({
-      type: literalCodec("cat"),
-      lives: numberCodec,
+  test("Decoders.discriminated dispatches by tag field", () => {
+    const catDecoder = Decoders.object<{ type: "cat"; lives: number }>({
+      type: Decoders.literal("cat"),
+      lives: Decoders.number,
     });
-    const dogCodec = objectCodec<{ type: "dog"; breed: string }>({
-      type: literalCodec("dog"),
-      breed: stringCodec,
+    const dogDecoder = Decoders.object<{ type: "dog"; breed: string }>({
+      type: Decoders.literal("dog"),
+      breed: Decoders.string,
     });
 
-    const animalCodec = discriminatedCodec<{ type: "cat"; lives: number } | { type: "dog"; breed: string }>(
+    const animalDecoder = Decoders.discriminated<{ type: "cat"; lives: number } | { type: "dog"; breed: string }>(
       "type",
-      { cat: catCodec, dog: dogCodec },
+      { cat: catDecoder, dog: dogDecoder },
     );
 
-    expect(animalCodec.decode({ type: "cat", lives: 9 })).toEqual(
+    expect(animalDecoder.decode({ type: "cat", lives: 9 })).toEqual(
       Either.right({ type: "cat", lives: 9 }),
     );
-    expect(animalCodec.decode({ type: "dog", breed: "lab" })).toEqual(
+    expect(animalDecoder.decode({ type: "dog", breed: "lab" })).toEqual(
       Either.right({ type: "dog", breed: "lab" }),
     );
     expectLeftIssues(
-      animalCodec.decode({ type: "fish" }),
+      animalDecoder.decode({ type: "fish" }),
       [{ path: ".type", message: 'Unknown discriminator value: "fish".' }],
     );
     expectLeftIssues(
-      animalCodec.decode("not-object"),
+      animalDecoder.decode("not-object"),
       [{ path: "", message: "Expected an object." }],
     );
   });
 
-  test("discriminatedCodec handles number discriminator values", () => {
-    const v1Codec = objectCodec<{ version: 1; data: string }>({
-      version: literalCodec(1),
-      data: stringCodec,
+  test("Decoders.discriminated handles number discriminator values", () => {
+    const v1Decoder = Decoders.object<{ version: 1; data: string }>({
+      version: Decoders.literal(1),
+      data: Decoders.string,
     });
-    const v2Codec = objectCodec<{ version: 2; items: number[] }>({
-      version: literalCodec(2),
-      items: arrayCodec(numberCodec),
+    const v2Decoder = Decoders.object<{ version: 2; items: number[] }>({
+      version: Decoders.literal(2),
+      items: Decoders.array(Decoders.number),
     });
 
-    const codec = discriminatedCodec<
+    const decoder = Decoders.discriminated<
       { version: 1; data: string } | { version: 2; items: number[] }
-    >("version", { "1": v1Codec, "2": v2Codec });
+    >("version", { "1": v1Decoder, "2": v2Decoder });
 
-    expect(codec.decode({ version: 1, data: "hello" })).toEqual(
+    expect(decoder.decode({ version: 1, data: "hello" })).toEqual(
       Either.right({ version: 1, data: "hello" }),
     );
-    expect(codec.decode({ version: 2, items: [1, 2] })).toEqual(
+    expect(decoder.decode({ version: 2, items: [1, 2] })).toEqual(
       Either.right({ version: 2, items: [1, 2] }),
     );
     expectLeftIssues(
-      codec.decode({ version: 3 }),
+      decoder.decode({ version: 3 }),
       [{ path: ".version", message: "Unknown discriminator value: 3." }],
     );
   });
 
   test("nested object validation reports precise relative paths", () => {
-    const codec = objectCodec<{
+    const decoder = Decoders.object<{
       name: string;
       tag?: "cat" | "dog";
       scores: number[];
     }>({
-      name: stringCodec,
-      tag: optional(unionCodec<"cat" | "dog">([literalCodec("cat"), literalCodec("dog")])),
-      scores: arrayCodec(numberCodec),
+      name: Decoders.string,
+      tag: Decoders.optional(Decoders.union<"cat" | "dog">([Decoders.literal("cat"), Decoders.literal("dog")])),
+      scores: Decoders.array(Decoders.number),
     });
 
-    const decoded = codec.decode({
+    const decoded = decoder.decode({
       name: "milo",
       tag: "fish",
       scores: [1, "bad"],
@@ -383,12 +375,12 @@ describe("http codec - combinators", () => {
   });
 
   test("decode boundary function prefixes root", () => {
-    const codec = objectCodec<{ name: string; scores: number[] }>({
-      name: stringCodec,
-      scores: arrayCodec(numberCodec),
+    const decoder = Decoders.object<{ name: string; scores: number[] }>({
+      name: Decoders.string,
+      scores: Decoders.array(Decoders.number),
     });
 
-    const result = decode(codec, { scores: [1, "bad"] }, "$");
+    const result = decode(decoder, { scores: [1, "bad"] }, "$");
     expect(result._tag).toBe("Left");
     if (result._tag === "Left") {
       expect(result.left.issues).toEqual([
@@ -399,9 +391,9 @@ describe("http codec - combinators", () => {
   });
 });
 
-describe("http codec - transformers", () => {
-  test("mapCodec transforms decoded value", () => {
-    const trimmed = mapCodec(stringCodec, (s) => s.trim());
+describe("http decoder - transformers", () => {
+  test("Decoder.map transforms decoded value", () => {
+    const trimmed = Decoders.string.map((s) => s.trim());
     expect(trimmed.decode("  hello  ")).toEqual(Either.right("hello"));
     expectLeftIssues(
       trimmed.decode(42),
@@ -409,8 +401,8 @@ describe("http codec - transformers", () => {
     );
   });
 
-  test("refineCodec adds validation constraint", () => {
-    const positive = refineCodec(numberCodec, (n) => n > 0, "Must be positive.");
+  test("Decoders.refine adds validation constraint", () => {
+    const positive = Decoders.refine(Decoders.number, (n) => n > 0, "Must be positive.");
     expect(positive.decode(5)).toEqual(Either.right(5));
     expect(positive.decode("3")).toEqual(Either.right(3));
     expectLeftIssues(
@@ -418,15 +410,59 @@ describe("http codec - transformers", () => {
       [{ path: "", message: "Must be positive." }],
     );
 
-    const maxLen = refineCodec(stringCodec, (s) => s.length <= 5, (s) => `Too long: ${s.length} > 5`);
+    const maxLen = Decoders.refine(Decoders.string, (s) => s.length <= 5, (s) => `Too long: ${s.length} > 5`);
     expectLeftIssues(
       maxLen.decode("toolong"),
       [{ path: "", message: "Too long: 7 > 5" }],
     );
   });
+
+  test("Decoder.validate accumulates validator issues", () => {
+    const decoder = Decoders.string.validate(
+      Validators.minLength(3),
+      Validators.pattern("^[a-z]+$", "Must be lower-case letters."),
+    );
+
+    expect(decoder.decode("abc")).toEqual(Either.right("abc"));
+    expectLeftIssues(
+      decoder.decode("A"),
+      [
+        { path: "", message: "Expected length greater than or equal to 3." },
+        { path: "", message: "Must be lower-case letters." },
+      ],
+    );
+  });
+
+  test("Validators cover numeric, length, item, and pattern checks", () => {
+    expect(Decoders.number.validate(Validators.minValue(1)).decode(1)).toEqual(Either.right(1));
+    expectLeftIssues(
+      Decoders.number.validate(Validators.minValueExclusive(1)).decode(1),
+      [{ path: "", message: "Expected a value greater than 1." }],
+    );
+    expectLeftIssues(
+      Decoders.number.validate(Validators.maxValue(5)).decode(6),
+      [{ path: "", message: "Expected a value less than or equal to 5." }],
+    );
+    expectLeftIssues(
+      Decoders.number.validate(Validators.maxValueExclusive(5)).decode(5),
+      [{ path: "", message: "Expected a value less than 5." }],
+    );
+    expectLeftIssues(
+      Decoders.array(Decoders.string).validate(Validators.minItems(2)).decode(["one"]),
+      [{ path: "", message: "Expected at least 2 item(s)." }],
+    );
+    expectLeftIssues(
+      Decoders.array(Decoders.string).validate(Validators.maxItems(1)).decode(["one", "two"]),
+      [{ path: "", message: "Expected at most 1 item(s)." }],
+    );
+    expectLeftIssues(
+      Decoders.string.validate(Validators.maxLength(2)).decode("abc"),
+      [{ path: "", message: "Expected length less than or equal to 2." }],
+    );
+  });
 });
 
-describe("http codec - exported building blocks", () => {
+describe("http decoder - exported building blocks", () => {
   test("succeed wraps a value in Right", () => {
     expect(succeed(42)).toEqual(Either.right(42));
   });
@@ -457,20 +493,20 @@ describe("http codec - exported building blocks", () => {
   });
 });
 
-describe("http codec - throw adapters", () => {
+describe("http decoder - throw adapters", () => {
   test("decodeOrThrow", () => {
-    expect(decodeOrThrow(numberCodec, "12", "$query.limit")).toBe(12);
-    expect(() => decodeOrThrow(numberCodec, "bad", "$query.limit")).toThrow(ValidationError);
+    expect(decodeOrThrow(Decoders.number, "12", "$query.limit")).toBe(12);
+    expect(() => decodeOrThrow(Decoders.number, "bad", "$query.limit")).toThrow(ValidationError);
   });
 
   test("decodeRequiredOrThrow", () => {
-    expect(decodeRequiredOrThrow(stringCodec, "x", "$path.id")).toBe("x");
-    expect(() => decodeRequiredOrThrow(stringCodec, undefined, "$path.id")).toThrow(ValidationError);
+    expect(decodeRequiredOrThrow(Decoders.string, "x", "$path.id")).toBe("x");
+    expect(() => decodeRequiredOrThrow(Decoders.string, undefined, "$path.id")).toThrow(ValidationError);
   });
 
   test("decodeRequired", () => {
-    expect(decodeRequired(stringCodec, "x")).toEqual(Either.right("x"));
-    const decoded = decodeRequired(stringCodec, undefined);
+    expect(decodeRequired(Decoders.string, "x")).toEqual(Either.right("x"));
+    const decoded = decodeRequired(Decoders.string, undefined);
     expect(decoded._tag).toBe("Left");
     if (decoded._tag === "Left") {
       expect(decoded.left).toEqual([
@@ -480,14 +516,14 @@ describe("http codec - throw adapters", () => {
   });
 
   test("decodeOptionalOrThrow", () => {
-    expect(decodeOptionalOrThrow(stringCodec, undefined, "$query.q")).toBeUndefined();
-    expect(decodeOptionalOrThrow(stringCodec, "x", "$query.q")).toBe("x");
-    expect(() => decodeOptionalOrThrow(numberCodec, "bad", "$query.limit")).toThrow(ValidationError);
+    expect(decodeOptionalOrThrow(Decoders.string, undefined, "$query.q")).toBeUndefined();
+    expect(decodeOptionalOrThrow(Decoders.string, "x", "$query.q")).toBe("x");
+    expect(() => decodeOptionalOrThrow(Decoders.number, "bad", "$query.limit")).toThrow(ValidationError);
   });
 
   test("decodeOptional", () => {
-    expect(decodeOptional(stringCodec, undefined)).toEqual(Either.right(undefined));
-    expect(decodeOptional(stringCodec, "x")).toEqual(Either.right("x"));
+    expect(decodeOptional(Decoders.string, undefined)).toEqual(Either.right(undefined));
+    expect(decodeOptional(Decoders.string, "x")).toEqual(Either.right("x"));
   });
 
   test("decodeJsonBodyOrThrow", async () => {
@@ -498,7 +534,7 @@ describe("http codec - throw adapters", () => {
     });
     const value = await decodeJsonBodyOrThrow(
       okRequest,
-      objectCodec<{ id: string }>({ id: stringCodec }),
+      Decoders.object<{ id: string }>({ id: Decoders.string }),
       "$body",
     );
     expect(value).toEqual({ id: "42" });
@@ -509,7 +545,7 @@ describe("http codec - throw adapters", () => {
       headers: { "content-type": "application/json" },
     });
     await expect(
-      decodeJsonBodyOrThrow(invalidJsonRequest, objectCodec({}), "$body"),
+      decodeJsonBodyOrThrow(invalidJsonRequest, Decoders.object({}), "$body"),
     ).rejects.toBeInstanceOf(ValidationError);
 
     const invalidShapeRequest = new Request("http://localhost/test", {
@@ -520,7 +556,7 @@ describe("http codec - throw adapters", () => {
     await expect(
       decodeJsonBodyOrThrow(
         invalidShapeRequest,
-        objectCodec<{ id: string }>({ id: stringCodec }),
+        Decoders.object<{ id: string }>({ id: Decoders.string }),
         "$body",
       ),
     ).rejects.toBeInstanceOf(ValidationError);
@@ -535,7 +571,7 @@ describe("http codec - throw adapters", () => {
     expect(
       await decodeJsonBody(
         okRequest,
-        objectCodec<{ id: string }>({ id: stringCodec }),
+        Decoders.object<{ id: string }>({ id: Decoders.string }),
         "$body",
       ),
     ).toEqual(Either.right({ id: "42" }));
@@ -545,7 +581,7 @@ describe("http codec - throw adapters", () => {
       body: "{not-json",
       headers: { "content-type": "application/json" },
     });
-    const decoded = await decodeJsonBody(invalidJsonRequest, objectCodec({}), "$body");
+    const decoded = await decodeJsonBody(invalidJsonRequest, Decoders.object({}), "$body");
     expect(decoded._tag).toBe("Left");
     if (decoded._tag === "Left") {
       expect(decoded.left.issues).toEqual([
@@ -555,27 +591,27 @@ describe("http codec - throw adapters", () => {
   });
 });
 
-describe("strict JSON-mode codecs", () => {
-  test("strictLiteralCodec matches exact value, no string coercion", () => {
-    expect(strictLiteralCodec(5).decode(5)).toEqual(succeed(5));
-    expect(strictLiteralCodec("x").decode("x")).toEqual(succeed("x"));
-    expect(strictLiteralCodec(true).decode(true)).toEqual(succeed(true));
-    expect(strictLiteralCodec(null).decode(null)).toEqual(succeed(null));
+describe("strict JSON-mode decoders", () => {
+  test("Decoders.strictLiteral matches exact value, no string coercion", () => {
+    expect(Decoders.strictLiteral(5).decode(5)).toEqual(succeed(5));
+    expect(Decoders.strictLiteral("x").decode("x")).toEqual(succeed("x"));
+    expect(Decoders.strictLiteral(true).decode(true)).toEqual(succeed(true));
+    expect(Decoders.strictLiteral(null).decode(null)).toEqual(succeed(null));
   });
 
-  test("strictLiteralCodec rejects string-encoded values", () => {
-    // These all pass with literalCodec (text mode) but fail with strict
-    expectLeftIssues(strictLiteralCodec(5).decode("5"), [{ path: "", message: "Expected literal 5." }]);
-    expectLeftIssues(strictLiteralCodec(true).decode("true"), [{ path: "", message: "Expected literal true." }]);
-    expectLeftIssues(strictLiteralCodec(null).decode("null"), [{ path: "", message: "Expected literal null." }]);
+  test("Decoders.strictLiteral rejects string-encoded values", () => {
+    // These all pass with Decoders.literal (text mode) but fail with strict
+    expectLeftIssues(Decoders.strictLiteral(5).decode("5"), [{ path: "", message: "Expected literal 5." }]);
+    expectLeftIssues(Decoders.strictLiteral(true).decode("true"), [{ path: "", message: "Expected literal true." }]);
+    expectLeftIssues(Decoders.strictLiteral(null).decode("null"), [{ path: "", message: "Expected literal null." }]);
   });
 
-  test("strictNullableCodec accepts null, rejects string null", () => {
-    const codec = strictNullableCodec(numberCodec);
-    expect(codec.decode(null)).toEqual(succeed(null));
-    expect(codec.decode(42)).toEqual(succeed(42));
+  test("Decoders.strictNullable accepts null, rejects string null", () => {
+    const decoder = Decoders.strictNullable(Decoders.number);
+    expect(decoder.decode(null)).toEqual(succeed(null));
+    expect(decoder.decode(42)).toEqual(succeed(42));
     // "null" string should NOT decode as null in JSON mode
-    expectLeftIssues(codec.decode("null"), [{ path: "", message: "Expected a finite number." }]);
+    expectLeftIssues(decoder.decode("null"), [{ path: "", message: "Expected a finite number." }]);
   });
 });
 
@@ -611,8 +647,8 @@ describe("prefixIssues", () => {
 
 describe("toValidationResult", () => {
   test("converts issue array Left to ValidationError Left with prefix", () => {
-    const codecResult = fail(".name", "required");
-    const result = toValidationResult(codecResult, "$body");
+    const decoderResult = fail(".name", "required");
+    const result = toValidationResult(decoderResult, "$body");
     expect(result._tag).toBe("Left");
     if (result._tag === "Left") {
       expect(result.left).toBeInstanceOf(ValidationError);
@@ -621,8 +657,8 @@ describe("toValidationResult", () => {
   });
 
   test("passes Right through unchanged", () => {
-    const codecResult = succeed(42);
-    const result = toValidationResult(codecResult, "$body");
+    const decoderResult = succeed(42);
+    const result = toValidationResult(decoderResult, "$body");
     expect(result).toEqual(Either.right(42));
   });
 });

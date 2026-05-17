@@ -9,7 +9,7 @@ import {
   emptyHints,
 } from "../src/server.js";
 import { HttpError } from "../src/errors.js";
-import { getSearchParams } from "../src/http.js";
+import { getSearchParams } from "../src/http/query-params.js";
 
 describe("HttpError", () => {
   test("toResponse with JSON body", () => {
