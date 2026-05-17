@@ -221,4 +221,74 @@ describe("http request decoders (sync)", () => {
     );
     expect(result).toEqual(Either.right({ token: undefined }));
   });
+
+  test("cookie with empty value decodes as empty string", () => {
+    const decoder = RequestDecoders.cookie("sid", Decoders.string);
+
+    const result = decodeRequestInput(
+      decoder.map((sid) => ({ sid })),
+      new Request("http://localhost/test", {
+        headers: { cookie: "sid=; other=val" },
+      }),
+      {},
+    );
+    expect(result).toEqual(Either.right({ sid: "" }));
+  });
+
+  test("cookie parsing handles whitespace around values", () => {
+    const decoder = RequestDecoders.cookie("token", Decoders.string);
+
+    const result = decodeRequestInput(
+      decoder.map((token) => ({ token })),
+      new Request("http://localhost/test", {
+        headers: { cookie: " token = abc123 ; other=x" },
+      }),
+      {},
+    );
+    expect(result).toEqual(Either.right({ token: "abc123" }));
+  });
+
+  test("cookie parsing skips malformed pairs without =", () => {
+    const decoder = RequestDecoders.cookie("good", Decoders.string);
+
+    const result = decodeRequestInput(
+      decoder.map((good) => ({ good })),
+      new Request("http://localhost/test", {
+        headers: { cookie: "malformed; good=yes" },
+      }),
+      {},
+    );
+    expect(result).toEqual(Either.right({ good: "yes" }));
+  });
+
+  test("decodeRequestInputAndBody accumulates request + body errors", async () => {
+    const requestDecoder = RequestDecoders.combine(
+      [
+        RequestDecoders.path("id", Decoders.string),
+        RequestDecoders.query("limit", Decoders.number),
+      ],
+      (id, limit) => ({ id, limit }),
+    );
+    const bodyDecoder = Decoders.object<{ name: string; count: number }>({
+      name: Decoders.string,
+      count: Decoders.number,
+    });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: 42, count: "bad" }),
+      }),
+      {},
+    );
+
+    expect(isLeft(result)).toBe(true);
+    if (isLeft(result)) {
+      // Should have errors from both request params and body
+      expect(result.left.issues.length).toBeGreaterThanOrEqual(3);
+    }
+  });
 });

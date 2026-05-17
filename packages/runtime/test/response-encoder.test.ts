@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { ResponseEncoders } from "../src/server.js";
+import { ResponseEncoders, ErrorEncoders } from "../src/server.js";
 
-describe("http response encoders", () => {
-  test("ResponseEncoders.json encodes typed output as JSON", async () => {
+// ---------------------------------------------------------------------------
+// ResponseEncoders
+// ---------------------------------------------------------------------------
+
+describe("ResponseEncoders", () => {
+  test("json encodes typed output with status", async () => {
     const encoder = ResponseEncoders.json<{ id: string }>(201);
     const response = encoder.encode({ id: "p-1" });
 
@@ -10,34 +14,179 @@ describe("http response encoders", () => {
     expect(await response.json()).toEqual({ id: "p-1" });
   });
 
-  test("ResponseEncoders.empty encodes no body", async () => {
+  test("empty encodes no body", async () => {
     const response = ResponseEncoders.empty(204).encode(undefined);
 
     expect(response.status).toBe(204);
     expect(await response.text()).toBe("");
   });
 
-  test("ResponseEncoder.mapInput adapts output before encoding", async () => {
+  test("text encodes string body", async () => {
+    const response = ResponseEncoders.text(202).encode("accepted");
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe("accepted");
+  });
+
+  test("bytes encodes binary body", async () => {
+    const response = ResponseEncoders.bytes(200).encode(new Uint8Array([65, 66]));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("AB");
+  });
+
+  test("response passes through raw Response", () => {
+    const raw = new Response("raw", { status: 209 });
+    expect(ResponseEncoders.response().encode(raw)).toBe(raw);
+  });
+
+  test("mapInput adapts value before encoding", async () => {
     const encoder = ResponseEncoders
       .json<{ name: string }>(200)
-      .mapInput((value: { petName: string }) => ({ name: value.petName }));
+      .mapInput((v: { petName: string }) => ({ name: v.petName }));
 
     const response = encoder.encode({ petName: "Milo" });
 
-    expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ name: "Milo" });
   });
 
-  test("ResponseEncoders.text, bytes, and response cover non-json responses", async () => {
-    const text = ResponseEncoders.text(202).encode("accepted");
-    expect(text.status).toBe(202);
-    expect(await text.text()).toBe("accepted");
+  test("jsonWithHeaders extracts properties as HTTP headers", async () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      rateLimit: number;
+      requestId: string;
+      data: string;
+    }>(200, [
+      ["rateLimit", "x-rate-limit"],
+      ["requestId", "x-request-id"],
+    ]);
 
-    const bytes = ResponseEncoders.bytes(200).encode(new Uint8Array([65, 66]));
-    expect(bytes.status).toBe(200);
-    expect(await bytes.text()).toBe("AB");
+    const response = encoder.encode({ rateLimit: 100, requestId: "abc", data: "hello" });
 
-    const raw = new Response("raw", { status: 209 });
-    expect(ResponseEncoders.response().encode(raw)).toBe(raw);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-rate-limit")).toBe("100");
+    expect(response.headers.get("x-request-id")).toBe("abc");
+    expect(response.headers.get("content-type")).toBe("application/json");
+
+    const body = await response.json();
+    expect(body).toEqual({ data: "hello" });
+    expect(body).not.toHaveProperty("rateLimit");
+    expect(body).not.toHaveProperty("requestId");
+  });
+
+  test("jsonWithHeaders skips undefined header values", async () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      etag?: string;
+      data: string;
+    }>(200, [["etag", "etag"]]);
+
+    const response = encoder.encode({ data: "hello" } as any);
+
+    expect(response.headers.get("etag")).toBeNull();
+    expect(await response.json()).toEqual({ data: "hello" });
+  });
+
+  test("jsonWithHeaders converts null header value to string", async () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      tag: null;
+      data: string;
+    }>(200, [["tag", "x-tag"]]);
+
+    const response = encoder.encode({ tag: null, data: "hello" });
+
+    expect(response.headers.get("x-tag")).toBe("null");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ErrorEncoders
+// ---------------------------------------------------------------------------
+
+describe("ErrorEncoders", () => {
+  test("json encodes error with fixed status", async () => {
+    const encoder = ErrorEncoders.json<{ message: string }>(422);
+    const response = encoder.encode({ message: "invalid" });
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ message: "invalid" });
+  });
+
+  test("discriminated dispatches by string tag", async () => {
+    type E = { code: "NOT_FOUND"; message: string } | { code: "FORBIDDEN"; message: string };
+
+    const encoder = ErrorEncoders.discriminated<E>("code", {
+      NOT_FOUND: 404,
+      FORBIDDEN: 403,
+    });
+
+    const notFound = encoder.encode({ code: "NOT_FOUND", message: "gone" });
+    expect(notFound.status).toBe(404);
+    expect(await notFound.json()).toEqual({ code: "NOT_FOUND", message: "gone" });
+
+    const forbidden = encoder.encode({ code: "FORBIDDEN", message: "nope" });
+    expect(forbidden.status).toBe(403);
+  });
+
+  test("discriminated dispatches by numeric tag", async () => {
+    const encoder = ErrorEncoders.discriminated<{ status: number }>("status", {
+      "404": 404,
+      "409": 409,
+    });
+
+    const response = encoder.encode({ status: 404 });
+    expect(response.status).toBe(404);
+  });
+
+  test("discriminated uses fallback for unknown tag", async () => {
+    const encoder = ErrorEncoders.discriminated<{ code: string }>("code", {
+      KNOWN: 400,
+    }, 500);
+
+    const response = encoder.encode({ code: "UNKNOWN" });
+    expect(response.status).toBe(500);
+  });
+
+  test("discriminated uses fallback when tag field is missing", async () => {
+    const encoder = ErrorEncoders.discriminated<Record<string, unknown>>("code", {
+      KNOWN: 400,
+    }, 500);
+
+    const response = encoder.encode({ message: "no code field" });
+    expect(response.status).toBe(500);
+  });
+
+  test("byProperty dispatches by unique property existence", async () => {
+    type E = { retryAfter: number } | { conflictId: string };
+
+    const encoder = ErrorEncoders.byProperty<E>({
+      retryAfter: 429,
+      conflictId: 409,
+    });
+
+    const retry = encoder.encode({ retryAfter: 30 });
+    expect(retry.status).toBe(429);
+    expect(await retry.json()).toEqual({ retryAfter: 30 });
+
+    const conflict = encoder.encode({ conflictId: "abc" });
+    expect(conflict.status).toBe(409);
+  });
+
+  test("byProperty uses fallback when no property matches", async () => {
+    const encoder = ErrorEncoders.byProperty<{ message: string }>({
+      retryAfter: 429,
+    }, 500);
+
+    const response = encoder.encode({ message: "unknown" });
+    expect(response.status).toBe(500);
+  });
+
+  test("byProperty checks first matching property", async () => {
+    const encoder = ErrorEncoders.byProperty<{ a: number; b: number }>({
+      a: 400,
+      b: 401,
+    });
+
+    // Both properties present — first one wins
+    const response = encoder.encode({ a: 1, b: 2 });
+    expect(response.status).toBe(400);
   });
 });

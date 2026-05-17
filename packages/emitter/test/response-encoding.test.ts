@@ -97,6 +97,44 @@ interface Binary {
 }
 `;
 
+const multiErrorSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "MultiErrorApi" })
+namespace MultiErrorApi;
+
+model Item { id: string; name: string; }
+
+@error model NotFoundError {
+  @statusCode _: 404;
+  code: "NOT_FOUND";
+  message: string;
+}
+
+@error model ForbiddenError {
+  @statusCode _: 403;
+  code: "FORBIDDEN";
+  message: string;
+}
+
+@error model ConflictError {
+  @statusCode _: 409;
+  conflictId: string;
+  message: string;
+}
+
+@route("/items")
+interface Items {
+  // Single error
+  @get read(@path itemId: string): Item | NotFoundError;
+  // Two errors with shared discriminant field
+  @delete remove(@path itemId: string): void | NotFoundError | ForbiddenError;
+  // Error without a shared literal field — falls back to byProperty
+  @put update(@path itemId: string, @body body: Item): Item | NotFoundError | ConflictError;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -133,5 +171,12 @@ describe("response encoding", () => {
     const r = compileFixture("content-types", contentTypeSpec);
 
     expect(r.readFile("content-api", "server-operations.ts")).toMatchSnapshot();
+  });
+
+  test("multiple error types generate discriminated or byProperty encoders", () => {
+    const r = compileFixture("multi-errors", multiErrorSpec);
+
+    expect(r.readFile("multi-error-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
   });
 });
