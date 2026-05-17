@@ -184,4 +184,41 @@ describe("http request decoders (sync)", () => {
       ]);
     }
   });
+
+  test("requiredCookie decodes present cookie and fails on missing", () => {
+    const decoder = RequestDecoders.combine(
+      [RequestDecoders.cookie("session", Decoders.string)],
+      (session) => ({ session }),
+    );
+
+    const ok = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/test", {
+        headers: { cookie: "session=abc123; theme=dark" },
+      }),
+      {},
+    );
+    expect(ok).toEqual(Either.right({ session: "abc123" }));
+
+    const missing = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/test"),
+      {},
+    );
+    expect(isLeft(missing)).toBe(true);
+  });
+
+  test("optional cookie returns undefined when absent", () => {
+    const decoder = RequestDecoders.combine(
+      [RequestDecoders.cookie("token", Decoders.string.optional())],
+      (token) => ({ token }),
+    );
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/test"),
+      {},
+    );
+    expect(result).toEqual(Either.right({ token: undefined }));
+  });
 });

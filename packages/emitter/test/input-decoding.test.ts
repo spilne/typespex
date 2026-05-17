@@ -80,6 +80,21 @@ interface Items {
 }
 `;
 
+const cookieSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "CookieApi" })
+namespace CookieApi;
+
+model Profile { name: string; }
+
+@route("/profile")
+interface Users {
+  @get me(@cookie sessionId: string, @cookie theme?: string): Profile;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -102,5 +117,12 @@ describe("input decoding", () => {
     const r = compileFixture("combined", combinedSpec);
 
     expect(r.readFile("combined-api", "server-operations.ts")).toMatchSnapshot();
+  });
+
+  test("cookie parameters", () => {
+    const r = compileFixture("cookies", cookieSpec);
+
+    expect(r.readFile("cookie-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("cookie-api", "server.ts")).toMatchSnapshot();
   });
 });

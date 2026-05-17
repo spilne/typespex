@@ -72,8 +72,9 @@ export function emitDecoder(
   const pathParams = op.parameters.parameters.filter((p) => p.type === "path");
   const queryParams = op.parameters.parameters.filter((p) => p.type === "query");
   const headerParams = op.parameters.parameters.filter((p) => p.type === "header");
+  const cookieParams = op.parameters.parameters.filter((p) => p.type === "cookie");
   const hasBody = op.parameters.body != null;
-  const hasRequestInput = pathParams.length + queryParams.length + headerParams.length > 0;
+  const hasRequestInput = pathParams.length + queryParams.length + headerParams.length + cookieParams.length > 0;
   const inputType = buildInputType(ctx, op);
 
   // Build request input decoder entries.
@@ -98,6 +99,14 @@ export function emitDecoder(
     requestEntries.push({
       name: param.param.name,
       expr: `RequestDecoders.header(${JSON.stringify(param.name.toLowerCase())}, ${decoder})`,
+    });
+  }
+  for (const param of cookieParams) {
+    const valueDecoder = emitDecoderExpression(ctx, param.param.type, "text", new Set(), param.param);
+    const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
+    requestEntries.push({
+      name: param.param.name,
+      expr: `RequestDecoders.cookie(${JSON.stringify(param.name)}, ${decoder})`,
     });
   }
 

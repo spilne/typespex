@@ -9,11 +9,12 @@ import {
 } from "./decoder.js";
 import { type ValidationIssue, ValidationError } from "./validation.js";
 
-/** Request data available to path/query/header decoders. */
+/** Request data available to path/query/header/cookie decoders. */
 export interface RequestInputSource {
   readonly pathParams: Readonly<Record<string, string>>;
   readonly query: URLSearchParams;
   readonly headers: Headers;
+  readonly cookies: Readonly<Record<string, string>>;
 }
 
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
@@ -73,6 +74,18 @@ export function requiredHeader<A>(
   const prefix = `$header.${lower}`;
   return createRequestDecoder((input) => {
     const result = decoder.decode(input.headers.get(lower));
+    return isLeft(result) ? prefixIssues(result, prefix) : result;
+  });
+}
+
+/** Decodes a cookie. */
+export function requiredCookie<A>(
+  name: string,
+  decoder: Decoder<A>,
+): RequestDecoder<A> {
+  const prefix = `$cookie.${name}`;
+  return createRequestDecoder((input) => {
+    const result = decoder.decode(input.cookies[name]);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
   });
 }
@@ -157,15 +170,17 @@ export async function decodeRequestInputAndBody<
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a RequestInputSource with lazy query parsing — only allocated when a request decoder reads `.query`. */
+/** Builds a RequestInputSource with lazy query/cookie parsing. */
 function createRequestInputSource(
   request: Request,
   pathParams: Readonly<Record<string, string>>,
 ): RequestInputSource {
   let _query: URLSearchParams | undefined;
+  let _cookies: Record<string, string> | undefined;
   return {
     pathParams,
     get query() { return (_query ??= getSearchParams(request.url)); },
+    get cookies() { return (_cookies ??= parseCookies(request.headers.get("cookie"))); },
     headers: request.headers,
   };
 }
@@ -184,6 +199,22 @@ function uriDecode(value: string): string {
   return value.indexOf("%") === -1 ? value : decodeURIComponent(value);
 }
 
+const EMPTY_COOKIES: Record<string, string> = Object.freeze(Object.create(null));
+
+/** Parses a Cookie header into name→value pairs. */
+function parseCookies(header: string | null): Record<string, string> {
+  if (!header) return EMPTY_COOKIES;
+  const cookies: Record<string, string> = Object.create(null);
+  for (const pair of header.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const name = pair.substring(0, eq).trim();
+    const value = pair.substring(eq + 1).trim();
+    if (name) cookies[name] = value;
+  }
+  return cookies;
+}
+
 // ---------------------------------------------------------------------------
 // Namespace
 // ---------------------------------------------------------------------------
@@ -192,5 +223,6 @@ export const RequestDecoders = {
   path: requiredPath,
   query: requiredQuery,
   header: requiredHeader,
+  cookie: requiredCookie,
   combine: combineRequestDecoders,
 } as const;
