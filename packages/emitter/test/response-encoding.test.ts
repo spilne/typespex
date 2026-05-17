@@ -60,6 +60,25 @@ interface Pets {
 }
 `;
 
+const responseHeadersSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "HeadersApi" })
+namespace HeadersApi;
+
+model RateLimitedResponse {
+  @header("x-rate-limit") rateLimit: int32;
+  @header("x-request-id") requestId: string;
+  data: string;
+}
+
+@route("/data")
+interface Data {
+  @get fetch(): RateLimitedResponse;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -83,5 +102,12 @@ describe("response encoding", () => {
     const r = compileFixture("enums", enumSpec);
 
     expect(r.readFile("enum-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("response @header properties become HTTP headers", () => {
+    const r = compileFixture("response-headers", responseHeadersSpec);
+
+    expect(r.readFile("headers-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("headers-api", "models.ts")).toMatchSnapshot();
   });
 });

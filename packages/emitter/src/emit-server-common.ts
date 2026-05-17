@@ -1,7 +1,7 @@
 import type { Model, Type, Union } from "@typespec/compiler";
 import { getDiscriminator, isArrayModelType, isErrorModel, isRecordModelType } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
-import { isStatusCode } from "@typespec/http";
+import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { typeToTs } from "./type-reference.js";
 
@@ -227,7 +227,44 @@ export function emitSuccessResponseEncoder(
   if (response.isVoid) {
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
+
+  const headers = collectResponseHeaders(ctx, op);
+  if (headers.length > 0) {
+    const entries = headers
+      .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+      .join(", ");
+    return `ResponseEncoders.jsonWithHeaders<${successType}>(${response.statusCode}, [${entries}])`;
+  }
+
   return `ResponseEncoders.json<${successType}>(${response.statusCode})`;
+}
+
+interface ResponseHeader {
+  readonly property: string;
+  readonly header: string;
+}
+
+/** Collects @header-decorated properties from the success response type. */
+function collectResponseHeaders(ctx: EmitterCtx, op: HttpOperation): ResponseHeader[] {
+  const headers: ResponseHeader[] = [];
+
+  for (const resp of op.responses) {
+    if (resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type)) continue;
+    if (resp.type.kind !== "Model") continue;
+
+    for (const [, prop] of resp.type.properties) {
+      if (isHeader(ctx.program, prop)) {
+        const headerName = getHeaderFieldName(ctx.program, prop);
+        headers.push({
+          property: prop.name,
+          header: headerName.toLowerCase(),
+        });
+      }
+    }
+    break;
+  }
+
+  return headers;
 }
 
 /** Emits an error encoder expression for a grouped errors object. */

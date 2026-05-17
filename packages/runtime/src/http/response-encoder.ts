@@ -65,8 +65,30 @@ function rawResponseEncoder(): ResponseEncoder<Response> {
   return ResponseEncoder.of((value) => value);
 }
 
+/**
+ * JSON response encoder that extracts named properties as HTTP headers.
+ * Properties listed in `headers` are set as response headers and removed from the body.
+ */
+function jsonWithHeadersResponseEncoder<A>(
+  status: number,
+  headers: ReadonlyArray<readonly [property: string, header: string]>,
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => {
+    const obj = { ...(value as Record<string, unknown>) };
+    const h = new Headers({ "content-type": "application/json" });
+    for (const [prop, header] of headers) {
+      if (prop in obj) {
+        h.set(header, String(obj[prop]));
+        delete obj[prop];
+      }
+    }
+    return new Response(JSON.stringify(obj), { status, headers: h });
+  });
+}
+
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
+  jsonWithHeaders: jsonWithHeadersResponseEncoder,
   empty: emptyResponseEncoder,
   text: textResponseEncoder,
   bytes: bytesResponseEncoder,
