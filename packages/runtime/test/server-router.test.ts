@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  Decoders,
   Either,
   createContextKey,
   createContextMap,
@@ -7,7 +8,6 @@ import {
   decode,
   emptyHints,
   type MatchedRequestContext,
-  numberCodec,
   type RequestContext,
   type ServerOperation,
 } from "../src/server.js";
@@ -226,7 +226,7 @@ describe("createHttpRouter", () => {
       decodeInput(request) {
         const value = new URL(request.url).searchParams.get("limit");
         return Either.map(
-          decode(numberCodec, value, "$query.limit"),
+          decode(Decoders.number, value, "$query.limit"),
           (limit) => ({ limit }),
         );
       },
