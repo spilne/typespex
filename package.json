@@ -1,7 +1,7 @@
 {
   "name": "typespex",
   "private": true,
-  "workspaces": ["packages/*", "example"],
+  "workspaces": ["packages/*", "example", "bench"],
   "scripts": {
     "build": "bun run --filter '*' build",
     "clean": "bun run --filter '*' clean",
