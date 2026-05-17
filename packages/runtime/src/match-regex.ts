@@ -5,6 +5,8 @@
 
 import type { RouteMatch, RouteMatcher } from "./matcher.js";
 
+const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
+
 interface RouteGroupInfo<R> {
   route: R;
   paramNames: string[];
@@ -71,6 +73,9 @@ function regexLookup<R>(
     const info = compiled.groupToRoute[i];
     if (!info) continue;
 
+    if (info.paramNames.length === 0) {
+      return { route: info.route, pathParams: EMPTY_PARAMS };
+    }
     const pathParams: Record<string, string> = Object.create(null);
     for (let p = 0; p < info.paramNames.length; p++) {
       pathParams[info.paramNames[p]] = match[info.firstGroup + p];

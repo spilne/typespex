@@ -66,16 +66,11 @@ function createRouteApp<I, E, O, Ctx extends RequestContext>(
   };
 }
 
-/** Creates the default HTTP server context used when no custom factory is supplied. */
 function createDefaultContext(
   request: Request,
   match?: MatchedEndpoint,
 ): RequestContext {
-  return {
-    request,
-    match,
-    state: createContextMap(),
-  };
+  return { request, match, state: createContextMap() };
 }
 
 /** Not-found app — used when no route matches. */
@@ -155,12 +150,11 @@ export function createHttpRouter<Ctx extends RequestContext>(
       const pathname = extractPathname(request.url);
       const matched = routeMatcher.match(method, pathname);
 
-      const match: MatchedEndpoint | undefined = matched
-        ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
-        : undefined;
-
       let context: Ctx | undefined;
       try {
+        const match: MatchedEndpoint | undefined = matched
+          ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
+          : undefined;
         context = options.createContext
           ? await options.createContext(request, match)
           : (createDefaultContext(request, match) as Ctx);

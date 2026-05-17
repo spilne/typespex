@@ -29,7 +29,6 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return Either.left({
-          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         });
@@ -42,7 +41,6 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return Either.left({
-          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         });
