@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "description": "TypeSpec emitter that generates TypeScript HTTP server bindings",
   "license": "MIT",
+  "author": "spilne",
+  "homepage": "https://github.com/spilne/typespex",
+  "bugs": { "url": "https://github.com/spilne/typespex/issues" },
   "repository": {
     "type": "git",
     "url": "https://github.com/spilne/typespex.git",
     "directory": "packages/emitter"
   },
+  "keywords": ["typespec", "emitter", "codegen", "server", "http", "typescript"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "files": ["dist"],
   "exports": {
     ".": {
@@ -18,6 +23,8 @@
       "default": "./dist/index.js"
     }
   },
+  "engines": { "node": ">=18" },
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

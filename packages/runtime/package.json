@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "description": "Framework-agnostic HTTP server runtime for TypeSpec-generated services",
   "license": "MIT",
+  "author": "spilne",
+  "homepage": "https://github.com/spilne/typespex",
+  "bugs": { "url": "https://github.com/spilne/typespex/issues" },
   "repository": {
     "type": "git",
     "url": "https://github.com/spilne/typespex.git",
     "directory": "packages/runtime"
   },
+  "keywords": ["typespec", "server", "http", "runtime", "typescript", "codegen"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "files": ["dist"],
   "exports": {
     ".": {
@@ -22,6 +27,8 @@
       "default": "./dist/server.js"
     }
   },
+  "engines": { "node": ">=18" },
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
