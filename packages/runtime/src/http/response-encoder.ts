@@ -67,22 +67,28 @@ function rawResponseEncoder(): ResponseEncoder<Response> {
 
 /**
  * JSON response encoder that extracts named properties as HTTP headers.
- * Properties listed in `headers` are set as response headers and removed from the body.
+ * Partitions the value in a single pass: header properties become response
+ * headers, everything else goes into the JSON body. No copy, no delete.
  */
 function jsonWithHeadersResponseEncoder<A>(
   status: number,
   headers: ReadonlyArray<readonly [property: string, header: string]>,
 ): ResponseEncoder<A> {
+  const headerMap = new Map(headers);
   return ResponseEncoder.of((value) => {
-    const obj = { ...(value as Record<string, unknown>) };
-    const h = new Headers({ "content-type": "application/json" });
-    for (const [prop, header] of headers) {
-      if (prop in obj) {
-        h.set(header, String(obj[prop]));
-        delete obj[prop];
+    const src = value as Record<string, unknown>;
+    const responseHeaders: Record<string, string> = { "content-type": "application/json" };
+    const body: Record<string, unknown> = {};
+    for (const key of Object.keys(src)) {
+      const headerName = headerMap.get(key);
+      if (headerName !== undefined) {
+        const v = src[key];
+        if (v !== undefined) responseHeaders[headerName] = String(v);
+      } else {
+        body[key] = src[key];
       }
     }
-    return new Response(JSON.stringify(obj), { status, headers: h });
+    return new Response(JSON.stringify(body), { status, headers: responseHeaders });
   });
 }
 
