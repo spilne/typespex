@@ -29,7 +29,8 @@
     "@typespec/http": ">=1.0.0"
   },
   "dependencies": {
-    "@typespex/runtime": "workspace:*"
+    "@typespex/runtime": "workspace:*",
+    "oxfmt": "^0.50.0"
   },
   "devDependencies": {
     "@typespec/compiler": "^1.0.0",

@@ -1,6 +1,7 @@
 import type { EmitContext } from "@typespec/compiler";
 import { emitFile, resolvePath } from "@typespec/compiler";
 import { getAllHttpServices, type HttpService } from "@typespec/http";
+import { format } from "oxfmt";
 import { $lib, type TypespexEmitterOptions } from "./lib.js";
 import { DEFAULT_FILE_NAMES, createEmitterContext, type GeneratedFileNames } from "./ctx.js";
 import { emitModels } from "./emit-models.js";
@@ -8,6 +9,15 @@ import { emitServerHints } from "./emit-server-hints.js";
 import { emitServerOperations } from "./emit-server-operations.js";
 import { emitServer } from "./emit-server.js";
 import { emitServerRouter } from "./emit-server-router.js";
+
+async function formatTs(fileName: string, content: string): Promise<string> {
+  try {
+    const result = await format(fileName, content);
+    return result.errors.length === 0 ? result.code : content;
+  } catch {
+    return content;
+  }
+}
 
 export { $lib } from "./lib.js";
 
@@ -38,40 +48,21 @@ export async function $onEmit(
     // Gather all HTTP operations
     const httpOperations = service.operations;
 
-    // 1. Emit model interfaces
-    const modelsContent = emitModels(ctx);
-    await emitFile(program, {
-      path: resolvePath(emitterOutputDir, layout.outputDir, `${layout.fileNames.models}.ts`),
-      content: modelsContent,
-    });
+    const files: Array<[string, string]> = [
+      [`${layout.fileNames.models}.ts`, emitModels(ctx)],
+      [`${layout.fileNames.serverHints}.ts`, emitServerHints(ctx, httpOperations)],
+      [`${layout.fileNames.serverOperations}.ts`, emitServerOperations(ctx, httpOperations)],
+      [`${layout.fileNames.server}.ts`, emitServer(ctx, httpOperations)],
+      [`${layout.fileNames.serverRouter}.ts`, emitServerRouter(ctx, httpOperations)],
+    ];
 
-    // 2. Emit server hint keys used by generated metadata
-    const serverHintsContent = emitServerHints(ctx, httpOperations);
-    await emitFile(program, {
-      path: resolvePath(emitterOutputDir, layout.outputDir, `${layout.fileNames.serverHints}.ts`),
-      content: serverHintsContent,
-    });
-
-    // 3. Emit FP/server operation runtime values
-    const serverOperationsContent = emitServerOperations(ctx, httpOperations);
-    await emitFile(program, {
-      path: resolvePath(emitterOutputDir, layout.outputDir, `${layout.fileNames.serverOperations}.ts`),
-      content: serverOperationsContent,
-    });
-
-    // 4. Emit FP/server handler interfaces
-    const serverContent = emitServer(ctx, httpOperations);
-    await emitFile(program, {
-      path: resolvePath(emitterOutputDir, layout.outputDir, `${layout.fileNames.server}.ts`),
-      content: serverContent,
-    });
-
-    // 5. Emit FP/server router wiring
-    const serverRouterContent = emitServerRouter(ctx, httpOperations);
-    await emitFile(program, {
-      path: resolvePath(emitterOutputDir, layout.outputDir, `${layout.fileNames.serverRouter}.ts`),
-      content: serverRouterContent,
-    });
+    for (const [fileName, raw] of files) {
+      const content = await formatTs(fileName, raw);
+      await emitFile(program, {
+        path: resolvePath(emitterOutputDir, layout.outputDir, fileName),
+        content,
+      });
+    }
   }
 }
 

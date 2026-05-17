@@ -7,5 +7,6 @@
     "clean": "bun run --filter '*' clean",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test"
-  }
+  },
+  "devDependencies": {}
 }
