@@ -65,6 +65,15 @@ function rawResponseEncoder(): ResponseEncoder<Response> {
   return ResponseEncoder.of((value) => value);
 }
 
+function streamResponseEncoder(
+  status = 200,
+  contentType = "application/octet-stream",
+): ResponseEncoder<ReadableStream> {
+  return ResponseEncoder.of((stream) =>
+    new Response(stream, responseInit(status, { headers: { "content-type": contentType } })),
+  );
+}
+
 /**
  * JSON response encoder that extracts named properties as HTTP headers.
  * Partitions the value in a single pass: header properties become response
@@ -98,6 +107,7 @@ export const ResponseEncoders = {
   empty: emptyResponseEncoder,
   text: textResponseEncoder,
   bytes: bytesResponseEncoder,
+  stream: streamResponseEncoder,
   response: rawResponseEncoder,
 } as const;
 

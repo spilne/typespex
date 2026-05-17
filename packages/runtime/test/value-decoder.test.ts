@@ -7,6 +7,7 @@ import {
   decode,
   decodeJsonBodyOrThrow,
   decodeJsonBody,
+  decodeFormBody,
   decodeOptional,
   decodeOptionalOrThrow,
   decodeOrThrow,
@@ -587,6 +588,56 @@ describe("http decoder - throw adapters", () => {
       expect(decoded.left.issues).toEqual([
         { path: "$body", message: "Body must contain valid JSON." },
       ]);
+    }
+  });
+
+  test("decodeFormBody parses url-encoded form data", async () => {
+    const okRequest = new Request("http://localhost/test", {
+      method: "POST",
+      body: "name=Alice&age=30",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    const result = await decodeFormBody(
+      okRequest,
+      Decoders.object<{ name: string; age: string }>({
+        name: Decoders.string,
+        age: Decoders.string,
+      }),
+    );
+    expect(result).toEqual(Either.right({ name: "Alice", age: "30" }));
+  });
+
+  test("decodeFormBody handles encoded values", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: "msg=hello+world&path=%2Ffoo%2Fbar",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    const result = await decodeFormBody(
+      request,
+      Decoders.object<{ msg: string; path: string }>({
+        msg: Decoders.string,
+        path: Decoders.string,
+      }),
+    );
+    expect(result).toEqual(Either.right({ msg: "hello world", path: "/foo/bar" }));
+  });
+
+  test("decodeFormBody validates decoded fields", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: "name=",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    const result = await decodeFormBody(
+      request,
+      Decoders.object<{ name: string }>({
+        name: Decoders.string.validate(Validators.minLength(1)),
+      }),
+    );
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.issues.some((i) => i.path.includes("name"))).toBe(true);
     }
   });
 });

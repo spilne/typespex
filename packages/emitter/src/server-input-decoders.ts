@@ -47,6 +47,7 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "decodeRequestInput",
   "decodeRequestInputAndBody",
   "decodeJsonBody",
+  "decodeFormBody",
 ] as const;
 
 export function getServerInputDecoderImports(): readonly string[] {
@@ -153,9 +154,10 @@ export function emitDecoder(
   // Case 3: body only — async Either
   if (!hasRequestInput && hasBody) {
     const ref = `${inputsRef}.${opName}`;
+    const bodyDecodeFn = pickBodyDecodeFn(op);
     return {
       inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op)],
-      decodeExpression: `decodeJsonBody<${inputType}>(request, ${ref})`,
+      decodeExpression: `${bodyDecodeFn}<${inputType}>(request, ${ref})`,
       needsPathParams: false,
       isAsync: true,
       hoistedDecoders: buildHoistedDecoders(ctx, dec),
@@ -177,6 +179,17 @@ export function emitDecoder(
     isAsync: true,
     hoistedDecoders: buildHoistedDecoders(ctx, dec),
   };
+}
+
+/** Picks decodeJsonBody or decodeFormBody based on the operation's body content type. */
+function pickBodyDecodeFn(op: HttpOperation): string {
+  const body = op.parameters.body;
+  if (!body || !("contentTypes" in body)) return "decodeJsonBody";
+  const contentTypes = body.contentTypes;
+  if (contentTypes.some((ct) => ct === "application/x-www-form-urlencoded")) {
+    return "decodeFormBody";
+  }
+  return "decodeJsonBody";
 }
 
 // ---------------------------------------------------------------------------

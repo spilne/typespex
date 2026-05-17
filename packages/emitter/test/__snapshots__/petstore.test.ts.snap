@@ -68,6 +68,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeJsonBody,
+  decodeFormBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { CreatePetInput, NotFoundError, Pet } from "./models.js";

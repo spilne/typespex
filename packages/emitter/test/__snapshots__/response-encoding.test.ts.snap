@@ -16,6 +16,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeJsonBody,
+  decodeFormBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 
@@ -129,6 +130,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeJsonBody,
+  decodeFormBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { RateLimitedResponse } from "./models.js";
@@ -190,6 +192,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeJsonBody,
+  decodeFormBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 
@@ -275,6 +278,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeJsonBody,
+  decodeFormBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { ConflictError, ForbiddenError, Item, NotFoundError } from "./models.js";

@@ -505,6 +505,26 @@ export async function decodeJsonBody<A>(
   return toValidationResult(decoder.decode(value), root);
 }
 
+/** Parses and validates a URL-encoded form body. Returns Either<ValidationError, A>. */
+export async function decodeFormBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  root = "$body",
+): Promise<EitherT<ValidationError, A>> {
+  let value: Record<string, unknown>;
+  try {
+    const text = await request.text();
+    const params = new URLSearchParams(text);
+    value = Object.create(null);
+    for (const [key, val] of params) {
+      value[key] = val;
+    }
+  } catch {
+    return Either.left(new ValidationError([{ path: root, message: "Body must contain valid form data." }]));
+  }
+  return toValidationResult(decoder.decode(value), root);
+}
+
 /** Decodes one value and throws `ValidationError` on failure. */
 export function decodeOrThrow<A>(
   decoder: Decoder<A>,

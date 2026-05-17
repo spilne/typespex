@@ -50,6 +50,22 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ name: "Milo" });
   });
 
+  test("stream wraps ReadableStream with content type", async () => {
+    const chunks = ["hello", " ", "world"];
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        controller.close();
+      },
+    });
+
+    const response = ResponseEncoders.stream(200, "text/event-stream").encode(stream);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(await response.text()).toBe("hello world");
+  });
+
   test("jsonWithHeaders extracts properties as HTTP headers", async () => {
     const encoder = ResponseEncoders.jsonWithHeaders<{
       rateLimit: number;
