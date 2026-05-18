@@ -137,15 +137,29 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   }
 
   if (op.parameters.body) {
-    const bodyType = op.parameters.body.type;
-    if (parts.length === 0 && bodyType.kind === "Model" && bodyType.name) {
-      return bodyType.name;
-    }
+    const body = op.parameters.body;
 
-    if (bodyType.kind === "Model") {
-      for (const [, prop] of bodyType.properties) {
-        const optional = prop.optional ? "?" : "";
-        parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
+    // Multipart body — build type from parts
+    if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
+      const multiParts = (body as any).parts as ReadonlyArray<{ name?: string; body: { type: Type }; optional: boolean; multi: boolean }>;
+      for (const part of multiParts) {
+        if (!part.name) continue;
+        const optional = part.optional ? "?" : "";
+        let tsType = typeToTs(ctx, part.body.type);
+        if (part.multi) tsType = `${tsType}[]`;
+        parts.push(`${part.name}${optional}: ${tsType}`);
+      }
+    } else {
+      const bodyType = body.type;
+      if (parts.length === 0 && bodyType.kind === "Model" && bodyType.name) {
+        return bodyType.name;
+      }
+
+      if (bodyType.kind === "Model") {
+        for (const [, prop] of bodyType.properties) {
+          const optional = prop.optional ? "?" : "";
+          parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
+        }
       }
     }
   }

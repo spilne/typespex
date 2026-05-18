@@ -15,6 +15,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -107,6 +108,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -229,6 +231,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -304,6 +307,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -382,6 +386,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -454,6 +459,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,
@@ -496,10 +502,10 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: HttpPart; file: HttpPart }>(request, UploadsInput.single),
+      decodeMultipartBody<{ name: string; file: File }>(request, UploadsInput.single),
     encodeOutput: (output: UploadResult) => UploadsOutput.single.encode(output),
     encodeError: (error: never) => UploadsErrors.single.encode(error),
-  } satisfies ServerOperation<{ name: HttpPart; file: HttpPart }, never, UploadResult>,
+  } satisfies ServerOperation<{ name: string; file: File }, never, UploadResult>,
 
   multi: {
     endpoint: {
@@ -514,10 +520,10 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ label: HttpPart; files: HttpPart[] }>(request, UploadsInput.multi),
+      decodeMultipartBody<{ label: string; files: File[] }>(request, UploadsInput.multi),
     encodeOutput: (output: UploadResult) => UploadsOutput.multi.encode(output),
     encodeError: (error: never) => UploadsErrors.multi.encode(error),
-  } satisfies ServerOperation<{ label: HttpPart; files: HttpPart[] }, never, UploadResult>,
+  } satisfies ServerOperation<{ label: string; files: File[] }, never, UploadResult>,
 
   optional: {
     endpoint: {
@@ -532,13 +538,10 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: HttpPart; description?: HttpPart }>(
-        request,
-        UploadsInput.optional,
-      ),
+      decodeMultipartBody<{ name: string; description?: string }>(request, UploadsInput.optional),
     encodeOutput: (output: UploadResult) => UploadsOutput.optional.encode(output),
     encodeError: (error: never) => UploadsErrors.optional.encode(error),
-  } satisfies ServerOperation<{ name: HttpPart; description?: HttpPart }, never, UploadResult>,
+  } satisfies ServerOperation<{ name: string; description?: string }, never, UploadResult>,
 } as const;
 "
 `;
@@ -550,15 +553,10 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { UploadResult } from "./models.js";
 
 export interface UploadsServer<Ctx = MatchedRequestContext> {
-  readonly single: OperationHandler<{ name: HttpPart; file: HttpPart }, never, UploadResult, Ctx>;
-  readonly multi: OperationHandler<
-    { label: HttpPart; files: HttpPart[] },
-    never,
-    UploadResult,
-    Ctx
-  >;
+  readonly single: OperationHandler<{ name: string; file: File }, never, UploadResult, Ctx>;
+  readonly multi: OperationHandler<{ label: string; files: File[] }, never, UploadResult, Ctx>;
   readonly optional: OperationHandler<
-    { name: HttpPart; description?: HttpPart },
+    { name: string; description?: string },
     never,
     UploadResult,
     Ctx

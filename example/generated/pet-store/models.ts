@@ -25,3 +25,9 @@ export interface ConflictError {
   code: "CONFLICT";
   message: string;
 }
+
+export interface UploadResult {
+  id: string;
+  filename: string;
+  size: number;
+}

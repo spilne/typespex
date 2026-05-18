@@ -46,6 +46,7 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "Validators",
   "decodeRequestInput",
   "decodeRequestInputAndBody",
+  "decodeRequestInputAndMultipartBody",
   "decodeJsonBody",
   "decodeFormBody",
   "decodeMultipartBody",
@@ -168,14 +169,17 @@ export function emitDecoder(
   // Case 4: request input + body — async Either with error accumulation
   const requestRef = `${inputsRef}.${opName}Request`;
   const bodyRef = `${inputsRef}.${opName}Body`;
-  const bodyType = typeToTs(ctx, op.parameters.body!.type);
+  const bodyInputType = buildBodyInputType(ctx, op);
   const requestType = buildRequestOnlyType(ctx, op);
+  const combinedDecodeFn = pickBodyDecodeFn(op) === "decodeMultipartBody"
+    ? "decodeRequestInputAndMultipartBody"
+    : "decodeRequestInputAndBody";
   return {
     inputEntries: [
       emitRequestDecoderEntry(`${opName}Request`, requestEntries),
       emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op),
     ],
-    decodeExpression: `decodeRequestInputAndBody<${requestType}, ${bodyType}>(${requestRef}, ${bodyRef}, request, pathParams)`,
+    decodeExpression: `${combinedDecodeFn}<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams)`,
     needsPathParams: true,
     isAsync: true,
     hoistedDecoders: buildHoistedDecoders(ctx, dec),
@@ -285,6 +289,24 @@ function emitMultipartDecoderEntry(
 // ---------------------------------------------------------------------------
 // Inline decoder expression emission (single-line)
 // ---------------------------------------------------------------------------
+
+function buildBodyInputType(ctx: EmitterCtx, op: HttpOperation): string {
+  const body = op.parameters.body;
+  if (!body) return "Record<string, never>";
+  if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
+    const parts: string[] = [];
+    const multiParts = (body as any).parts as ReadonlyArray<{ name?: string; body: { type: Type }; optional: boolean; multi: boolean }>;
+    for (const part of multiParts) {
+      if (!part.name) continue;
+      const optional = part.optional ? "?" : "";
+      let tsType = typeToTs(ctx, part.body.type);
+      if (part.multi) tsType = `${tsType}[]`;
+      parts.push(`${part.name}${optional}: ${tsType}`);
+    }
+    return parts.length > 0 ? `{ ${parts.join("; ")} }` : "Record<string, never>";
+  }
+  return typeToTs(ctx, body.type);
+}
 
 function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];

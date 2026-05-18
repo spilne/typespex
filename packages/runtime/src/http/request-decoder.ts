@@ -5,6 +5,7 @@ import {
   type DecoderResult,
   Decoder,
   decodeJsonBody,
+  decodeMultipartBody,
   prefixIssues,
 } from "./decoder.js";
 import { type ValidationIssue, ValidationError } from "./validation.js";
@@ -153,6 +154,33 @@ export async function decodeRequestInputAndBody<
 ): Promise<EitherT<ValidationError, A & B>> {
   const requestResult = requestDecoder.decode(createRequestInputSource(request, pathParams));
   const bodyResult = await decodeJsonBody(request, bodyDecoder, "$body");
+
+  const requestFailed = isLeft(requestResult);
+  const bodyFailed = isLeft(bodyResult);
+  if (requestFailed || bodyFailed) {
+    const issues: ValidationIssue[] = [];
+    if (requestFailed) issues.push(...requestResult.left);
+    if (bodyFailed) issues.push(...bodyResult.left.issues);
+    return Either.left(new ValidationError(issues));
+  }
+
+  return Either.right({ ...requestResult.right, ...bodyResult.right } as A & B);
+}
+
+/**
+ * Decodes sync request input and an async multipart body with error accumulation.
+ */
+export async function decodeRequestInputAndMultipartBody<
+  A extends object,
+  B extends object,
+>(
+  requestDecoder: RequestDecoder<A>,
+  bodyDecoder: Decoder<B>,
+  request: Request,
+  pathParams: Readonly<Record<string, string>>,
+): Promise<EitherT<ValidationError, A & B>> {
+  const requestResult = requestDecoder.decode(createRequestInputSource(request, pathParams));
+  const bodyResult = await decodeMultipartBody(request, bodyDecoder, "$body");
 
   const requestFailed = isLeft(requestResult);
   const bodyFailed = isLeft(bodyResult);

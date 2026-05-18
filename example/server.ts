@@ -48,6 +48,16 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       pets.delete(petId);
       return Either.right(undefined);
     },
+
+    async uploadPhoto({ petId, caption, photo }) {
+      const pet = pets.get(petId);
+      if (!pet) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
+      return Either.right({
+        id: crypto.randomUUID(),
+        filename: photo.name,
+        size: photo.size,
+      });
+    },
   },
 };
 

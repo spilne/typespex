@@ -56,6 +56,12 @@ namespace PetStore {
     message: string;
   }
 
+  model UploadResult {
+    id: string;
+    filename: string;
+    size: int32;
+  }
+
   @route("/pets")
   interface Pets {
     @get list(
@@ -77,5 +83,14 @@ namespace PetStore {
         @minLength(1)
         @path petId: string
     ): void | NotFoundError | ForbiddenError;
+
+    @route("/{petId}/photo")
+    @post uploadPhoto(
+        @path petId: string,
+        @multipartBody body: {
+          caption?: HttpPart<string>;
+          photo: HttpPart<File>;
+        },
+    ): UploadResult | NotFoundError;
   }
 }

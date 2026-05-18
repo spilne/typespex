@@ -67,6 +67,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
   decodeJsonBody,
   decodeFormBody,
   decodeMultipartBody,

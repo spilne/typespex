@@ -6,7 +6,8 @@ import type {
   CreatePetInput,
   ForbiddenError,
   NotFoundError,
-  Pet
+  Pet,
+  UploadResult,
 } from "./models.js";
 
 export interface PetsServer<Ctx = MatchedRequestContext> {
@@ -14,6 +15,12 @@ export interface PetsServer<Ctx = MatchedRequestContext> {
   readonly create: OperationHandler<CreatePetInput, ConflictError, Pet, Ctx>;
   readonly read: OperationHandler<{ petId: string }, NotFoundError, Pet, Ctx>;
   readonly delete: OperationHandler<{ petId: string }, NotFoundError | ForbiddenError, void, Ctx>;
+  readonly uploadPhoto: OperationHandler<
+    { petId: string; caption?: string; photo: File },
+    NotFoundError,
+    UploadResult,
+    Ctx
+  >;
 }
 
 export interface PetStoreServer<Ctx = MatchedRequestContext> {

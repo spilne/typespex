@@ -20,6 +20,15 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
         const valueType = type.indexer!.value;
         return `Record<string, ${typeToTs(ctx, valueType)}>`;
       }
+      // Unwrap HttpPart<T> → T
+      if (type.name === "HttpPart" && type.templateMapper?.args) {
+        const inner = [...type.templateMapper.args][0];
+        if (inner) return typeToTs(ctx, inner as Type);
+      }
+      // Unwrap File → File (Web standard)
+      if (type.name === "File") {
+        return "File";
+      }
       if (type.name === "" || type.name === undefined) {
         return emitInlineModel(ctx, type);
       }

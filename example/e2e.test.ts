@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Either } from "@typespex/runtime/server";
 import type { PetStoreServer } from "./generated/pet-store/server.js";
-import type { Pet } from "./generated/pet-store/models.js";
+import type { Pet, UploadResult } from "./generated/pet-store/models.js";
 import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +50,16 @@ function createTestServer() {
         if (!item) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
         store.delete(item.name);
         return Either.right(undefined);
+      },
+
+      uploadPhoto: async ({ petId, caption, photo }) => {
+        const item = [...store.values()].find((i) => i.id === petId);
+        if (!item) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
+        return Either.right({
+          id: crypto.randomUUID(),
+          filename: photo.name,
+          size: photo.size,
+        });
       },
     },
   };
@@ -410,6 +420,73 @@ describe("e2e: full request pipeline", () => {
       await router.handle(req("DELETE", `/pets/${created.id}`, undefined, { "x-role": "admin" }));
 
       const res = await router.handle(req("GET", `/pets/${created.id}`));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({
+        code: "NOT_FOUND",
+        message: "not found",
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // POST /pets/:petId/photo — multipart file upload
+  // -------------------------------------------------------------------
+
+  describe("POST /pets/:petId/photo", () => {
+    test("uploads a file with caption", async () => {
+      const { router } = createTestServer();
+      const pet = await createItem(router, "Photogenic");
+
+      const formData = new FormData();
+      formData.append("caption", "A nice photo");
+      formData.append("photo", new File(["image-data"], "photo.jpg", { type: "image/jpeg" }));
+
+      const res = await router.handle(
+        new Request(`http://localhost/pets/${pet.id}/photo`, {
+          method: "POST",
+          body: formData,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body: UploadResult = await res.json();
+      expect(body.id).toBeDefined();
+      expect(body.filename).toBe("photo.jpg");
+      expect(body.size).toBe(10); // "image-data".length
+    });
+
+    test("uploads without optional caption", async () => {
+      const { router } = createTestServer();
+      const pet = await createItem(router, "NoCap");
+
+      const formData = new FormData();
+      formData.append("photo", new File(["data"], "img.png", { type: "image/png" }));
+
+      const res = await router.handle(
+        new Request(`http://localhost/pets/${pet.id}/photo`, {
+          method: "POST",
+          body: formData,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body: UploadResult = await res.json();
+      expect(body.filename).toBe("img.png");
+    });
+
+    test("returns 404 for unknown pet", async () => {
+      const { router } = createTestServer();
+
+      const formData = new FormData();
+      formData.append("photo", new File(["data"], "x.jpg", { type: "image/jpeg" }));
+
+      const res = await router.handle(
+        new Request("http://localhost/pets/nonexistent/photo", {
+          method: "POST",
+          body: formData,
+        }),
+      );
+
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({
         code: "NOT_FOUND",
