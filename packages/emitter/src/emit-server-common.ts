@@ -347,7 +347,10 @@ export function emitErrorEncoderExpression(
   const discriminant = resolveDiscriminant(ctx, op, errorResponses);
   if (discriminant) {
     const entries = discriminant.variants
-      .map((v) => `${JSON.stringify(v.value)}: ${v.status}`)
+      .map((v) => {
+        const model = errorResponses.find((e) => e.statusCode === v.status)?.model;
+        return `${JSON.stringify(v.value)}: ${emitErrorVariantValue(ctx, v.status, model)}`;
+      })
       .join(", ");
     return `ErrorEncoders.discriminated<${errorType}>(${JSON.stringify(discriminant.field)}, { ${entries} })`;
   }
@@ -356,13 +359,27 @@ export function emitErrorEncoderExpression(
   const propertyMapping = findUniquePropertyMapping(ctx, errorResponses);
   if (propertyMapping) {
     const entries = propertyMapping
-      .map((e) => `${JSON.stringify(e.property)}: ${e.status}`)
+      .map((e) => {
+        const model = errorResponses.find((r) => r.statusCode === e.status)?.model;
+        return `${JSON.stringify(e.property)}: ${emitErrorVariantValue(ctx, e.status, model)}`;
+      })
       .join(", ");
     return `ErrorEncoders.byProperty<${errorType}>({ ${entries} })`;
   }
 
   // Fallback — no discrimination possible
   return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
+}
+
+/** Emits a variant value: plain status number or { status, headers } object. */
+function emitErrorVariantValue(ctx: EmitterCtx, status: number, model?: Model): string {
+  if (!model) return String(status);
+  const headers = collectModelHeaders(ctx, model);
+  if (headers.length === 0) return String(status);
+  const entries = headers
+    .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+    .join(", ");
+  return `{ status: ${status}, headers: [${entries}] }`;
 }
 
 // ---------------------------------------------------------------------------

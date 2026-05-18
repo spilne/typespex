@@ -122,33 +122,68 @@ function jsonErrorEncoder<E>(status: number): ResponseEncoder<E> {
   return jsonResponseEncoder(status);
 }
 
+/** Per-variant config: status code + optional header mappings. */
+export interface ErrorVariant {
+  readonly status: number;
+  readonly headers?: ReadonlyArray<readonly [property: string, header: string]>;
+}
+
+/** Encodes a JSON error response, optionally extracting headers. */
+function encodeErrorResponse<E>(error: E, status: number, headerDefs?: ReadonlyArray<readonly [string, string]>): Response {
+  if (!headerDefs || headerDefs.length === 0) {
+    return Response.json(error, { status });
+  }
+  const src = error as Record<string, unknown>;
+  const responseHeaders: Record<string, string> = { "content-type": "application/json" };
+  const body: Record<string, unknown> = {};
+  for (const key of Object.keys(src)) {
+    let isHeader = false;
+    for (const [prop, header] of headerDefs) {
+      if (key === prop) {
+        const v = src[key];
+        if (v !== undefined && (typeof v !== "object" || v === null)) {
+          responseHeaders[header] = String(v);
+        }
+        isHeader = true;
+        break;
+      }
+    }
+    if (!isHeader) body[key] = src[key];
+  }
+  return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+}
+
 /** Discriminated by a field with unique literal values per variant. */
 function discriminatedErrorEncoder<E>(
   field: string,
-  variants: Readonly<Record<string, number>>,
+  variants: Readonly<Record<string, number | ErrorVariant>>,
   fallbackStatus = 500,
 ): ResponseEncoder<E> {
   return ResponseEncoder.of((error) => {
     const tag = (error as Record<string, unknown>)[field];
-    const status = (typeof tag === "string" || typeof tag === "number"
-      ? variants[String(tag)]
-      : undefined) ?? fallbackStatus;
-    return Response.json(error, { status });
+    const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
+    const variant = key !== undefined ? variants[key] : undefined;
+    if (variant === undefined) return encodeErrorResponse(error, fallbackStatus);
+    if (typeof variant === "number") return encodeErrorResponse(error, variant);
+    return encodeErrorResponse(error, variant.status, variant.headers);
   });
 }
 
 /** Discriminated by unique property existence per variant. */
 function byPropertyErrorEncoder<E>(
-  mapping: Readonly<Record<string, number>>,
+  mapping: Readonly<Record<string, number | ErrorVariant>>,
   fallbackStatus = 500,
 ): ResponseEncoder<E> {
   const entries = Object.entries(mapping);
   return ResponseEncoder.of((error) => {
     const obj = error as Record<string, unknown>;
-    for (const [prop, status] of entries) {
-      if (prop in obj) return Response.json(error, { status });
+    for (const [prop, variant] of entries) {
+      if (prop in obj) {
+        if (typeof variant === "number") return encodeErrorResponse(error, variant);
+        return encodeErrorResponse(error, variant.status, variant.headers);
+      }
     }
-    return Response.json(error, { status: fallbackStatus });
+    return encodeErrorResponse(error, fallbackStatus);
   });
 }
 
@@ -157,7 +192,7 @@ function jsonWithHeadersErrorEncoder<E>(
   status: number,
   headers: ReadonlyArray<readonly [property: string, header: string]>,
 ): ResponseEncoder<E> {
-  return jsonWithHeadersResponseEncoder<E>(status, headers);
+  return ResponseEncoder.of((error) => encodeErrorResponse(error, status, headers));
 }
 
 export const ErrorEncoders = {
