@@ -92,7 +92,9 @@ function jsonWithHeadersResponseEncoder<A>(
       const headerName = headerMap.get(key);
       if (headerName !== undefined) {
         const v = src[key];
-        if (v !== undefined) responseHeaders[headerName] = String(v);
+        if (v !== undefined && (typeof v !== "object" || v === null)) {
+          responseHeaders[headerName] = String(v);
+        }
       } else {
         body[key] = src[key];
       }
@@ -150,9 +152,19 @@ function byPropertyErrorEncoder<E>(
   });
 }
 
+/** Single-status JSON error encoder with response headers. */
+function jsonWithHeadersErrorEncoder<E>(
+  status: number,
+  headers: ReadonlyArray<readonly [property: string, header: string]>,
+): ResponseEncoder<E> {
+  return jsonWithHeadersResponseEncoder<E>(status, headers);
+}
+
 export const ErrorEncoders = {
   /** Single-status — no discrimination needed. */
   json: jsonErrorEncoder,
+  /** Single-status with response headers extracted from the error object. */
+  jsonWithHeaders: jsonWithHeadersErrorEncoder,
   /** Discriminated by a field with unique literal values. */
   discriminated: discriminatedErrorEncoder,
   /** Discriminated by unique property existence. */

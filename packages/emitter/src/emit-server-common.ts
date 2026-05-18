@@ -304,6 +304,20 @@ function collectResponseHeaders(ctx: EmitterCtx, op: HttpOperation): ResponseHea
   return headers;
 }
 
+/** Collects @header-decorated properties from a single model. */
+function collectModelHeaders(ctx: EmitterCtx, model: Model): ResponseHeader[] {
+  const headers: ResponseHeader[] = [];
+  for (const [, prop] of model.properties) {
+    if (isHeader(ctx.program, prop)) {
+      headers.push({
+        property: prop.name,
+        header: getHeaderFieldName(ctx.program, prop).toLowerCase(),
+      });
+    }
+  }
+  return headers;
+}
+
 /** Emits an error encoder expression for a grouped errors object. */
 export function emitErrorEncoderExpression(
   ctx: EmitterCtx,
@@ -318,6 +332,13 @@ export function emitErrorEncoderExpression(
 
   // Single error type — no discrimination needed
   if (errorResponses.length === 1) {
+    const headers = collectModelHeaders(ctx, errorResponses[0].model);
+    if (headers.length > 0) {
+      const entries = headers
+        .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+        .join(", ");
+      return `ErrorEncoders.jsonWithHeaders<${errorType}>(${errorResponses[0].statusCode}, [${entries}])`;
+    }
     return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
   }
 

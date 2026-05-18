@@ -90,8 +90,15 @@ export function createRegexMatcher<R>(
   routes: Array<{ method: string; path: string; route: R }>,
 ): RouteMatcher<R> {
   const perMethod = new Map<string, Array<{ path: string; route: R }>>();
+  const seen = new Set<string>();
 
   for (const { method, path, route } of routes) {
+    const key = `${method} ${path}`;
+    if (seen.has(key)) {
+      throw new Error(`Duplicate route: ${key}`);
+    }
+    seen.add(key);
+
     let group = perMethod.get(method);
     if (!group) {
       group = [];

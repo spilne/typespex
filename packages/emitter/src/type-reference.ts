@@ -25,8 +25,8 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
         const inner = [...type.templateMapper.args][0];
         if (inner) return typeToTs(ctx, inner as Type);
       }
-      // Unwrap File → File (Web standard)
-      if (type.name === "File") {
+      // Map File and subtypes → Web standard File
+      if (isFileModel(type)) {
         return "File";
       }
       if (type.name === "" || type.name === undefined) {
@@ -89,6 +89,15 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     default:
       return "unknown";
   }
+}
+
+function isFileModel(model: Model): boolean {
+  let current: Model | undefined = model;
+  while (current) {
+    if (current.name === "File") return true;
+    current = current.baseModel;
+  }
+  return false;
 }
 
 function emitInlineModel(ctx: EmitterCtx, model: Model): string {
