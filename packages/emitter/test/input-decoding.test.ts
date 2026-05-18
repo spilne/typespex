@@ -113,6 +113,40 @@ interface Tree {
 }
 `;
 
+const multipartSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "UploadApi" })
+namespace UploadApi;
+
+model UploadResult { id: string; size: int32; }
+
+@route("/upload")
+interface Uploads {
+  @route("/single") @post single(
+    @multipartBody body: {
+      name: HttpPart<string>;
+      file: HttpPart<File>;
+    },
+  ): UploadResult;
+
+  @route("/multi") @post multi(
+    @multipartBody body: {
+      label: HttpPart<string>;
+      files: HttpPart<File>[];
+    },
+  ): UploadResult;
+
+  @route("/optional") @post optional(
+    @multipartBody body: {
+      name: HttpPart<string>;
+      description?: HttpPart<string>;
+    },
+  ): UploadResult;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -148,5 +182,12 @@ describe("input decoding", () => {
     const r = compileFixture("recursive", recursiveSpec);
 
     expect(r.readFile("tree-api", "server-operations.ts")).toMatchSnapshot();
+  });
+
+  test("multipart body with file, multi-valued, and optional parts", () => {
+    const r = compileFixture("multipart", multipartSpec);
+
+    expect(r.readFile("upload-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("upload-api", "server.ts")).toMatchSnapshot();
   });
 });
