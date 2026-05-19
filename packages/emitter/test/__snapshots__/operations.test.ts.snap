@@ -7,7 +7,7 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { HealthStatus } from "./models.js";
 
 export interface StatusApiServer<Ctx = MatchedRequestContext> {
-  readonly health: OperationHandler<Record<string, never>, never, HealthStatus, Ctx>;
+  readonly health: OperationHandler<Record<string, never>, HealthStatus, Ctx>;
 }
 "
 `;
@@ -21,7 +21,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -39,10 +38,6 @@ const StatusApiOutput = {
   health: ResponseEncoders.json<HealthStatus>(200),
 };
 
-const StatusApiErrors = {
-  health: ErrorEncoders.json<never>(500),
-};
-
 export const StatusApiOperations = {
   health: {
     endpoint: {
@@ -57,9 +52,8 @@ export const StatusApiOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: HealthStatus) => StatusApiOutput.health.encode(output),
-    encodeError: (error: never) => StatusApiErrors.health.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, HealthStatus>,
+    encodeResult: (result: HealthStatus) => StatusApiOutput.health.encode(result),
+  } satisfies ServerOperation<Record<string, never>, HealthStatus>,
 } as const;
 "
 `;
@@ -94,7 +88,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -112,10 +105,6 @@ const NestedApiOutput = {
   getConfig: ResponseEncoders.json<Config>(200),
 };
 
-const NestedApiErrors = {
-  getConfig: ErrorEncoders.json<never>(500),
-};
-
 export const NestedApiOperations = {
   getConfig: {
     endpoint: {
@@ -130,9 +119,8 @@ export const NestedApiOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: Config) => NestedApiOutput.getConfig.encode(output),
-    encodeError: (error: never) => NestedApiErrors.getConfig.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, Config>,
+    encodeResult: (result: Config) => NestedApiOutput.getConfig.encode(result),
+  } satisfies ServerOperation<Record<string, never>, Config>,
 } as const;
 "
 `;
@@ -158,7 +146,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -175,10 +162,6 @@ const SecureApiOutput = {
   admin: ResponseEncoders.text(200),
 };
 
-const SecureApiErrors = {
-  admin: ErrorEncoders.json<never>(500),
-};
-
 export const SecureApiOperations = {
   admin: {
     endpoint: {
@@ -193,9 +176,8 @@ export const SecureApiOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: string) => SecureApiOutput.admin.encode(output),
-    encodeError: (error: never) => SecureApiErrors.admin.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, string>,
+    encodeResult: (result: string) => SecureApiOutput.admin.encode(result),
+  } satisfies ServerOperation<Record<string, never>, string>,
 } as const;
 "
 `;

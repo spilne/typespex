@@ -1,8 +1,9 @@
-import type { Model, Type, Union } from "@typespec/compiler";
-import { getDiscriminator, isArrayModelType, isErrorModel, isRecordModelType } from "@typespec/compiler";
+import type { Model, Type } from "@typespec/compiler";
+import { getDiscriminator, isArrayModelType, isRecordModelType } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
 import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
+import { $lib } from "./lib.js";
 import { typeToTs } from "./type-reference.js";
 
 export interface OperationGroup {
@@ -168,17 +169,17 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   return `{ ${parts.join("; ")} }`;
 }
 
-export function buildSuccessType(ctx: EmitterCtx, op: HttpOperation): string {
+export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
   const types: string[] = [];
+  const seen = new Set<string>();
 
   for (const resp of op.responses) {
-    const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
-    if (isError) continue;
-
-    if (resp.type.kind === "Intrinsic" && resp.type.name === "void") {
-      types.push("void");
-    } else {
-      types.push(responseTypeToTs(ctx, resp));
+    const tsType = resp.type.kind === "Intrinsic" && resp.type.name === "void"
+      ? "void"
+      : responseTypeToTs(ctx, resp);
+    if (!seen.has(tsType)) {
+      types.push(tsType);
+      seen.add(tsType);
     }
   }
 
@@ -210,93 +211,48 @@ function hasResponseEnvelopeMetadata(resp: HttpOperationResponse): boolean {
   );
 }
 
-export function buildErrorType(ctx: EmitterCtx, op: HttpOperation): string {
-  const types: string[] = [];
-
-  for (const resp of op.responses) {
-    const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
-    if (!isError) continue;
-    types.push(typeToTs(ctx, resp.type));
-  }
-
-  if (types.length === 0) return "never";
-  return types.join(" | ");
-}
-
 export function toColonPath(path: string): string {
   return path.replace(/\{([^}]+)\}/g, ":$1");
 }
 
-export interface SuccessResponseEncoding {
-  readonly statusCode: number;
-  readonly isVoid: boolean;
-  readonly contentType: string | undefined;
-}
-
-export function getSuccessResponseEncoding(
+/** Response encoder expression used in generated result encoder objects. */
+export function emitResultResponseEncoder(
   ctx: EmitterCtx,
   op: HttpOperation,
-): SuccessResponseEncoding {
-  let successStatus = 200;
-  let isVoid = false;
-  let contentType: string | undefined;
-
-  for (const resp of op.responses) {
-    const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
-    if (isError) continue;
-
-    const rawStatus = resp.statusCodes;
-    successStatus = typeof rawStatus === "number" ? rawStatus : 200;
-    isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
-
-    for (const content of resp.responses) {
-      if (content.body?.contentTypes.length) {
-        contentType = content.body.contentTypes[0];
-      }
-    }
-    break;
-  }
-
-  if (isVoid) {
-    return { statusCode: successStatus === 200 ? 204 : successStatus, isVoid: true, contentType };
-  }
-  return { statusCode: successStatus, isVoid: false, contentType };
-}
-
-/** Success response encoder expression used in generated output encoder objects. */
-export function emitSuccessResponseEncoder(
-  ctx: EmitterCtx,
-  op: HttpOperation,
-  successType: string,
+  resultType: string,
 ): string {
-  const responses = collectSuccessResponseVariants(ctx, op);
+  const responses = collectResponseVariants(ctx, op);
   if (responses.length > 1) {
-    const statusField = findStatusDiscriminator(ctx, responses);
-    if (statusField) {
-      const entries = responses
-        .map((response) => `${JSON.stringify(String(response.statusCode))}: ${emitResponseVariant(response)}`)
-        .join(", ");
-      return `ResponseEncoders.discriminated<${successType}>(${JSON.stringify(statusField)}, { ${entries} }, ${emitResponseVariant(responses[0])})`;
+    const matchers = emitResponseMatchers(ctx, op, responses);
+    if (matchers.length > 0) {
+      return `ResponseEncoders.oneOf<${resultType}>([${matchers.join(", ")}])`;
     }
+    $lib.reportDiagnostic(ctx.program, {
+      code: "undifferentiable-response-union",
+      target: op.operation,
+    });
   }
 
-  const response = responses[0] ?? getSuccessResponseEncoding(ctx, op);
+  const response = responses[0];
+  if (!response) {
+    return "ResponseEncoders.empty(204)";
+  }
   if (response.isVoid) {
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
 
-  if ("omitProperties" in response && shouldUseVariantEncoder(response)) {
-    return `ResponseEncoders.variant<${successType}>(${emitResponseVariant(response)})`;
+  if (shouldUseVariantEncoder(response)) {
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(response)})`;
   }
 
-  const headers = response.headers ?? collectResponseHeaders(ctx, op);
-  const encoder = pickEncoderForContentType(response.contentType, successType, response.statusCode);
+  const headers = response.headers;
+  const encoder = pickEncoderForContentType(response.contentType, resultType, response.statusCode);
 
   if (headers.length > 0 && encoder.startsWith("ResponseEncoders.json")) {
     const entries = headers
       .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
       .join(", ");
-    return `ResponseEncoders.jsonWithHeaders<${successType}>(${response.statusCode}, [${entries}])`;
+    return `ResponseEncoders.jsonWithHeaders<${resultType}>(${response.statusCode}, [${entries}])`;
   }
 
   return encoder;
@@ -307,23 +263,25 @@ function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
     response.omitProperties.length > 0;
 }
 
-interface SuccessResponseVariant extends SuccessResponseEncoding {
+interface SuccessResponseVariant {
+  readonly statusCode: number;
+  readonly isVoid: boolean;
+  readonly contentType: string | undefined;
   readonly headers: ResponseHeader[];
   readonly bodyProperty?: string;
   readonly omitProperties: readonly string[];
   readonly statusProperty?: string;
+  readonly type: Type;
+  readonly model?: Model;
 }
 
-function collectSuccessResponseVariants(
+function collectResponseVariants(
   ctx: EmitterCtx,
   op: HttpOperation,
 ): SuccessResponseVariant[] {
   const variants: SuccessResponseVariant[] = [];
 
   for (const resp of op.responses) {
-    const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
-    if (isError) continue;
-
     const content = resp.responses[0];
     const rawStatus = resp.statusCodes;
     const statusCode = typeof rawStatus === "number"
@@ -351,6 +309,8 @@ function collectSuccessResponseVariants(
       bodyProperty: body?.property?.name,
       omitProperties: metadataProperties.map((prop) => prop.property.name),
       statusProperty: metadataProperties.find((prop) => prop.kind === "statusCode")?.property.name,
+      type: resp.type,
+      model: resp.type.kind === "Model" ? resp.type : undefined,
     });
   }
 
@@ -382,6 +342,197 @@ function findStatusDiscriminator(
 
   const statuses = new Set(responses.map((response) => response.statusCode));
   return statuses.size === responses.length ? first.statusProperty : undefined;
+}
+
+function emitResponseMatchers(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  responses: readonly SuccessResponseVariant[],
+): string[] {
+  const matchers: string[] = [];
+  const pending = new Set(responses);
+
+  const voidResponses = responses.filter((response) => response.isVoid);
+  if (voidResponses.length > 1) return [];
+  if (voidResponses.length === 1) {
+    const [response] = voidResponses;
+    matchers.push(`{ kind: "undefined", variant: ${emitResponseVariant(response)} }`);
+    pending.delete(response);
+  }
+
+  for (const response of [...pending]) {
+    const matcher = emitDirectTypeMatcher(ctx, response);
+    if (!matcher) continue;
+    matchers.push(matcher);
+    pending.delete(response);
+  }
+
+  if (pending.size === 0) return matchers;
+
+  const objectResponses = [...pending].filter((response) =>
+    response.model && !isArrayModelType(ctx.program, response.model)
+  );
+  if (objectResponses.length !== pending.size) return [];
+
+  if (objectResponses.length === 1) {
+    matchers.push(`{ kind: "object", variant: ${emitResponseVariant(objectResponses[0])} }`);
+    return matchers;
+  }
+
+  const explicitDiscriminator = resolveExplicitDiscriminatorMatcher(ctx, op, objectResponses);
+  if (explicitDiscriminator) {
+    matchers.push(explicitDiscriminator);
+    return matchers;
+  }
+
+  const statusField = findStatusDiscriminator(ctx, objectResponses);
+  if (statusField) {
+    matchers.push(emitStatusFieldMatcher(statusField, objectResponses));
+    return matchers;
+  }
+
+  const literalDiscriminator = resolveImplicitLiteralMatcher(ctx, objectResponses);
+  if (literalDiscriminator) {
+    matchers.push(literalDiscriminator);
+    return matchers;
+  }
+
+  const propertyMatcher = resolvePropertyMatcher(ctx, objectResponses);
+  if (propertyMatcher) {
+    matchers.push(propertyMatcher);
+    return matchers;
+  }
+
+  return [];
+}
+
+function emitDirectTypeMatcher(
+  ctx: EmitterCtx,
+  response: SuccessResponseVariant,
+): string | undefined {
+  if (response.model && isArrayModelType(ctx.program, response.model)) {
+    return `{ kind: "array", variant: ${emitResponseVariant(response)} }`;
+  }
+
+  if (response.type.kind !== "Scalar") return undefined;
+
+  const scalarName = response.type.name;
+  if (scalarName === "string") {
+    return `{ kind: "type", type: "string", variant: ${emitResponseVariant(response)} }`;
+  }
+  if (scalarName === "boolean") {
+    return `{ kind: "type", type: "boolean", variant: ${emitResponseVariant(response)} }`;
+  }
+  if (
+    scalarName === "int32" ||
+    scalarName === "int64" ||
+    scalarName === "float32" ||
+    scalarName === "float64" ||
+    scalarName === "numeric" ||
+    scalarName === "integer" ||
+    scalarName === "float" ||
+    scalarName === "decimal"
+  ) {
+    return `{ kind: "type", type: "number", variant: ${emitResponseVariant(response)} }`;
+  }
+
+  return undefined;
+}
+
+function resolveExplicitDiscriminatorMatcher(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const returnType = op.operation.returnType;
+  if (returnType.kind !== "Union") return undefined;
+  const discriminator = getDiscriminator(ctx.program, returnType);
+  if (!discriminator) return undefined;
+  return emitLiteralFieldMatcher(ctx, discriminator.propertyName, responses);
+}
+
+function resolveImplicitLiteralMatcher(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const candidateFields = new Set<string>();
+  for (const response of responses) {
+    for (const prop of response.model?.properties.values() ?? []) {
+      if (isStatusCode(ctx.program, prop)) continue;
+      if (prop.type.kind === "String" || prop.type.kind === "Number") {
+        candidateFields.add(prop.name);
+      }
+    }
+  }
+
+  for (const field of candidateFields) {
+    const matcher = emitLiteralFieldMatcher(ctx, field, responses);
+    if (matcher) return matcher;
+  }
+
+  return undefined;
+}
+
+function emitLiteralFieldMatcher(
+  ctx: EmitterCtx,
+  field: string,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const entries: string[] = [];
+  const values = new Set<string>();
+
+  for (const response of responses) {
+    const prop = response.model?.properties.get(field);
+    if (!prop || isStatusCode(ctx.program, prop)) return undefined;
+    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
+    const value = String(prop.type.value);
+    if (values.has(value)) return undefined;
+    values.add(value);
+    entries.push(`${JSON.stringify(value)}: ${emitResponseVariant(response)}`);
+  }
+
+  return `{ kind: "field", field: ${JSON.stringify(field)}, cases: { ${entries.join(", ")} } }`;
+}
+
+function emitStatusFieldMatcher(
+  field: string,
+  responses: readonly SuccessResponseVariant[],
+): string {
+  const entries = responses
+    .map((response) => `${JSON.stringify(String(response.statusCode))}: ${emitResponseVariant(response)}`)
+    .join(", ");
+  return `{ kind: "field", field: ${JSON.stringify(field)}, cases: { ${entries} } }`;
+}
+
+function resolvePropertyMatcher(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const modelProps = responses.map((response) => {
+    const props = new Set<string>();
+    for (const prop of response.model?.properties.values() ?? []) {
+      if (!prop.optional && !isStatusCode(ctx.program, prop) && !isHeader(ctx.program, prop)) {
+        props.add(prop.name);
+      }
+    }
+    return props;
+  });
+
+  const entries: string[] = [];
+  for (let i = 0; i < responses.length; i++) {
+    let uniqueProp: string | undefined;
+    for (const prop of modelProps[i]) {
+      const isUnique = modelProps.every((otherProps, j) => j === i || !otherProps.has(prop));
+      if (isUnique) {
+        uniqueProp = prop;
+        break;
+      }
+    }
+    if (!uniqueProp) return undefined;
+    entries.push(`${JSON.stringify(uniqueProp)}: ${emitResponseVariant(responses[i])}`);
+  }
+
+  return `{ kind: "property", cases: { ${entries.join(", ")} } }`;
 }
 
 function emitResponseVariant(response: SuccessResponseVariant): string {
@@ -428,132 +579,6 @@ interface ResponseHeader {
   readonly header: string;
 }
 
-/** Collects @header-decorated properties from the success response type. */
-function collectResponseHeaders(ctx: EmitterCtx, op: HttpOperation): ResponseHeader[] {
-  const headers: ResponseHeader[] = [];
-
-  for (const resp of op.responses) {
-    if (resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type)) continue;
-    if (resp.type.kind !== "Model") continue;
-
-    for (const [, prop] of resp.type.properties) {
-      if (isHeader(ctx.program, prop)) {
-        const headerName = getHeaderFieldName(ctx.program, prop);
-        headers.push({
-          property: prop.name,
-          header: headerName.toLowerCase(),
-        });
-      }
-    }
-    break;
-  }
-
-  return headers;
-}
-
-/** Collects @header-decorated properties from a single model. */
-function collectModelHeaders(ctx: EmitterCtx, model: Model): ResponseHeader[] {
-  const headers: ResponseHeader[] = [];
-  for (const [, prop] of model.properties) {
-    if (isHeader(ctx.program, prop)) {
-      headers.push({
-        property: prop.name,
-        header: getHeaderFieldName(ctx.program, prop).toLowerCase(),
-      });
-    }
-  }
-  return headers;
-}
-
-/** Emits an error encoder expression for a grouped errors object. */
-export function emitErrorEncoderExpression(
-  ctx: EmitterCtx,
-  op: HttpOperation,
-  errorType: string,
-): string {
-  const errorResponses = collectErrorResponses(ctx, op);
-
-  if (errorResponses.length === 0) {
-    return `ErrorEncoders.json<never>(500)`;
-  }
-
-  // Single error type — no discrimination needed
-  if (errorResponses.length === 1) {
-    const headers = collectModelHeaders(ctx, errorResponses[0].model);
-    if (headers.length > 0) {
-      const entries = headers
-        .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
-        .join(", ");
-      return `ErrorEncoders.jsonWithHeaders<${errorType}>(${errorResponses[0].statusCode}, [${entries}])`;
-    }
-    return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
-  }
-
-  // Multiple error types — need runtime discrimination
-  // Priority 1: @discriminator or unique literal field values
-  const discriminant = resolveDiscriminant(ctx, op, errorResponses);
-  if (discriminant) {
-    const entries = discriminant.variants
-      .map((v) => {
-        const model = errorResponses.find((e) => e.statusCode === v.status)?.model;
-        return `${JSON.stringify(v.value)}: ${emitErrorVariantValue(ctx, v.status, model)}`;
-      })
-      .join(", ");
-    return `ErrorEncoders.discriminated<${errorType}>(${JSON.stringify(discriminant.field)}, { ${entries} })`;
-  }
-
-  // Priority 2: unique property existence
-  const propertyMapping = findUniquePropertyMapping(ctx, errorResponses);
-  if (propertyMapping) {
-    const entries = propertyMapping
-      .map((e) => {
-        const model = errorResponses.find((r) => r.statusCode === e.status)?.model;
-        return `${JSON.stringify(e.property)}: ${emitErrorVariantValue(ctx, e.status, model)}`;
-      })
-      .join(", ");
-    return `ErrorEncoders.byProperty<${errorType}>({ ${entries} })`;
-  }
-
-  // Fallback — no discrimination possible
-  return `ErrorEncoders.json<${errorType}>(${errorResponses[0].statusCode})`;
-}
-
-/** Emits a variant value: plain status number or { status, headers } object. */
-function emitErrorVariantValue(ctx: EmitterCtx, status: number, model?: Model): string {
-  if (!model) return String(status);
-  const headers = collectModelHeaders(ctx, model);
-  if (headers.length === 0) return String(status);
-  const entries = headers
-    .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
-    .join(", ");
-  return `{ status: ${status}, headers: [${entries}] }`;
-}
-
-// ---------------------------------------------------------------------------
-// Error response collection
-// ---------------------------------------------------------------------------
-
-interface ErrorResponse {
-  readonly statusCode: number;
-  readonly model: Model;
-}
-
-function collectErrorResponses(ctx: EmitterCtx, op: HttpOperation): ErrorResponse[] {
-  const results: ErrorResponse[] = [];
-
-  for (const resp of op.responses) {
-    if (resp.type.kind !== "Model" || !isErrorModel(ctx.program, resp.type)) continue;
-
-    const statusCode = typeof resp.statusCodes === "number"
-      ? resp.statusCodes
-      : resolveStatusCodeFromModel(ctx, resp.type) ?? 500;
-
-    results.push({ statusCode, model: resp.type });
-  }
-
-  return results;
-}
-
 /** Resolves status code from a @statusCode property on the model. */
 function resolveStatusCodeFromModel(ctx: EmitterCtx, model: Model): number | undefined {
   for (const [, prop] of model.properties) {
@@ -562,130 +587,4 @@ function resolveStatusCodeFromModel(ctx: EmitterCtx, model: Model): number | und
     }
   }
   return undefined;
-}
-
-
-// ---------------------------------------------------------------------------
-// Discriminant resolution — respects TypeSpec's @discriminator and union semantics
-// ---------------------------------------------------------------------------
-
-interface DiscriminantMapping {
-  readonly field: string;
-  readonly variants: ReadonlyArray<{ value: string; status: number }>;
-}
-
-function resolveDiscriminant(
-  ctx: EmitterCtx,
-  op: HttpOperation,
-  errorResponses: ErrorResponse[],
-): DiscriminantMapping | undefined {
-  // 1. Check for @discriminator on the operation's return type (if it's a union)
-  const returnType = op.operation.returnType;
-  if (returnType.kind === "Union") {
-    const disc = getDiscriminator(ctx.program, returnType);
-    if (disc) {
-      return buildMappingFromField(ctx, disc.propertyName, errorResponses);
-    }
-  }
-
-  // 2. Find a property with a unique literal value across ALL error variants
-  return findImplicitDiscriminant(ctx, errorResponses);
-}
-
-/** Builds a discriminant mapping from a known field name. */
-function buildMappingFromField(
-  ctx: EmitterCtx,
-  field: string,
-  errorResponses: ErrorResponse[],
-): DiscriminantMapping | undefined {
-  const variants: Array<{ value: string; status: number }> = [];
-
-  for (const err of errorResponses) {
-    const prop = err.model.properties.get(field);
-    if (!prop) return undefined;
-    if (isStatusCode(ctx.program, prop)) return undefined; // skip metadata
-    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
-    variants.push({ value: String(prop.type.value), status: err.statusCode });
-  }
-
-  // All variants must have unique values
-  const values = new Set(variants.map((v) => v.value));
-  if (values.size !== variants.length) return undefined;
-
-  return { field, variants };
-}
-
-/** Finds a property with a unique literal value in every error model. */
-function findImplicitDiscriminant(
-  ctx: EmitterCtx,
-  errorResponses: ErrorResponse[],
-): DiscriminantMapping | undefined {
-  // Collect all candidate fields (properties with literal types), skipping metadata
-  const candidateFields = new Set<string>();
-  for (const err of errorResponses) {
-    for (const [, prop] of err.model.properties) {
-      if (isStatusCode(ctx.program, prop)) continue;
-      if (prop.type.kind === "String" || prop.type.kind === "Number") {
-        candidateFields.add(prop.name);
-      }
-    }
-  }
-
-  // Find a field where EVERY error model has a unique literal value
-  for (const field of candidateFields) {
-    const mapping = buildMappingFromField(ctx, field, errorResponses);
-    if (mapping) return mapping;
-  }
-
-  return undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Unique property existence — fallback when no literal discriminant exists
-// ---------------------------------------------------------------------------
-
-interface PropertyMapping {
-  readonly property: string;
-  readonly status: number;
-}
-
-/**
- * Finds a required property unique to each error model.
- * Mirrors the official http-server-js emitter's "unique property existence" strategy.
- */
-function findUniquePropertyMapping(
-  ctx: EmitterCtx,
-  errorResponses: ErrorResponse[],
-): PropertyMapping[] | undefined {
-  const allPropertyNames = new Set<string>();
-  const modelProps = errorResponses.map((err) => {
-    const props = new Set<string>();
-    for (const [, prop] of err.model.properties) {
-      if (!prop.optional && !isStatusCode(ctx.program, prop)) {
-        props.add(prop.name);
-        allPropertyNames.add(prop.name);
-      }
-    }
-    return props;
-  });
-
-  const mapping: PropertyMapping[] = [];
-
-  for (let i = 0; i < errorResponses.length; i++) {
-    let uniqueProp: string | undefined;
-
-    for (const prop of modelProps[i]) {
-      // Check that no other model has this property
-      const isUnique = modelProps.every((otherProps, j) => j === i || !otherProps.has(prop));
-      if (isUnique) {
-        uniqueProp = prop;
-        break;
-      }
-    }
-
-    if (!uniqueProp) return undefined; // Can't differentiate all models
-    mapping.push({ property: uniqueProp, status: errorResponses[i].statusCode });
-  }
-
-  return mapping;
 }

@@ -1,8 +1,7 @@
 import type { EmitterCtx } from "./ctx.js";
 import type { HttpOperation } from "@typespec/http";
 import {
-  emitErrorEncoderExpression,
-  emitSuccessResponseEncoder,
+  emitResultResponseEncoder,
 } from "./emit-server-common.js";
 import {
   type InputDecoderEntry,
@@ -30,7 +29,6 @@ export function emitServerOperations(
   lines.push("  createHints,");
   lines.push("  emptyHints,");
   lines.push("  ResponseEncoders,");
-  lines.push("  ErrorEncoders,");
   for (const name of getServerInputDecoderImports()) {
     lines.push(`  ${name},`);
   }
@@ -77,16 +75,7 @@ export function emitServerOperations(
     // Emit grouped output encoders object
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
-      lines.push(`  ${operation.name}: ${emitSuccessResponseEncoder(ctx, operation.httpOperation, operation.successType)},`);
-    }
-    lines.push("};");
-    lines.push("");
-
-    // Emit grouped error encoders object
-    const errorsName = `${group.exportName}Errors`;
-    lines.push(`const ${errorsName} = {`);
-    for (const operation of group.operations) {
-      lines.push(`  ${operation.name}: ${emitErrorEncoderExpression(ctx, operation.httpOperation, operation.errorType)},`);
+      lines.push(`  ${operation.name}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
     }
     lines.push("};");
     lines.push("");
@@ -111,11 +100,10 @@ export function emitServerOperations(
       }
       lines.push(`      ${decoder.decodeExpression},`);
 
-      emitSuccessEncoderLine(lines, operation, outputsName);
-      emitErrorEncoderLine(lines, operation, errorsName);
+      emitResultEncoderLine(lines, operation, outputsName);
 
       lines.push(
-        `  } satisfies ServerOperation<${operation.inputType}, ${operation.errorType}, ${operation.successType}>,`,
+        `  } satisfies ServerOperation<${operation.inputType}, ${operation.resultType}>,`,
       );
       lines.push("");
     }
@@ -175,24 +163,16 @@ function emitEndpoint(
 // Encode emission — uses structured results, no regex parsing
 // ---------------------------------------------------------------------------
 
-function emitSuccessEncoderLine(
+function emitResultEncoderLine(
   lines: string[],
-  operation: { name: string; successType: string; httpOperation: HttpOperation },
+  operation: { name: string; resultType: string; httpOperation: HttpOperation },
   outputsName: string,
 ): void {
-  if (operation.successType === "void") {
-    lines.push(`    encodeOutput: () => ${outputsName}.${operation.name}.encode(undefined),`);
+  if (operation.resultType === "void") {
+    lines.push(`    encodeResult: () => ${outputsName}.${operation.name}.encode(undefined),`);
   } else {
-    lines.push(`    encodeOutput: (output: ${operation.successType}) => ${outputsName}.${operation.name}.encode(output),`);
+    lines.push(`    encodeResult: (result: ${operation.resultType}) => ${outputsName}.${operation.name}.encode(result),`);
   }
-}
-
-function emitErrorEncoderLine(
-  lines: string[],
-  operation: { name: string; errorType: string },
-  errorsName: string,
-): void {
-  lines.push(`    encodeError: (error: ${operation.errorType}) => ${errorsName}.${operation.name}.encode(error),`);
 }
 
 // ---------------------------------------------------------------------------

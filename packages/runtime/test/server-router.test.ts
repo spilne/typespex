@@ -14,7 +14,7 @@ import {
 
 const UserIdKey = createContextKey<string>("user.id");
 
-function makeOperation<I, E, O>(operation: ServerOperation<I, E, O>): ServerOperation<I, E, O> {
+function makeOperation<I, R>(operation: ServerOperation<I, R>): ServerOperation<I, R> {
   return operation;
 }
 
@@ -38,11 +38,8 @@ describe("createHttpRouter", () => {
       decodeInput(_request, pathParams) {
         return Either.right({ petId: pathParams.petId });
       },
-      encodeOutput(output) {
-        return Response.json(output, { status: 200 });
-      },
-      encodeError(error: never) {
-        throw error;
+      encodeResult(result) {
+        return Response.json(result, { status: 200 });
       },
     });
 
@@ -50,10 +47,10 @@ describe("createHttpRouter", () => {
       {
         operation,
         async handler(input, ctx: MatchedRequestContext) {
-          return Either.right({
+          return {
             id: input.petId,
             seenBy: ctx.match.endpoint.operation.operationId,
-          });
+          };
         },
       },
     ]);
@@ -68,7 +65,7 @@ describe("createHttpRouter", () => {
     });
   });
 
-  test("encodes declared failures through encodeError", async () => {
+  test("encodes declared failures as modeled results", async () => {
     const operation = makeOperation({
       endpoint: {
         service: {
@@ -87,11 +84,9 @@ describe("createHttpRouter", () => {
       decodeInput(_request, pathParams) {
         return Either.right({ petId: pathParams.petId });
       },
-      encodeOutput(output: { id: string }) {
-        return Response.json(output, { status: 200 });
-      },
-      encodeError(error: { code: "NOT_FOUND"; message: string }) {
-        return Response.json(error, { status: 404 });
+      encodeResult(result: { id: string } | { code: "NOT_FOUND"; message: string }) {
+        if ("code" in result) return Response.json(result, { status: 404 });
+        return Response.json(result, { status: 200 });
       },
     });
 
@@ -99,10 +94,10 @@ describe("createHttpRouter", () => {
       {
         operation,
         async handler(input) {
-          return Either.left({
+          return {
             code: "NOT_FOUND" as const,
             message: `Missing ${input.petId}`,
-          });
+          };
         },
       },
     ]);
@@ -136,11 +131,8 @@ describe("createHttpRouter", () => {
       decodeInput() {
         return Either.right({ limit: 1 });
       },
-      encodeOutput(output: { userId: string; limit: number }) {
-        return Response.json(output, { status: 200 });
-      },
-      encodeError(error: never) {
-        throw error;
+      encodeResult(result: { userId: string; limit: number }) {
+        return Response.json(result, { status: 200 });
       },
     });
 
@@ -150,10 +142,10 @@ describe("createHttpRouter", () => {
           operation,
           async handler(input, ctx) {
             const userId = ctx.state.get(UserIdKey);
-            return Either.right({
+            return {
               userId: userId ?? "unknown",
               limit: input.limit,
-            });
+            };
           },
         },
       ],
@@ -230,11 +222,8 @@ describe("createHttpRouter", () => {
           (limit) => ({ limit }),
         );
       },
-      encodeOutput(output: { limit: number }) {
-        return Response.json(output, { status: 200 });
-      },
-      encodeError(error: never) {
-        throw error;
+      encodeResult(result: { limit: number }) {
+        return Response.json(result, { status: 200 });
       },
     });
 
@@ -243,7 +232,7 @@ describe("createHttpRouter", () => {
         {
           operation,
           async handler(input) {
-            return Either.right(input);
+            return input;
           },
         },
       ],
@@ -274,11 +263,8 @@ describe("createHttpRouter", () => {
       decodeInput() {
         return Either.right({});
       },
-      encodeOutput(output: { userId: string }) {
-        return Response.json(output, { status: 200 });
-      },
-      encodeError(error: never) {
-        throw error;
+      encodeResult(result: { userId: string }) {
+        return Response.json(result, { status: 200 });
       },
     });
 
@@ -287,9 +273,9 @@ describe("createHttpRouter", () => {
         {
           operation,
           async handler(_input, ctx) {
-            return Either.right({
+            return {
               userId: ctx.state.get(UserIdKey) ?? "none",
-            });
+            };
           },
         },
       ],
@@ -323,11 +309,8 @@ describe("createHttpRouter", () => {
       decodeInput() {
         return Either.right({});
       },
-      encodeOutput() {
+      encodeResult() {
         return Response.json({}, { status: 200 });
-      },
-      encodeError(error: never) {
-        throw error;
       },
     });
 

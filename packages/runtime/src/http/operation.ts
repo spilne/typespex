@@ -6,12 +6,11 @@ import type { EndpointMeta } from "./metadata.js";
 export type DecodeResult<I> = Either<ValidationError, I> | Promise<Either<ValidationError, I>>;
 
 /** Generated HTTP operation with decode and encode functions for server execution. */
-export interface ServerOperation<I, E, O> {
+export interface ServerOperation<I, R> {
   readonly endpoint: EndpointMeta;
   decodeInput(
     request: Request,
     pathParams: Readonly<Record<string, string>>,
   ): DecodeResult<I>;
-  encodeOutput(output: O): Response;
-  encodeError(error: E): Response;
+  encodeResult(result: R): Response;
 }

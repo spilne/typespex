@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ResponseEncoders, ErrorEncoders } from "../src/server.js";
+import { ResponseEncoders } from "../src/server.js";
 
 // ---------------------------------------------------------------------------
 // ResponseEncoders
@@ -133,17 +133,19 @@ describe("ResponseEncoders", () => {
     expect(await response.text()).toBe("created");
   });
 
-  test("discriminated dispatches success responses by status field", async () => {
-    const encoder = ResponseEncoders.discriminated<
+  test("oneOf dispatches responses by status field", async () => {
+    const encoder = ResponseEncoders.oneOf<
       { _: 201; id: string } | { _: 202; operationId: string }
-    >(
-      "_",
+    >([
       {
-        "201": { status: 201, omit: ["_"] },
-        "202": { status: 202, omit: ["_"] },
+        kind: "field",
+        field: "_",
+        cases: {
+          "201": { status: 201, omit: ["_"] },
+          "202": { status: 202, omit: ["_"] },
+        },
       },
-      { status: 200, omit: ["_"] },
-    );
+    ]);
 
     const created = encoder.encode({ _: 201, id: "item-1" });
     const accepted = encoder.encode({ _: 202, operationId: "op-1" });
@@ -153,28 +155,18 @@ describe("ResponseEncoders", () => {
     expect(accepted.status).toBe(202);
     expect(await accepted.json()).toEqual({ operationId: "op-1" });
   });
-});
 
-// ---------------------------------------------------------------------------
-// ErrorEncoders
-// ---------------------------------------------------------------------------
-
-describe("ErrorEncoders", () => {
-  test("json encodes error with fixed status", async () => {
-    const encoder = ErrorEncoders.json<{ message: string }>(422);
-    const response = encoder.encode({ message: "invalid" });
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ message: "invalid" });
-  });
-
-  test("discriminated dispatches by string tag", async () => {
+  test("oneOf dispatches responses by string tag", async () => {
     type E = { code: "NOT_FOUND"; message: string } | { code: "FORBIDDEN"; message: string };
 
-    const encoder = ErrorEncoders.discriminated<E>("code", {
-      NOT_FOUND: 404,
-      FORBIDDEN: 403,
-    });
+    const encoder = ResponseEncoders.oneOf<E>([{
+      kind: "field",
+      field: "code",
+      cases: {
+        NOT_FOUND: { status: 404 },
+        FORBIDDEN: { status: 403 },
+      },
+    }]);
 
     const notFound = encoder.encode({ code: "NOT_FOUND", message: "gone" });
     expect(notFound.status).toBe(404);
@@ -184,41 +176,42 @@ describe("ErrorEncoders", () => {
     expect(forbidden.status).toBe(403);
   });
 
-  test("discriminated dispatches by numeric tag", async () => {
-    const encoder = ErrorEncoders.discriminated<{ status: number }>("status", {
-      "404": 404,
-      "409": 409,
-    });
+  test("oneOf dispatches by numeric tag", async () => {
+    const encoder = ResponseEncoders.oneOf<{ status: number }>([{
+      kind: "field",
+      field: "status",
+      cases: {
+        "404": { status: 404 },
+        "409": { status: 409 },
+      },
+    }]);
 
     const response = encoder.encode({ status: 404 });
     expect(response.status).toBe(404);
   });
 
-  test("discriminated uses fallback for unknown tag", async () => {
-    const encoder = ErrorEncoders.discriminated<{ code: string }>("code", {
-      KNOWN: 400,
-    }, 500);
+  test("oneOf throws when no variant matches", () => {
+    const encoder = ResponseEncoders.oneOf<{ code: string }>([{
+      kind: "field",
+      field: "code",
+      cases: {
+        KNOWN: { status: 400 },
+      },
+    }]);
 
-    const response = encoder.encode({ code: "UNKNOWN" });
-    expect(response.status).toBe(500);
+    expect(() => encoder.encode({ code: "UNKNOWN" })).toThrow("did not match");
   });
 
-  test("discriminated uses fallback when tag field is missing", async () => {
-    const encoder = ErrorEncoders.discriminated<Record<string, unknown>>("code", {
-      KNOWN: 400,
-    }, 500);
-
-    const response = encoder.encode({ message: "no code field" });
-    expect(response.status).toBe(500);
-  });
-
-  test("byProperty dispatches by unique property existence", async () => {
+  test("oneOf dispatches by unique property existence", async () => {
     type E = { retryAfter: number } | { conflictId: string };
 
-    const encoder = ErrorEncoders.byProperty<E>({
-      retryAfter: 429,
-      conflictId: 409,
-    });
+    const encoder = ResponseEncoders.oneOf<E>([{
+      kind: "property",
+      cases: {
+        retryAfter: { status: 429 },
+        conflictId: { status: 409 },
+      },
+    }]);
 
     const retry = encoder.encode({ retryAfter: 30 });
     expect(retry.status).toBe(429);
@@ -228,23 +221,31 @@ describe("ErrorEncoders", () => {
     expect(conflict.status).toBe(409);
   });
 
-  test("byProperty uses fallback when no property matches", async () => {
-    const encoder = ErrorEncoders.byProperty<{ message: string }>({
-      retryAfter: 429,
-    }, 500);
+  test("oneOf checks first matching property", async () => {
+    const encoder = ResponseEncoders.oneOf<{ a: number; b: number }>([{
+      kind: "property",
+      cases: {
+        a: { status: 400 },
+        b: { status: 401 },
+      },
+    }]);
 
-    const response = encoder.encode({ message: "unknown" });
-    expect(response.status).toBe(500);
-  });
-
-  test("byProperty checks first matching property", async () => {
-    const encoder = ErrorEncoders.byProperty<{ a: number; b: number }>({
-      a: 400,
-      b: 401,
-    });
-
-    // Both properties present — first one wins
     const response = encoder.encode({ a: 1, b: 2 });
     expect(response.status).toBe(400);
+  });
+
+  test("oneOf dispatches void and object variants", async () => {
+    const encoder = ResponseEncoders.oneOf<void | { code: "NOT_FOUND"; message: string }>([
+      { kind: "undefined", variant: { status: 204, kind: "empty" } },
+      { kind: "object", variant: { status: 404 } },
+    ]);
+
+    const empty = encoder.encode(undefined);
+    expect(empty.status).toBe(204);
+    expect(await empty.text()).toBe("");
+
+    const error = encoder.encode({ code: "NOT_FOUND", message: "missing" });
+    expect(error.status).toBe(404);
+    expect(await error.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
   });
 });

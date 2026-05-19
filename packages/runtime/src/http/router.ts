@@ -38,8 +38,8 @@ function combineMiddleware<Ctx extends RequestContext>(
 }
 
 /** Creates the app for one route — decode, handle, encode. No Map lookup. */
-function createRouteApp<I, E, O, Ctx extends RequestContext>(
-  route: RouteBinding<I, E, O, Ctx>,
+function createRouteApp<I, R, Ctx extends RequestContext>(
+  route: RouteBinding<I, R, Ctx>,
   notFound: HttpInterpreterOptions<Ctx>["notFound"],
 ): HttpApp<Ctx> {
   return async (ctx: Ctx) => {
@@ -58,11 +58,7 @@ function createRouteApp<I, E, O, Ctx extends RequestContext>(
     }
 
     const handled = await route.handler(result.right, ctx);
-    if (isLeft(handled)) {
-      return route.operation.encodeError(handled.left);
-    }
-
-    return route.operation.encodeOutput(handled.right);
+    return route.operation.encodeResult(handled);
   };
 }
 
@@ -105,30 +101,30 @@ export interface HttpRouter {
 }
 
 /** Binds one generated server operation to its implementation handler. */
-export interface RouteBinding<I, E, O, Ctx extends RequestContext> {
-  readonly operation: ServerOperation<I, E, O>;
-  readonly handler: OperationHandler<I, E, O, Ctx>;
+export interface RouteBinding<I, R, Ctx extends RequestContext> {
+  readonly operation: ServerOperation<I, R>;
+  readonly handler: OperationHandler<I, R, Ctx>;
 }
 
 /** Convenience helper for constructing a typed `RouteBinding`. */
-export function bindRoute<I, E, O, Ctx extends RequestContext>(
-  operation: ServerOperation<I, E, O>,
-  handler: OperationHandler<I, E, O, Ctx>,
-): RouteBinding<I, E, O, Ctx> {
+export function bindRoute<I, R, Ctx extends RequestContext>(
+  operation: ServerOperation<I, R>,
+  handler: OperationHandler<I, R, Ctx>,
+): RouteBinding<I, R, Ctx> {
   return { operation, handler };
 }
 
 /** Creates an HTTP router that matches requests, decodes input, runs middleware, and encodes responses. */
 export function createHttpRouter<Ctx extends RequestContext>(
-  routes: ReadonlyArray<RouteBinding<any, any, any, Ctx>>,
+  routes: ReadonlyArray<RouteBinding<any, any, Ctx>>,
   options: HttpInterpreterOptions<Ctx> = {},
-  matcher?: RouteMatcher<RouteBinding<any, any, any, Ctx>>,
+  matcher?: RouteMatcher<RouteBinding<any, any, Ctx>>,
 ): HttpRouter {
   const middleware = options.middleware ?? [];
   const middlewareChain = combineMiddleware(middleware);
 
   // Build a middleware-wrapped app per route — no Map lookup at request time
-  const wrappedApps = new Map<RouteBinding<any, any, any, Ctx>, HttpApp<Ctx>>();
+  const wrappedApps = new Map<RouteBinding<any, any, Ctx>, HttpApp<Ctx>>();
   for (const route of routes) {
     wrappedApps.set(route, middlewareChain(createRouteApp(route, options.notFound)));
   }

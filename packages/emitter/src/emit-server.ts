@@ -27,7 +27,7 @@ export function emitServer(
     lines.push(`export interface ${group.interfaceName}Server<Ctx = MatchedRequestContext> {`);
     for (const operation of group.operations) {
       lines.push(
-        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.errorType}, ${operation.successType}, Ctx>;`,
+        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>;`,
       );
     }
     lines.push("}");
@@ -43,7 +43,7 @@ export function emitServer(
 
     for (const operation of group.operations) {
       lines.push(
-        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.errorType}, ${operation.successType}, Ctx>;`,
+        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>;`,
       );
     }
   }

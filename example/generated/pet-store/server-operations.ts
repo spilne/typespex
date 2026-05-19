@@ -6,7 +6,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -61,21 +60,50 @@ const PetsInput = {
 
 const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
-  create: ResponseEncoders.json<Pet>(200),
-  read: ResponseEncoders.json<Pet>(200),
-  delete: ResponseEncoders.empty(204),
-  uploadPhoto: ResponseEncoders.json<UploadResult>(200),
-};
-
-const PetsErrors = {
-  list: ErrorEncoders.json<never>(500),
-  create: ErrorEncoders.json<ConflictError>(409),
-  read: ErrorEncoders.json<NotFoundError>(404),
-  delete: ErrorEncoders.discriminated<NotFoundError | ForbiddenError>("code", {
-    NOT_FOUND: 404,
-    FORBIDDEN: 403,
-  }),
-  uploadPhoto: ErrorEncoders.json<NotFoundError>(404),
+  create: ResponseEncoders.oneOf<Pet | { _: 409; code: "CONFLICT"; message: string }>([
+    {
+      kind: "property",
+      cases: {
+        id: { status: 200, contentType: "application/json" },
+        code: { status: 409, contentType: "application/json", omit: ["_"] },
+      },
+    },
+  ]),
+  read: ResponseEncoders.oneOf<Pet | { _: 404; code: "NOT_FOUND"; message: string }>([
+    {
+      kind: "property",
+      cases: {
+        id: { status: 200, contentType: "application/json" },
+        code: { status: 404, contentType: "application/json", omit: ["_"] },
+      },
+    },
+  ]),
+  delete: ResponseEncoders.oneOf<
+    | void
+    | { _: 404; code: "NOT_FOUND"; message: string }
+    | { _: 403; code: "FORBIDDEN"; message: string }
+  >([
+    { kind: "undefined", variant: { status: 204, kind: "empty" } },
+    {
+      kind: "field",
+      field: "_",
+      cases: {
+        "404": { status: 404, contentType: "application/json", omit: ["_"] },
+        "403": { status: 403, contentType: "application/json", omit: ["_"] },
+      },
+    },
+  ]),
+  uploadPhoto: ResponseEncoders.oneOf<
+    UploadResult | { _: 404; code: "NOT_FOUND"; message: string }
+  >([
+    {
+      kind: "property",
+      cases: {
+        id: { status: 200, contentType: "application/json" },
+        code: { status: 404, contentType: "application/json", omit: ["_"] },
+      },
+    },
+  ]),
 };
 
 export const PetsOperations = {
@@ -93,9 +121,8 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ limit?: number; offset?: number }>(PetsInput.list, request, pathParams),
-    encodeOutput: (output: Pet[]) => PetsOutput.list.encode(output),
-    encodeError: (error: never) => PetsErrors.list.encode(error),
-  } satisfies ServerOperation<{ limit?: number; offset?: number }, never, Pet[]>,
+    encodeResult: (result: Pet[]) => PetsOutput.list.encode(result),
+  } satisfies ServerOperation<{ limit?: number; offset?: number }, Pet[]>,
 
   create: {
     endpoint: {
@@ -110,9 +137,9 @@ export const PetsOperations = {
       },
     },
     decodeInput: async (request) => decodeJsonBody<CreatePetInput>(request, PetsInput.create),
-    encodeOutput: (output: Pet) => PetsOutput.create.encode(output),
-    encodeError: (error: ConflictError) => PetsErrors.create.encode(error),
-  } satisfies ServerOperation<CreatePetInput, ConflictError, Pet>,
+    encodeResult: (result: Pet | { _: 409; code: "CONFLICT"; message: string }) =>
+      PetsOutput.create.encode(result),
+  } satisfies ServerOperation<CreatePetInput, Pet | { _: 409; code: "CONFLICT"; message: string }>,
 
   read: {
     endpoint: {
@@ -128,9 +155,12 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.read, request, pathParams),
-    encodeOutput: (output: Pet) => PetsOutput.read.encode(output),
-    encodeError: (error: NotFoundError) => PetsErrors.read.encode(error),
-  } satisfies ServerOperation<{ petId: string }, NotFoundError, Pet>,
+    encodeResult: (result: Pet | { _: 404; code: "NOT_FOUND"; message: string }) =>
+      PetsOutput.read.encode(result),
+  } satisfies ServerOperation<
+    { petId: string },
+    Pet | { _: 404; code: "NOT_FOUND"; message: string }
+  >,
 
   delete: {
     endpoint: {
@@ -146,9 +176,18 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.delete, request, pathParams),
-    encodeOutput: () => PetsOutput.delete.encode(undefined),
-    encodeError: (error: NotFoundError | ForbiddenError) => PetsErrors.delete.encode(error),
-  } satisfies ServerOperation<{ petId: string }, NotFoundError | ForbiddenError, void>,
+    encodeResult: (
+      result:
+        | void
+        | { _: 404; code: "NOT_FOUND"; message: string }
+        | { _: 403; code: "FORBIDDEN"; message: string },
+    ) => PetsOutput.delete.encode(result),
+  } satisfies ServerOperation<
+    { petId: string },
+    | void
+    | { _: 404; code: "NOT_FOUND"; message: string }
+    | { _: 403; code: "FORBIDDEN"; message: string }
+  >,
 
   uploadPhoto: {
     endpoint: {
@@ -169,11 +208,10 @@ export const PetsOperations = {
         request,
         pathParams,
       ),
-    encodeOutput: (output: UploadResult) => PetsOutput.uploadPhoto.encode(output),
-    encodeError: (error: NotFoundError) => PetsErrors.uploadPhoto.encode(error),
+    encodeResult: (result: UploadResult | { _: 404; code: "NOT_FOUND"; message: string }) =>
+      PetsOutput.uploadPhoto.encode(result),
   } satisfies ServerOperation<
     { petId: string; caption?: string; photo: File },
-    NotFoundError,
-    UploadResult
+    UploadResult | { _: 404; code: "NOT_FOUND"; message: string }
   >,
 } as const;
