@@ -118,15 +118,9 @@ function matcherSuite(
 
     test("root path /", () => {
       const root = create([{ method: "GET", path: "/", route: "root" }]);
-      // Path "/" has no segments after split/filter → empty pattern
-      // This is a known limitation — "/" as a registered route may not work
-      // in all matchers. Test actual behavior:
       const m = root.match("GET", "/");
-      // Both matchers should handle this, but let's verify:
-      if (m) {
-        expect(m.route).toBe("root");
-        expect(m.pathParams).toEqual({});
-      }
+      expect(m!.route).toBe("root");
+      expect(m!.pathParams).toEqual({});
     });
 
     // --- Root-level catch-all param ---

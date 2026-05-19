@@ -34,8 +34,9 @@ function compileMethodRoutes<R>(
     const paramNames: string[] = [];
     const firstGroup = nextGroup;
 
-    let pattern = "";
-    for (const seg of path.split("/").filter(Boolean)) {
+    const segments = path.split("/").filter(Boolean);
+    let pattern = segments.length === 0 ? "\\/" : "";
+    for (const seg of segments) {
       pattern += "\\/";
       if (seg.startsWith(":")) {
         paramNames.push(seg.slice(1));
