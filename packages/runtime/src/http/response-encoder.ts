@@ -103,6 +103,98 @@ function jsonWithHeadersResponseEncoder<A>(
   });
 }
 
+export interface ResponseVariant {
+  readonly status: number;
+  readonly kind?: "json" | "text" | "bytes" | "empty";
+  readonly headers?: ReadonlyArray<readonly [property: string, header: string]>;
+  readonly body?: string;
+  readonly omit?: readonly string[];
+  readonly contentType?: string;
+}
+
+function encodeVariantResponse<A>(
+  value: A,
+  variant: ResponseVariant,
+): Response {
+  if (variant.kind === "empty") {
+    return new Response(null, { status: variant.status });
+  }
+
+  const src = value as Record<string, unknown>;
+  const responseHeaders: Record<string, string> = {};
+  const contentType = variant.contentType ??
+    (variant.kind === "json" || variant.kind === undefined ? "application/json" : undefined);
+  if (contentType) responseHeaders["content-type"] = contentType;
+
+  for (const [property, header] of variant.headers ?? []) {
+    const v = src[property];
+    if (v !== undefined && (typeof v !== "object" || v === null)) {
+      responseHeaders[header] = String(v);
+    }
+  }
+
+  const body = variant.body === undefined
+    ? omitVariantProperties(src, variant)
+    : src[variant.body];
+
+  if (variant.kind === "text") {
+    return new Response(String(body ?? ""), {
+      status: variant.status,
+      headers: responseHeaders,
+    });
+  }
+
+  if (variant.kind === "bytes") {
+    const bytes = body instanceof Uint8Array ? body : new Uint8Array();
+    return new Response(new Uint8Array(bytes).buffer, {
+      status: variant.status,
+      headers: responseHeaders,
+    });
+  }
+
+  return new Response(JSON.stringify(body), {
+    status: variant.status,
+    headers: responseHeaders,
+  });
+}
+
+function omitVariantProperties(
+  src: Record<string, unknown>,
+  variant: ResponseVariant,
+): unknown {
+  const omit = new Set<string>(variant.omit ?? []);
+  for (const [property] of variant.headers ?? []) {
+    omit.add(property);
+  }
+
+  if (omit.size === 0) return src;
+
+  const body: Record<string, unknown> = {};
+  for (const key of Object.keys(src)) {
+    if (!omit.has(key)) body[key] = src[key];
+  }
+  return body;
+}
+
+function variantResponseEncoder<A>(
+  variant: ResponseVariant,
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => encodeVariantResponse(value, variant));
+}
+
+function discriminatedResponseEncoder<A>(
+  field: string,
+  variants: Readonly<Record<string, ResponseVariant>>,
+  fallback: ResponseVariant,
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => {
+    const tag = (value as Record<string, unknown>)[field];
+    const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
+    const variant = key === undefined ? undefined : variants[key];
+    return encodeVariantResponse(value, variant ?? fallback);
+  });
+}
+
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
@@ -111,6 +203,8 @@ export const ResponseEncoders = {
   bytes: bytesResponseEncoder,
   stream: streamResponseEncoder,
   response: rawResponseEncoder,
+  variant: variantResponseEncoder,
+  discriminated: discriminatedResponseEncoder,
 } as const;
 
 // ---------------------------------------------------------------------------

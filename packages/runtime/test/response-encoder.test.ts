@@ -111,6 +111,48 @@ describe("ResponseEncoders", () => {
 
     expect(response.headers.get("x-tag")).toBe("null");
   });
+
+  test("variant extracts body and headers from response envelopes", async () => {
+    const encoder = ResponseEncoders.variant<{
+      requestId: string;
+      body: string;
+    }>({
+      status: 201,
+      kind: "text",
+      contentType: "text/plain",
+      headers: [["requestId", "x-request-id"]],
+      body: "body",
+      omit: ["requestId"],
+    });
+
+    const response = encoder.encode({ requestId: "req-1", body: "created" });
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("x-request-id")).toBe("req-1");
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    expect(await response.text()).toBe("created");
+  });
+
+  test("discriminated dispatches success responses by status field", async () => {
+    const encoder = ResponseEncoders.discriminated<
+      { _: 201; id: string } | { _: 202; operationId: string }
+    >(
+      "_",
+      {
+        "201": { status: 201, omit: ["_"] },
+        "202": { status: 202, omit: ["_"] },
+      },
+      { status: 200, omit: ["_"] },
+    );
+
+    const created = encoder.encode({ _: 201, id: "item-1" });
+    const accepted = encoder.encode({ _: 202, operationId: "op-1" });
+
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ id: "item-1" });
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toEqual({ operationId: "op-1" });
+  });
 });
 
 // ---------------------------------------------------------------------------

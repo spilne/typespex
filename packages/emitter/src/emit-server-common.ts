@@ -178,12 +178,36 @@ export function buildSuccessType(ctx: EmitterCtx, op: HttpOperation): string {
     if (resp.type.kind === "Intrinsic" && resp.type.name === "void") {
       types.push("void");
     } else {
-      types.push(typeToTs(ctx, resp.type));
+      types.push(responseTypeToTs(ctx, resp));
     }
   }
 
   if (types.length === 0) return "void";
   return types.join(" | ");
+}
+
+function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string {
+  if (resp.type.kind !== "Model" || !hasResponseEnvelopeMetadata(resp)) {
+    return typeToTs(ctx, resp.type);
+  }
+
+  const parts: string[] = [];
+  for (const prop of resp.type.properties.values()) {
+    const optional = prop.optional ? "?" : "";
+    parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
+  }
+  return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
+}
+
+function hasResponseEnvelopeMetadata(resp: HttpOperationResponse): boolean {
+  return resp.responses.some((content) =>
+    content.properties.some((prop) =>
+      prop.kind === "header" ||
+      prop.kind === "statusCode" ||
+      prop.kind === "contentType" ||
+      prop.kind === "body"
+    )
+  );
 }
 
 export function buildErrorType(ctx: EmitterCtx, op: HttpOperation): string {
@@ -245,12 +269,27 @@ export function emitSuccessResponseEncoder(
   op: HttpOperation,
   successType: string,
 ): string {
-  const response = getSuccessResponseEncoding(ctx, op);
+  const responses = collectSuccessResponseVariants(ctx, op);
+  if (responses.length > 1) {
+    const statusField = findStatusDiscriminator(ctx, responses);
+    if (statusField) {
+      const entries = responses
+        .map((response) => `${JSON.stringify(String(response.statusCode))}: ${emitResponseVariant(response)}`)
+        .join(", ");
+      return `ResponseEncoders.discriminated<${successType}>(${JSON.stringify(statusField)}, { ${entries} }, ${emitResponseVariant(responses[0])})`;
+    }
+  }
+
+  const response = responses[0] ?? getSuccessResponseEncoding(ctx, op);
   if (response.isVoid) {
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
 
-  const headers = collectResponseHeaders(ctx, op);
+  if ("omitProperties" in response && shouldUseVariantEncoder(response)) {
+    return `ResponseEncoders.variant<${successType}>(${emitResponseVariant(response)})`;
+  }
+
+  const headers = response.headers ?? collectResponseHeaders(ctx, op);
   const encoder = pickEncoderForContentType(response.contentType, successType, response.statusCode);
 
   if (headers.length > 0 && encoder.startsWith("ResponseEncoders.json")) {
@@ -261,6 +300,114 @@ export function emitSuccessResponseEncoder(
   }
 
   return encoder;
+}
+
+function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
+  return response.bodyProperty !== undefined ||
+    response.omitProperties.length > 0;
+}
+
+interface SuccessResponseVariant extends SuccessResponseEncoding {
+  readonly headers: ResponseHeader[];
+  readonly bodyProperty?: string;
+  readonly omitProperties: readonly string[];
+  readonly statusProperty?: string;
+}
+
+function collectSuccessResponseVariants(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+): SuccessResponseVariant[] {
+  const variants: SuccessResponseVariant[] = [];
+
+  for (const resp of op.responses) {
+    const isError = resp.type.kind === "Model" && isErrorModel(ctx.program, resp.type);
+    if (isError) continue;
+
+    const content = resp.responses[0];
+    const rawStatus = resp.statusCodes;
+    const statusCode = typeof rawStatus === "number"
+      ? rawStatus
+      : resp.type.kind === "Model"
+        ? resolveStatusCodeFromModel(ctx, resp.type) ?? 200
+        : 200;
+    const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
+    const body = content?.body;
+    const contentType = body?.contentTypes[0];
+    const headers = collectResponseHeadersFromContent(ctx, content);
+    const metadataProperties = content?.properties
+      .filter((prop) =>
+        prop.kind === "header" ||
+        prop.kind === "statusCode" ||
+        prop.kind === "contentType" ||
+        prop.kind === "body"
+      ) ?? [];
+
+    variants.push({
+      statusCode: isVoid && statusCode === 200 ? 204 : statusCode,
+      isVoid,
+      contentType,
+      headers,
+      bodyProperty: body?.property?.name,
+      omitProperties: metadataProperties.map((prop) => prop.property.name),
+      statusProperty: metadataProperties.find((prop) => prop.kind === "statusCode")?.property.name,
+    });
+  }
+
+  return variants;
+}
+
+function collectResponseHeadersFromContent(
+  ctx: EmitterCtx,
+  content: HttpOperationResponse["responses"][number] | undefined,
+): ResponseHeader[] {
+  if (!content?.headers) return [];
+  return Object.values(content.headers)
+    .filter((prop) => isHeader(ctx.program, prop))
+    .map((prop) => ({
+      property: prop.name,
+      header: getHeaderFieldName(ctx.program, prop).toLowerCase(),
+    }));
+}
+
+function findStatusDiscriminator(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const [first] = responses;
+  if (!first?.statusProperty) return undefined;
+  if (!responses.every((response) => response.statusProperty === first.statusProperty)) {
+    return undefined;
+  }
+
+  const statuses = new Set(responses.map((response) => response.statusCode));
+  return statuses.size === responses.length ? first.statusProperty : undefined;
+}
+
+function emitResponseVariant(response: SuccessResponseVariant): string {
+  const fields = [`status: ${response.statusCode}`];
+  const kind = pickVariantKind(response);
+  if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
+  if (response.contentType) fields.push(`contentType: ${JSON.stringify(response.contentType)}`);
+  if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
+  if (response.headers.length > 0) {
+    const headers = response.headers
+      .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+      .join(", ");
+    fields.push(`headers: [${headers}]`);
+  }
+  if (response.omitProperties.length > 0) {
+    fields.push(`omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`);
+  }
+  return `{ ${fields.join(", ")} }`;
+}
+
+function pickVariantKind(response: SuccessResponseVariant): "json" | "text" | "bytes" | "empty" {
+  if (response.isVoid) return "empty";
+  if (!response.contentType || response.contentType.includes("json")) return "json";
+  if (response.contentType === "text/plain" || response.contentType.startsWith("text/")) return "text";
+  if (response.contentType === "application/octet-stream") return "bytes";
+  return "json";
 }
 
 function pickEncoderForContentType(contentType: string | undefined, tsType: string, status: number): string {

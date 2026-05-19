@@ -135,6 +135,29 @@ interface Items {
 }
 `;
 
+const multiSuccessSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "MultiSuccessApi" })
+namespace MultiSuccessApi;
+
+model CreatedItem {
+  @statusCode _: 201;
+  id: string;
+}
+
+model AcceptedJob {
+  @statusCode _: 202;
+  operationId: string;
+}
+
+@route("/items")
+interface Items {
+  @post create(): CreatedItem | AcceptedJob;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -178,5 +201,12 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-error-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("multiple success types generate status-discriminated encoders", () => {
+    const r = compileFixture("multi-success", multiSuccessSpec);
+
+    expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
   });
 });
