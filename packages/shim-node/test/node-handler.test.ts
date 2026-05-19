@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { toNodeHandler } from "../src/index.js";
 import type { HttpRouter } from "@typespex/runtime/server";
 
@@ -7,20 +8,66 @@ function mockRouter(handle: (request: Request) => Promise<Response>): HttpRouter
   return { handle };
 }
 
-/** Starts a test server, runs a callback with the base URL, then closes. */
-async function withServer(
+const silentLogger = {
+  error() {},
+  warn() {},
+  info() {},
+};
+
+interface MockRequestOptions {
+  readonly method?: string;
+  readonly url: string;
+  readonly headers?: IncomingMessage["headers"];
+  readonly body?: string;
+}
+
+interface MockResponse {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly body: string;
+}
+
+async function invokeHandler(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
-  fn: (baseUrl: string) => Promise<void>,
-): Promise<void> {
-  const server = createServer(handler);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
-  const addr = server.address();
-  const port = typeof addr === "object" && addr ? addr.port : 0;
-  try {
-    await fn(`http://localhost:${port}`);
-  } finally {
-    server.close();
-  }
+  options: MockRequestOptions,
+): Promise<MockResponse> {
+  const req = Readable.from(
+    options.body === undefined ? [] : [Buffer.from(options.body)],
+  ) as IncomingMessage;
+  req.method = options.method ?? "GET";
+  req.url = options.url;
+  req.headers = {
+    host: "localhost",
+    ...options.headers,
+  };
+
+  const headers = new Headers();
+  const chunks: Buffer[] = [];
+  const res = {
+    statusCode: 200,
+    setHeader(name: string, value: number | string | readonly string[]) {
+      headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+      return this;
+    },
+    write(chunk: Uint8Array | string) {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+      return true;
+    },
+    end(chunk?: Uint8Array | string) {
+      if (chunk !== undefined) {
+        chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+      }
+      return this;
+    },
+  } as unknown as ServerResponse;
+
+  await (handler(req, res) as unknown as Promise<void>);
+
+  return {
+    status: res.statusCode,
+    headers,
+    body: Buffer.concat(chunks).toString("utf8"),
+  };
 }
 
 describe("toNodeHandler", () => {
@@ -30,12 +77,9 @@ describe("toNodeHandler", () => {
     );
     const handler = toNodeHandler(router);
 
-    await withServer(handler, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/pets`);
-      expect(response.status).toBe(200);
-      const body = await response.json();
-      expect(body).toEqual({ url: "/pets", method: "GET" });
-    });
+    const response = await invokeHandler(handler, { url: "/pets" });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ url: "/pets", method: "GET" });
   });
 
   test("handles POST with JSON body", async () => {
@@ -45,28 +89,25 @@ describe("toNodeHandler", () => {
     });
     const handler = toNodeHandler(router);
 
-    await withServer(handler, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/pets`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "Milo" }),
-      });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ received: { name: "Milo" } });
+    const response = await invokeHandler(handler, {
+      method: "POST",
+      url: "/pets",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Milo" }),
     });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ received: { name: "Milo" } });
   });
 
   test("returns 500 on unhandled router error", async () => {
     const router = mockRouter(async () => {
       throw new Error("boom");
     });
-    const handler = toNodeHandler(router);
+    const handler = toNodeHandler(router, { logger: silentLogger });
 
-    await withServer(handler, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/test`);
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe("Internal Server Error");
-    });
+    const response = await invokeHandler(handler, { url: "/test" });
+    expect(response.status).toBe(500);
+    expect(response.body).toBe("Internal Server Error");
   });
 
   test("respects X-Forwarded-Proto header", async () => {
@@ -75,13 +116,11 @@ describe("toNodeHandler", () => {
     );
     const handler = toNodeHandler(router);
 
-    await withServer(handler, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/secure`, {
-        headers: { "x-forwarded-proto": "https" },
-      });
-      const body = await response.json();
-      expect(body.url).toStartWith("https://");
+    const response = await invokeHandler(handler, {
+      url: "/secure",
+      headers: { "x-forwarded-proto": "https" },
     });
+    expect(JSON.parse(response.body).url).toStartWith("https://");
   });
 
   test("preserves multi-value headers (e.g. cookie)", async () => {
@@ -92,14 +131,11 @@ describe("toNodeHandler", () => {
     });
     const handler = toNodeHandler(router);
 
-    await withServer(handler, async (baseUrl) => {
-      // fetch sends single Accept header, but we can verify the conversion works
-      const response = await fetch(`${baseUrl}/test`, {
-        headers: { accept: "application/json" },
-      });
-      const body = await response.json();
-      expect(body.accept).toBe("application/json");
+    const response = await invokeHandler(handler, {
+      url: "/test",
+      headers: { accept: ["application/json", "text/plain"] },
     });
+    expect(JSON.parse(response.body).accept).toBe("application/json, text/plain");
   });
 
   test("streams large response body in chunks", async () => {
@@ -112,11 +148,8 @@ describe("toNodeHandler", () => {
     );
     const handler = toNodeHandler(router);
 
-    await withServer(handler, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/big`);
-      expect(response.status).toBe(200);
-      const text = await response.text();
-      expect(text.length).toBe(100_000);
-    });
+    const response = await invokeHandler(handler, { url: "/big" });
+    expect(response.status).toBe(200);
+    expect(response.body.length).toBe(100_000);
   });
 });
