@@ -6,6 +6,7 @@ import {
   Decoder,
   decodeJsonBody,
   decodeMultipartBody,
+  fail,
   prefixIssues,
 } from "./decoder.js";
 import { type ValidationIssue, ValidationError } from "./validation.js";
@@ -48,7 +49,11 @@ export function requiredPath<A>(
   const prefix = `$path.${name}`;
   return createRequestDecoder((input) => {
     const raw = input.pathParams[name];
-    const value = raw === undefined ? undefined : uriDecode(raw);
+    const decodedValue = raw === undefined ? undefined : uriDecode(raw);
+    if (decodedValue !== undefined && isLeft(decodedValue)) {
+      return prefixIssues(decodedValue, prefix);
+    }
+    const value = decodedValue === undefined ? undefined : decodedValue.right;
     const result = decoder.decode(value);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
   });
@@ -223,8 +228,13 @@ function readQueryValue(
 }
 
 /** Fast-path URI decode: skip native call when no percent-encoding is present. */
-function uriDecode(value: string): string {
-  return value.indexOf("%") === -1 ? value : decodeURIComponent(value);
+function uriDecode(value: string): DecoderResult<string> {
+  if (value.indexOf("%") === -1) return Either.right(value);
+  try {
+    return Either.right(decodeURIComponent(value));
+  } catch {
+    return fail("", "Expected a valid percent-encoded path segment.");
+  }
 }
 
 const EMPTY_COOKIES: Record<string, string> = Object.freeze(Object.create(null));

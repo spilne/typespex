@@ -95,6 +95,27 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("decodeRequestInput returns validation error for malformed path encoding", () => {
+    const decoder = RequestDecoders.path("petId", Decoders.string)
+      .map((petId) => ({ petId }));
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/pets/%E0%A4%A"),
+      { petId: "%E0%A4%A" },
+    );
+
+    expect(isLeft(result)).toBe(true);
+    if (isLeft(result)) {
+      expect(result.left.issues).toEqual([
+        {
+          path: "$path.petId",
+          message: "Expected a valid percent-encoded path segment.",
+        },
+      ]);
+    }
+  });
+
   test("Decoder.map lifts one request value into an object", () => {
     const decoder = RequestDecoders.path("petId", Decoders.string)
       .map((petId) => ({ petId }));
