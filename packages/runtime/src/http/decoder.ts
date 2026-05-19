@@ -523,7 +523,7 @@ export async function decodeFormBody<A>(
     const params = new URLSearchParams(text);
     value = Object.create(null);
     for (const [key, val] of params) {
-      value[key] = val;
+      appendBodyField(value, key, val);
     }
   } catch {
     return Either.left(new ValidationError([{ path: root, message: "Body must contain valid form data." }]));
@@ -542,7 +542,7 @@ export async function decodeMultipartBody<A>(
     const formData = await request.formData();
     value = Object.create(null);
     for (const [key, val] of formData) {
-      value[key] = val;
+      appendBodyField(value, key, val);
     }
   } catch {
     return Either.left(new ValidationError([{ path: root, message: "Body must contain valid multipart form data." }]));
@@ -631,4 +631,22 @@ function normalizeBase64(value: string): string {
   const padding = value.length % 4;
   if (padding === 0) return value;
   return `${value}${"=".repeat(4 - padding)}`;
+}
+
+function appendBodyField(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  if (!Object.prototype.hasOwnProperty.call(target, key)) {
+    target[key] = value;
+    return;
+  }
+
+  const existing = target[key];
+  if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    target[key] = [existing, value];
+  }
 }

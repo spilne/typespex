@@ -624,6 +624,21 @@ describe("http decoder - throw adapters", () => {
     expect(result).toEqual(Either.right({ msg: "hello world", path: "/foo/bar" }));
   });
 
+  test("decodeFormBody collects repeated fields as arrays", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: "tag=one&tag=two",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    const result = await decodeFormBody(
+      request,
+      Decoders.object<{ tag: string[] }>({
+        tag: Decoders.strictArray(Decoders.string),
+      }),
+    );
+    expect(result).toEqual(Either.right({ tag: ["one", "two"] }));
+  });
+
   test("decodeFormBody validates decoded fields", async () => {
     const request = new Request("http://localhost/test", {
       method: "POST",
@@ -675,6 +690,29 @@ describe("http decoder - throw adapters", () => {
       expect(result.right.name).toBe("Alice");
       expect(result.right.avatar).toBeInstanceOf(File);
       expect(result.right.avatar.name).toBe("avatar.png");
+    }
+  });
+
+  test("decodeMultipartBody collects repeated fields as arrays", async () => {
+    const formData = new FormData();
+    formData.append("files", new File(["one"], "one.txt", { type: "text/plain" }));
+    formData.append("files", new File(["two"], "two.txt", { type: "text/plain" }));
+
+    const request = new Request("http://localhost/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const result = await decodeMultipartBody(
+      request,
+      Decoders.object<{ files: File[] }>({
+        files: Decoders.strictArray(Decoders.file),
+      }),
+    );
+
+    expect(result._tag).toBe("Right");
+    if (result._tag === "Right") {
+      expect(result.right.files.map((file) => file.name)).toEqual(["one.txt", "two.txt"]);
     }
   });
 
