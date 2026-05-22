@@ -104,54 +104,37 @@ const PetsInput = {
 const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
   create: ResponseEncoders.json<Pet>(200),
-  read: (() => {
-    const petResponse = ResponseEncoders.variant<Pet>({
-      status: 200,
-      contentType: "application/json",
-    });
-    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
-      status: 404,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isPet = (result: Pet | NotFoundError): result is Pet =>
-      typeof result === "object" && result !== null && "id" in result;
-    const isNotFoundError = (result: Pet | NotFoundError): result is NotFoundError =>
-      typeof result === "object" && result !== null && "code" in result;
-    return {
-      encode(result: Pet | NotFoundError): Response {
-        if (isPet(result)) {
-          return petResponse.encode(result);
-        }
-        if (isNotFoundError(result)) {
-          return notFoundErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
-  delete: (() => {
-    const emptyResponse = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
-    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
-      status: 404,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isEmptyResponse = (result: void | NotFoundError): result is void => result === undefined;
-    const isNotFoundError = (result: void | NotFoundError): result is NotFoundError =>
-      typeof result === "object" && result !== null && !Array.isArray(result);
-    return {
-      encode(result: void | NotFoundError): Response {
-        if (isEmptyResponse(result)) {
-          return emptyResponse.encode(result);
-        }
-        if (isNotFoundError(result)) {
-          return notFoundErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
+  read: ResponseEncoders.matchVariant<Pet | NotFoundError>([
+    {
+      when: (result): result is Pet =>
+        typeof result === "object" && result !== null && "id" in result,
+      encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result,
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  delete: ResponseEncoders.matchVariant<void | NotFoundError>([
+    {
+      when: (result): result is void => result === undefined,
+      encoder: ResponseEncoders.variant<void>({ status: 204, kind: "empty" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && !Array.isArray(result),
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
 };
 
 export const PetsOperations = {

@@ -112,6 +112,11 @@ export interface ResponseVariant {
   readonly contentType?: string;
 }
 
+export interface ResponseVariantMatch<A, B extends A = A> {
+  readonly when: (value: A) => value is B;
+  readonly encoder: ResponseEncoder<B>;
+}
+
 function encodeVariantResponse<A>(
   value: A,
   variant: ResponseVariant,
@@ -195,6 +200,20 @@ function variantResponseEncoder<A>(
   return ResponseEncoder.of((value) => encodeVariantResponse(value, variant));
 }
 
+function matchVariantResponseEncoder<A>(
+  cases: readonly ResponseVariantMatch<A>[],
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => {
+    for (const match of cases) {
+      if (match.when(value)) {
+        return match.encoder.encode(value);
+      }
+    }
+
+    return unreachableResponse(value);
+  });
+}
+
 function unreachableResponse(value: unknown): never {
   throw new TypeError(
     `Result value did not match any declared HTTP response variant: ${String(value)}`,
@@ -210,5 +229,6 @@ export const ResponseEncoders = {
   stream: streamResponseEncoder,
   response: rawResponseEncoder,
   variant: variantResponseEncoder,
+  matchVariant: matchVariantResponseEncoder,
   unreachable: unreachableResponse,
 } as const;

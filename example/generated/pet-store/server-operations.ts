@@ -60,127 +60,87 @@ const PetsInput = {
 
 const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
-  create: (() => {
-    const petResponse = ResponseEncoders.variant<Pet>({
-      status: 200,
-      contentType: "application/json",
-    });
-    const conflictErrorResponse = ResponseEncoders.variant<ConflictError>({
-      status: 409,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isPet = (result: Pet | ConflictError): result is Pet =>
-      typeof result === "object" && result !== null && "id" in result;
-    const isConflictError = (result: Pet | ConflictError): result is ConflictError =>
-      typeof result === "object" && result !== null && "code" in result;
-    return {
-      encode(result: Pet | ConflictError): Response {
-        if (isPet(result)) {
-          return petResponse.encode(result);
-        }
-        if (isConflictError(result)) {
-          return conflictErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
-  read: (() => {
-    const petResponse = ResponseEncoders.variant<Pet>({
-      status: 200,
-      contentType: "application/json",
-    });
-    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
-      status: 404,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isPet = (result: Pet | NotFoundError): result is Pet =>
-      typeof result === "object" && result !== null && "id" in result;
-    const isNotFoundError = (result: Pet | NotFoundError): result is NotFoundError =>
-      typeof result === "object" && result !== null && "code" in result;
-    return {
-      encode(result: Pet | NotFoundError): Response {
-        if (isPet(result)) {
-          return petResponse.encode(result);
-        }
-        if (isNotFoundError(result)) {
-          return notFoundErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
-  delete: (() => {
-    const emptyResponse = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
-    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
-      status: 404,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const forbiddenErrorResponse = ResponseEncoders.variant<ForbiddenError>({
-      status: 403,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isEmptyResponse = (result: void | NotFoundError | ForbiddenError): result is void =>
-      result === undefined;
-    const isNotFoundError = (
-      result: void | NotFoundError | ForbiddenError,
-    ): result is NotFoundError =>
-      typeof result === "object" &&
-      result !== null &&
-      "code" in result &&
-      result["code"] === "NOT_FOUND";
-    const isForbiddenError = (
-      result: void | NotFoundError | ForbiddenError,
-    ): result is ForbiddenError =>
-      typeof result === "object" &&
-      result !== null &&
-      "code" in result &&
-      result["code"] === "FORBIDDEN";
-    return {
-      encode(result: void | NotFoundError | ForbiddenError): Response {
-        if (isEmptyResponse(result)) {
-          return emptyResponse.encode(result);
-        }
-        if (isNotFoundError(result)) {
-          return notFoundErrorResponse.encode(result);
-        }
-        if (isForbiddenError(result)) {
-          return forbiddenErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
-  uploadPhoto: (() => {
-    const uploadResultResponse = ResponseEncoders.variant<UploadResult>({
-      status: 200,
-      contentType: "application/json",
-    });
-    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
-      status: 404,
-      contentType: "application/json",
-      omit: ["_"],
-    });
-    const isUploadResult = (result: UploadResult | NotFoundError): result is UploadResult =>
-      typeof result === "object" && result !== null && "id" in result;
-    const isNotFoundError = (result: UploadResult | NotFoundError): result is NotFoundError =>
-      typeof result === "object" && result !== null && "code" in result;
-    return {
-      encode(result: UploadResult | NotFoundError): Response {
-        if (isUploadResult(result)) {
-          return uploadResultResponse.encode(result);
-        }
-        if (isNotFoundError(result)) {
-          return notFoundErrorResponse.encode(result);
-        }
-        return ResponseEncoders.unreachable(result);
-      },
-    };
-  })(),
+  create: ResponseEncoders.matchVariant<Pet | ConflictError>([
+    {
+      when: (result): result is Pet =>
+        typeof result === "object" && result !== null && "id" in result,
+      encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is ConflictError =>
+        typeof result === "object" && result !== null && "code" in result,
+      encoder: ResponseEncoders.variant<ConflictError>({
+        status: 409,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  read: ResponseEncoders.matchVariant<Pet | NotFoundError>([
+    {
+      when: (result): result is Pet =>
+        typeof result === "object" && result !== null && "id" in result,
+      encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result,
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  delete: ResponseEncoders.matchVariant<void | NotFoundError | ForbiddenError>([
+    {
+      when: (result): result is void => result === undefined,
+      encoder: ResponseEncoders.variant<void>({ status: 204, kind: "empty" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "NOT_FOUND",
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is ForbiddenError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "FORBIDDEN",
+      encoder: ResponseEncoders.variant<ForbiddenError>({
+        status: 403,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  uploadPhoto: ResponseEncoders.matchVariant<UploadResult | NotFoundError>([
+    {
+      when: (result): result is UploadResult =>
+        typeof result === "object" && result !== null && "id" in result,
+      encoder: ResponseEncoders.variant<UploadResult>({
+        status: 200,
+        contentType: "application/json",
+      }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result,
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
 };
 
 export const PetsOperations = {

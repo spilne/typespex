@@ -145,6 +145,30 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
   });
 
+  test("matchVariant dispatches to the first matching response encoder", async () => {
+    type Result =
+      | { id: string; name: string }
+      | { code: "NOT_FOUND"; message: string };
+
+    const encoder = ResponseEncoders.matchVariant<Result>([
+      {
+        when: (value): value is Extract<Result, { id: string }> => "id" in value,
+        encoder: ResponseEncoders.variant<Extract<Result, { id: string }>>({ status: 200 }),
+      },
+      {
+        when: (value): value is Extract<Result, { code: "NOT_FOUND" }> => "code" in value,
+        encoder: ResponseEncoders.variant<Extract<Result, { code: "NOT_FOUND" }>>({
+          status: 404,
+        }),
+      },
+    ]);
+
+    const response = encoder.encode({ code: "NOT_FOUND", message: "missing" });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
+  });
+
   test("unreachable throws for unmatched generated branches", () => {
     expect(() => ResponseEncoders.unreachable({ code: "UNKNOWN" })).toThrow(
       "did not match",

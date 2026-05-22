@@ -620,77 +620,17 @@ function emitResponseDecisionEncoder(
   branches: readonly ResponseBranch[],
 ): string {
   const lines: string[] = [];
-  const usedNames = new Set<string>();
-  lines.push("(() => {");
-  const encoderNames = branches.map((branch, index) =>
-    uniqueIdentifier(responseEncoderName(branch.response, index), usedNames)
-  );
-  const guardNames = branches.map((branch, index) =>
-    uniqueIdentifier(responseGuardName(branch.response, index), usedNames)
-  );
-  branches.forEach((branch, index) => {
-    lines.push(`const ${encoderNames[index]} = ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)});`);
+  lines.push(`ResponseEncoders.matchVariant<${resultType}>([`);
+  branches.forEach((branch) => {
+    lines.push("{");
+    lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
+    lines.push(`encoder: ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)}),`);
+    lines.push("},");
   });
-  branches.forEach((branch, index) => {
-    lines.push(`const ${guardNames[index]} = (result: ${resultType}): result is ${branch.response.tsType} => ${branch.condition};`);
-  });
-  lines.push("return {");
-  lines.push(`encode(result: ${resultType}): Response {`);
-  branches.forEach((branch, index) => {
-    lines.push(`if (${guardNames[index]}(result)) {`);
-    lines.push(`return ${encoderNames[index]}.encode(result);`);
-    lines.push("}");
-  });
-  lines.push("return ResponseEncoders.unreachable(result);");
-  lines.push("},");
-  lines.push("};");
-  lines.push("})()");
+  // TODO: Benchmark matchVariant against generated direct if/switch dispatch for hot response paths.
+  lines.push("])");
   return lines.join("\n");
 }
-
-function responseEncoderName(response: SuccessResponseVariant, index: number): string {
-  if (response.model?.name) return `${lowerFirst(response.model.name)}Response`;
-  if (response.isVoid) return "emptyResponse";
-  return `response${index}`;
-}
-
-function responseGuardName(response: SuccessResponseVariant, index: number): string {
-  if (response.model?.name) return `is${response.model.name}`;
-  if (response.isVoid) return "isEmptyResponse";
-  return `isResponse${index}`;
-}
-
-function lowerFirst(value: string): string {
-  return value ? value[0].toLowerCase() + value.slice(1) : value;
-}
-
-function uniqueIdentifier(name: string, usedNames: Set<string>): string {
-  const base = sanitizeIdentifier(name);
-  let candidate = base;
-  let suffix = 2;
-  while (usedNames.has(candidate)) {
-    candidate = `${base}${suffix}`;
-    suffix++;
-  }
-  usedNames.add(candidate);
-  return candidate;
-}
-
-function sanitizeIdentifier(name: string): string {
-  const identifier = name.replace(/[^A-Za-z0-9_$]/g, "_");
-  const safe = /^[A-Za-z_$]/.test(identifier) ? identifier : `_${identifier}`;
-  return RESERVED_IDENTIFIERS.has(safe) ? `${safe}_` : safe;
-}
-
-const RESERVED_IDENTIFIERS = new Set([
-  "break", "case", "catch", "class", "const", "continue", "debugger",
-  "default", "delete", "do", "else", "export", "extends", "finally",
-  "for", "function", "if", "import", "in", "instanceof", "new",
-  "return", "super", "switch", "this", "throw", "try", "typeof",
-  "var", "void", "while", "with", "yield", "let", "static", "enum",
-  "await", "implements", "package", "protected", "interface", "private",
-  "public",
-]);
 
 function emitResponseVariant(response: SuccessResponseVariant): string {
   const fields = [`status: ${response.statusCode}`];
