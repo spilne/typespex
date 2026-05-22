@@ -292,12 +292,12 @@ const ItemsOutput = {
   read: ResponseEncoders.matchVariant<Item | NotFoundError>([
     {
       when: (result): result is Item =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<Item>({ status: 200, contentType: "application/json" }),
     },
     {
       when: (result): result is NotFoundError =>
-        typeof result === "object" && result !== null && "code" in result,
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
       encoder: ResponseEncoders.variant<NotFoundError>({
         status: 404,
         contentType: "application/json",
@@ -338,12 +338,20 @@ const ItemsOutput = {
   update: ResponseEncoders.matchVariant<Item | NotFoundError | ConflictError>([
     {
       when: (result): result is Item =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" &&
+        result !== null &&
+        "id" in result &&
+        !("code" in result) &&
+        !("conflictId" in result),
       encoder: ResponseEncoders.variant<Item>({ status: 200, contentType: "application/json" }),
     },
     {
       when: (result): result is NotFoundError =>
-        typeof result === "object" && result !== null && "code" in result,
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        !("id" in result) &&
+        !("conflictId" in result),
       encoder: ResponseEncoders.variant<NotFoundError>({
         status: 404,
         contentType: "application/json",
@@ -352,7 +360,11 @@ const ItemsOutput = {
     },
     {
       when: (result): result is ConflictError =>
-        typeof result === "object" && result !== null && "conflictId" in result,
+        typeof result === "object" &&
+        result !== null &&
+        "conflictId" in result &&
+        !("id" in result) &&
+        !("code" in result),
       encoder: ResponseEncoders.variant<ConflictError>({
         status: 409,
         contentType: "application/json",
@@ -478,7 +490,10 @@ const ItemsOutput = {
   create: ResponseEncoders.matchVariant<CreatedItem | AcceptedJob>([
     {
       when: (result): result is CreatedItem =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" &&
+        result !== null &&
+        "id" in result &&
+        !("operationId" in result),
       encoder: ResponseEncoders.variant<CreatedItem>({
         status: 201,
         contentType: "application/json",
@@ -487,7 +502,10 @@ const ItemsOutput = {
     },
     {
       when: (result): result is AcceptedJob =>
-        typeof result === "object" && result !== null && "operationId" in result,
+        typeof result === "object" &&
+        result !== null &&
+        "operationId" in result &&
+        !("id" in result),
       encoder: ResponseEncoders.variant<AcceptedJob>({
         status: 202,
         contentType: "application/json",

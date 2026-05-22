@@ -551,7 +551,7 @@ function resolvePropertyBranches(
     return props;
   });
 
-  const branches: ResponseBranch[] = [];
+  const uniqueProperties: string[] = [];
   for (let i = 0; i < responses.length; i++) {
     let uniqueProp: string | undefined;
     for (const prop of modelProps[i]) {
@@ -562,13 +562,33 @@ function resolvePropertyBranches(
       }
     }
     if (!uniqueProp) return undefined;
+    uniqueProperties.push(uniqueProp);
+  }
+
+  const branches: ResponseBranch[] = [];
+  for (let i = 0; i < responses.length; i++) {
+    const uniqueProp = uniqueProperties[i];
+    const excludedProps = uniqueProperties.filter((_, j) => j !== i);
     branches.push({
       response: responses[i],
-      condition: `typeof result === "object" && result !== null && ${JSON.stringify(uniqueProp)} in result`,
+      condition: emitExclusivePropertyCondition(uniqueProp, excludedProps),
     });
   }
 
   return branches;
+}
+
+function emitExclusivePropertyCondition(
+  requiredProperty: string,
+  excludedProperties: readonly string[],
+): string {
+  const checks = [
+    `typeof result === "object"`,
+    `result !== null`,
+    `${JSON.stringify(requiredProperty)} in result`,
+    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in result)`),
+  ];
+  return checks.join(" && ");
 }
 
 function isResponseDispatchMetadata(

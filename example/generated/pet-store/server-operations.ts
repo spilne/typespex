@@ -63,12 +63,12 @@ const PetsOutput = {
   create: ResponseEncoders.matchVariant<Pet | ConflictError>([
     {
       when: (result): result is Pet =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
     },
     {
       when: (result): result is ConflictError =>
-        typeof result === "object" && result !== null && "code" in result,
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
       encoder: ResponseEncoders.variant<ConflictError>({
         status: 409,
         contentType: "application/json",
@@ -79,12 +79,12 @@ const PetsOutput = {
   read: ResponseEncoders.matchVariant<Pet | NotFoundError>([
     {
       when: (result): result is Pet =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
     },
     {
       when: (result): result is NotFoundError =>
-        typeof result === "object" && result !== null && "code" in result,
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
       encoder: ResponseEncoders.variant<NotFoundError>({
         status: 404,
         contentType: "application/json",
@@ -125,7 +125,7 @@ const PetsOutput = {
   uploadPhoto: ResponseEncoders.matchVariant<UploadResult | NotFoundError>([
     {
       when: (result): result is UploadResult =>
-        typeof result === "object" && result !== null && "id" in result,
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<UploadResult>({
         status: 200,
         contentType: "application/json",
@@ -133,7 +133,7 @@ const PetsOutput = {
     },
     {
       when: (result): result is NotFoundError =>
-        typeof result === "object" && result !== null && "code" in result,
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
       encoder: ResponseEncoders.variant<NotFoundError>({
         status: 404,
         contentType: "application/json",
