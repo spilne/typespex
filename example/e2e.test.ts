@@ -21,7 +21,7 @@ function createTestServer() {
 
       create: async (input) => {
         if (store.has(input.name)) {
-          return { _: 409, code: "CONFLICT" as const, message: `${input.name} exists` };
+          return { code: "CONFLICT" as const, message: `${input.name} exists` };
         }
         const item: Pet = { id: crypto.randomUUID(), name: input.name, tag: input.tag };
         store.set(item.name, item);
@@ -30,7 +30,7 @@ function createTestServer() {
 
       read: async ({ petId }) => {
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return { _: 404, code: "NOT_FOUND" as const, message: "not found" };
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
         return item;
       },
 
@@ -41,19 +41,19 @@ function createTestServer() {
         if (authScope === "admin") {
           const isAdmin = ctx.request.headers.get("x-role") === "admin";
           if (!isAdmin) {
-            return { _: 403, code: "FORBIDDEN" as const, message: "admin only" };
+            return { code: "FORBIDDEN" as const, message: "admin only" };
           }
         }
 
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return { _: 404, code: "NOT_FOUND" as const, message: "not found" };
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
         store.delete(item.name);
         return undefined;
       },
 
       uploadPhoto: async ({ petId, caption, photo }) => {
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return { _: 404, code: "NOT_FOUND" as const, message: "not found" };
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
         return {
           id: crypto.randomUUID(),
           filename: photo.name,

@@ -133,119 +133,21 @@ describe("ResponseEncoders", () => {
     expect(await response.text()).toBe("created");
   });
 
-  test("oneOf dispatches responses by status field", async () => {
-    const encoder = ResponseEncoders.oneOf<
-      { _: 201; id: string } | { _: 202; operationId: string }
-    >([
-      {
-        kind: "field",
-        field: "_",
-        cases: {
-          "201": { status: 201, omit: ["_"] },
-          "202": { status: 202, omit: ["_"] },
-        },
-      },
-    ]);
+  test("variant omits metadata properties that are not in the handler type", async () => {
+    const encoder = ResponseEncoders.variant<{ code: "NOT_FOUND"; message: string }>({
+      status: 404,
+      omit: ["_"],
+    });
 
-    const created = encoder.encode({ _: 201, id: "item-1" });
-    const accepted = encoder.encode({ _: 202, operationId: "op-1" });
+    const response = encoder.encode({ code: "NOT_FOUND", message: "missing" });
 
-    expect(created.status).toBe(201);
-    expect(await created.json()).toEqual({ id: "item-1" });
-    expect(accepted.status).toBe(202);
-    expect(await accepted.json()).toEqual({ operationId: "op-1" });
-  });
-
-  test("oneOf dispatches responses by string tag", async () => {
-    type E = { code: "NOT_FOUND"; message: string } | { code: "FORBIDDEN"; message: string };
-
-    const encoder = ResponseEncoders.oneOf<E>([{
-      kind: "field",
-      field: "code",
-      cases: {
-        NOT_FOUND: { status: 404 },
-        FORBIDDEN: { status: 403 },
-      },
-    }]);
-
-    const notFound = encoder.encode({ code: "NOT_FOUND", message: "gone" });
-    expect(notFound.status).toBe(404);
-    expect(await notFound.json()).toEqual({ code: "NOT_FOUND", message: "gone" });
-
-    const forbidden = encoder.encode({ code: "FORBIDDEN", message: "nope" });
-    expect(forbidden.status).toBe(403);
-  });
-
-  test("oneOf dispatches by numeric tag", async () => {
-    const encoder = ResponseEncoders.oneOf<{ status: number }>([{
-      kind: "field",
-      field: "status",
-      cases: {
-        "404": { status: 404 },
-        "409": { status: 409 },
-      },
-    }]);
-
-    const response = encoder.encode({ status: 404 });
     expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
   });
 
-  test("oneOf throws when no variant matches", () => {
-    const encoder = ResponseEncoders.oneOf<{ code: string }>([{
-      kind: "field",
-      field: "code",
-      cases: {
-        KNOWN: { status: 400 },
-      },
-    }]);
-
-    expect(() => encoder.encode({ code: "UNKNOWN" })).toThrow("did not match");
-  });
-
-  test("oneOf dispatches by unique property existence", async () => {
-    type E = { retryAfter: number } | { conflictId: string };
-
-    const encoder = ResponseEncoders.oneOf<E>([{
-      kind: "property",
-      cases: {
-        retryAfter: { status: 429 },
-        conflictId: { status: 409 },
-      },
-    }]);
-
-    const retry = encoder.encode({ retryAfter: 30 });
-    expect(retry.status).toBe(429);
-    expect(await retry.json()).toEqual({ retryAfter: 30 });
-
-    const conflict = encoder.encode({ conflictId: "abc" });
-    expect(conflict.status).toBe(409);
-  });
-
-  test("oneOf checks first matching property", async () => {
-    const encoder = ResponseEncoders.oneOf<{ a: number; b: number }>([{
-      kind: "property",
-      cases: {
-        a: { status: 400 },
-        b: { status: 401 },
-      },
-    }]);
-
-    const response = encoder.encode({ a: 1, b: 2 });
-    expect(response.status).toBe(400);
-  });
-
-  test("oneOf dispatches void and object variants", async () => {
-    const encoder = ResponseEncoders.oneOf<void | { code: "NOT_FOUND"; message: string }>([
-      { kind: "undefined", variant: { status: 204, kind: "empty" } },
-      { kind: "object", variant: { status: 404 } },
-    ]);
-
-    const empty = encoder.encode(undefined);
-    expect(empty.status).toBe(204);
-    expect(await empty.text()).toBe("");
-
-    const error = encoder.encode({ code: "NOT_FOUND", message: "missing" });
-    expect(error.status).toBe(404);
-    expect(await error.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
+  test("unreachable throws for unmatched generated branches", () => {
+    expect(() => ResponseEncoders.unreachable({ code: "UNKNOWN" })).toThrow(
+      "did not match",
+    );
   });
 });

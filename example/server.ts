@@ -29,7 +29,6 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return {
-          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         };
@@ -42,7 +41,6 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
       const pet = pets.get(petId);
       if (!pet) {
         return {
-          _: 404,
           code: "NOT_FOUND" as const,
           message: `Pet ${petId} not found`,
         };
@@ -53,7 +51,7 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
 
     async uploadPhoto({ petId, caption, photo }) {
       const pet = pets.get(petId);
-      if (!pet) return { _: 404, code: "NOT_FOUND" as const, message: "not found" };
+      if (!pet) return { code: "NOT_FOUND" as const, message: "not found" };
       return {
         id: crypto.randomUUID(),
         filename: photo.name,

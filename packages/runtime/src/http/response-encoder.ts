@@ -112,34 +112,6 @@ export interface ResponseVariant {
   readonly contentType?: string;
 }
 
-export type ResponseMatcher =
-  | {
-      readonly kind: "undefined";
-      readonly variant: ResponseVariant;
-    }
-  | {
-      readonly kind: "array";
-      readonly variant: ResponseVariant;
-    }
-  | {
-      readonly kind: "type";
-      readonly type: "string" | "number" | "boolean";
-      readonly variant: ResponseVariant;
-    }
-  | {
-      readonly kind: "object";
-      readonly variant: ResponseVariant;
-    }
-  | {
-      readonly kind: "field";
-      readonly field: string;
-      readonly cases: Readonly<Record<string, ResponseVariant>>;
-    }
-  | {
-      readonly kind: "property";
-      readonly cases: Readonly<Record<string, ResponseVariant>>;
-    };
-
 function encodeVariantResponse<A>(
   value: A,
   variant: ResponseVariant,
@@ -223,56 +195,10 @@ function variantResponseEncoder<A>(
   return ResponseEncoder.of((value) => encodeVariantResponse(value, variant));
 }
 
-function oneOfResponseEncoder<A>(
-  matchers: readonly ResponseMatcher[],
-): ResponseEncoder<A> {
-  return ResponseEncoder.of((value) => {
-    const variant = matchResponseVariant(value, matchers);
-    if (!variant) {
-      throw new TypeError("Result value did not match any declared HTTP response variant.");
-    }
-    return encodeVariantResponse(value, variant);
-  });
-}
-
-function matchResponseVariant<A>(
-  value: A,
-  matchers: readonly ResponseMatcher[],
-): ResponseVariant | undefined {
-  for (const matcher of matchers) {
-    if (matcher.kind === "undefined") {
-      if (value === undefined) return matcher.variant;
-      continue;
-    }
-
-    if (matcher.kind === "array") {
-      if (Array.isArray(value)) return matcher.variant;
-      continue;
-    }
-
-    if (matcher.kind === "type") {
-      if (typeof value === matcher.type) return matcher.variant;
-      continue;
-    }
-
-    if (typeof value !== "object" || value === null) continue;
-    if (matcher.kind === "object") return matcher.variant;
-
-    const obj = value as Record<string, unknown>;
-
-    if (matcher.kind === "field") {
-      const tag = obj[matcher.field];
-      const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
-      if (key !== undefined && matcher.cases[key]) return matcher.cases[key];
-      continue;
-    }
-
-    for (const [property, variant] of Object.entries(matcher.cases)) {
-      if (property in obj) return variant;
-    }
-  }
-
-  return undefined;
+function unreachableResponse(value: unknown): never {
+  throw new TypeError(
+    `Result value did not match any declared HTTP response variant: ${String(value)}`,
+  );
 }
 
 export const ResponseEncoders = {
@@ -284,5 +210,5 @@ export const ResponseEncoders = {
   stream: streamResponseEncoder,
   response: rawResponseEncoder,
   variant: variantResponseEncoder,
-  oneOf: oneOfResponseEncoder,
+  unreachable: unreachableResponse,
 } as const;

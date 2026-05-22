@@ -196,14 +196,14 @@ describe("response encoding", () => {
     expect(r.readFile("content-api", "server-operations.ts")).toMatchSnapshot();
   });
 
-  test("multiple error types generate oneOf result encoders", () => {
+  test("multiple error types generate direct result encoders", () => {
     const r = compileFixture("multi-errors", multiErrorSpec);
 
     expect(r.readFile("multi-error-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
   });
 
-  test("multiple success types generate oneOf result encoders", () => {
+  test("multiple success types generate direct result encoders", () => {
     const r = compileFixture("multi-success", multiSuccessSpec);
 
     expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();

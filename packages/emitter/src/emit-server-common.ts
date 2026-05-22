@@ -192,8 +192,14 @@ function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string 
     return typeToTs(ctx, resp.type);
   }
 
+  if (resp.type.name && !hasHandlerVisibleMetadata(resp)) {
+    return typeToTs(ctx, resp.type);
+  }
+
+  const hiddenProperties = getHiddenResponsePropertyNames(resp);
   const parts: string[] = [];
   for (const prop of resp.type.properties.values()) {
+    if (hiddenProperties.has(prop.name)) continue;
     const optional = prop.optional ? "?" : "";
     parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
   }
@@ -211,6 +217,27 @@ function hasResponseEnvelopeMetadata(resp: HttpOperationResponse): boolean {
   );
 }
 
+function hasHandlerVisibleMetadata(resp: HttpOperationResponse): boolean {
+  return resp.responses.some((content) =>
+    content.properties.some((prop) =>
+      prop.kind === "header" ||
+      prop.kind === "body"
+    )
+  );
+}
+
+function getHiddenResponsePropertyNames(resp: HttpOperationResponse): Set<string> {
+  const hidden = new Set<string>();
+  for (const content of resp.responses) {
+    for (const prop of content.properties) {
+      if (prop.kind === "statusCode" || prop.kind === "contentType") {
+        hidden.add(prop.property.name);
+      }
+    }
+  }
+  return hidden;
+}
+
 export function toColonPath(path: string): string {
   return path.replace(/\{([^}]+)\}/g, ":$1");
 }
@@ -223,9 +250,9 @@ export function emitResultResponseEncoder(
 ): string {
   const responses = collectResponseVariants(ctx, op);
   if (responses.length > 1) {
-    const matchers = emitResponseMatchers(ctx, op, responses);
-    if (matchers.length > 0) {
-      return `ResponseEncoders.oneOf<${resultType}>([${matchers.join(", ")}])`;
+    const branches = buildResponseBranches(ctx, op, responses);
+    if (branches.length > 0) {
+      return emitResponseDecisionEncoder(resultType, branches);
     }
     $lib.reportDiagnostic(ctx.program, {
       code: "undifferentiable-response-union",
@@ -270,9 +297,10 @@ interface SuccessResponseVariant {
   readonly headers: ResponseHeader[];
   readonly bodyProperty?: string;
   readonly omitProperties: readonly string[];
-  readonly statusProperty?: string;
   readonly type: Type;
   readonly model?: Model;
+  readonly tsType: string;
+  readonly hiddenProperties: ReadonlySet<string>;
 }
 
 function collectResponseVariants(
@@ -293,6 +321,7 @@ function collectResponseVariants(
     const body = content?.body;
     const contentType = body?.contentTypes[0];
     const headers = collectResponseHeadersFromContent(ctx, content);
+    const hiddenProperties = getHiddenResponsePropertyNames(resp);
     const metadataProperties = content?.properties
       .filter((prop) =>
         prop.kind === "header" ||
@@ -308,9 +337,12 @@ function collectResponseVariants(
       headers,
       bodyProperty: body?.property?.name,
       omitProperties: metadataProperties.map((prop) => prop.property.name),
-      statusProperty: metadataProperties.find((prop) => prop.kind === "statusCode")?.property.name,
       type: resp.type,
       model: resp.type.kind === "Model" ? resp.type : undefined,
+      tsType: resp.type.kind === "Intrinsic" && resp.type.name === "void"
+        ? "void"
+        : responseTypeToTs(ctx, resp),
+      hiddenProperties,
     });
   }
 
@@ -330,44 +362,35 @@ function collectResponseHeadersFromContent(
     }));
 }
 
-function findStatusDiscriminator(
-  ctx: EmitterCtx,
-  responses: readonly SuccessResponseVariant[],
-): string | undefined {
-  const [first] = responses;
-  if (!first?.statusProperty) return undefined;
-  if (!responses.every((response) => response.statusProperty === first.statusProperty)) {
-    return undefined;
-  }
-
-  const statuses = new Set(responses.map((response) => response.statusCode));
-  return statuses.size === responses.length ? first.statusProperty : undefined;
+interface ResponseBranch {
+  readonly response: SuccessResponseVariant;
+  readonly condition: string;
 }
 
-function emitResponseMatchers(
+function buildResponseBranches(
   ctx: EmitterCtx,
   op: HttpOperation,
   responses: readonly SuccessResponseVariant[],
-): string[] {
-  const matchers: string[] = [];
+): ResponseBranch[] {
+  const branches: ResponseBranch[] = [];
   const pending = new Set(responses);
 
   const voidResponses = responses.filter((response) => response.isVoid);
   if (voidResponses.length > 1) return [];
   if (voidResponses.length === 1) {
     const [response] = voidResponses;
-    matchers.push(`{ kind: "undefined", variant: ${emitResponseVariant(response)} }`);
+    branches.push({ response, condition: "result === undefined" });
     pending.delete(response);
   }
 
   for (const response of [...pending]) {
-    const matcher = emitDirectTypeMatcher(ctx, response);
-    if (!matcher) continue;
-    matchers.push(matcher);
+    const condition = emitDirectTypeCondition(ctx, response);
+    if (!condition) continue;
+    branches.push({ response, condition });
     pending.delete(response);
   }
 
-  if (pending.size === 0) return matchers;
+  if (pending.size === 0) return branches;
 
   const objectResponses = [...pending].filter((response) =>
     response.model && !isArrayModelType(ctx.program, response.model)
@@ -375,53 +398,57 @@ function emitResponseMatchers(
   if (objectResponses.length !== pending.size) return [];
 
   if (objectResponses.length === 1) {
-    matchers.push(`{ kind: "object", variant: ${emitResponseVariant(objectResponses[0])} }`);
-    return matchers;
+    branches.push({
+      response: objectResponses[0],
+      condition: `typeof result === "object" && result !== null && !Array.isArray(result)`,
+    });
+    return branches;
   }
 
-  const explicitDiscriminator = resolveExplicitDiscriminatorMatcher(ctx, op, objectResponses);
+  const explicitDiscriminator = resolveExplicitDiscriminatorBranches(ctx, op, objectResponses);
   if (explicitDiscriminator) {
-    matchers.push(explicitDiscriminator);
-    return matchers;
+    branches.push(...explicitDiscriminator);
+    return branches;
   }
 
-  const statusField = findStatusDiscriminator(ctx, objectResponses);
-  if (statusField) {
-    matchers.push(emitStatusFieldMatcher(statusField, objectResponses));
-    return matchers;
-  }
-
-  const literalDiscriminator = resolveImplicitLiteralMatcher(ctx, objectResponses);
+  const literalDiscriminator = resolveImplicitLiteralBranches(ctx, objectResponses);
   if (literalDiscriminator) {
-    matchers.push(literalDiscriminator);
-    return matchers;
+    branches.push(...literalDiscriminator);
+    return branches;
   }
 
-  const propertyMatcher = resolvePropertyMatcher(ctx, objectResponses);
+  const propertyMatcher = resolvePropertyBranches(ctx, objectResponses);
   if (propertyMatcher) {
-    matchers.push(propertyMatcher);
-    return matchers;
+    branches.push(...propertyMatcher);
+    return branches;
   }
 
   return [];
 }
 
-function emitDirectTypeMatcher(
+function emitDirectTypeCondition(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
 ): string | undefined {
   if (response.model && isArrayModelType(ctx.program, response.model)) {
-    return `{ kind: "array", variant: ${emitResponseVariant(response)} }`;
+    return "Array.isArray(result)";
+  }
+
+  if (response.type.kind === "Intrinsic" && response.type.name === "null") {
+    return "result === null";
   }
 
   if (response.type.kind !== "Scalar") return undefined;
 
   const scalarName = response.type.name;
   if (scalarName === "string") {
-    return `{ kind: "type", type: "string", variant: ${emitResponseVariant(response)} }`;
+    return `typeof result === "string"`;
   }
   if (scalarName === "boolean") {
-    return `{ kind: "type", type: "boolean", variant: ${emitResponseVariant(response)} }`;
+    return `typeof result === "boolean"`;
+  }
+  if (scalarName === "bytes") {
+    return "result instanceof Uint8Array";
   }
   if (
     scalarName === "int32" ||
@@ -433,32 +460,32 @@ function emitDirectTypeMatcher(
     scalarName === "float" ||
     scalarName === "decimal"
   ) {
-    return `{ kind: "type", type: "number", variant: ${emitResponseVariant(response)} }`;
+    return `typeof result === "number"`;
   }
 
   return undefined;
 }
 
-function resolveExplicitDiscriminatorMatcher(
+function resolveExplicitDiscriminatorBranches(
   ctx: EmitterCtx,
   op: HttpOperation,
   responses: readonly SuccessResponseVariant[],
-): string | undefined {
+): ResponseBranch[] | undefined {
   const returnType = op.operation.returnType;
   if (returnType.kind !== "Union") return undefined;
   const discriminator = getDiscriminator(ctx.program, returnType);
   if (!discriminator) return undefined;
-  return emitLiteralFieldMatcher(ctx, discriminator.propertyName, responses);
+  return emitLiteralFieldBranches(ctx, discriminator.propertyName, responses);
 }
 
-function resolveImplicitLiteralMatcher(
+function resolveImplicitLiteralBranches(
   ctx: EmitterCtx,
   responses: readonly SuccessResponseVariant[],
-): string | undefined {
+): ResponseBranch[] | undefined {
   const candidateFields = new Set<string>();
   for (const response of responses) {
     for (const prop of response.model?.properties.values() ?? []) {
-      if (isStatusCode(ctx.program, prop)) continue;
+      if (isResponseDispatchMetadata(ctx, response, prop.name)) continue;
       if (prop.type.kind === "String" || prop.type.kind === "Number") {
         candidateFields.add(prop.name);
       }
@@ -466,59 +493,54 @@ function resolveImplicitLiteralMatcher(
   }
 
   for (const field of candidateFields) {
-    const matcher = emitLiteralFieldMatcher(ctx, field, responses);
-    if (matcher) return matcher;
+    const branches = emitLiteralFieldBranches(ctx, field, responses);
+    if (branches) return branches;
   }
 
   return undefined;
 }
 
-function emitLiteralFieldMatcher(
+function emitLiteralFieldBranches(
   ctx: EmitterCtx,
   field: string,
   responses: readonly SuccessResponseVariant[],
-): string | undefined {
-  const entries: string[] = [];
+): ResponseBranch[] | undefined {
+  const branches: ResponseBranch[] = [];
   const values = new Set<string>();
 
   for (const response of responses) {
     const prop = response.model?.properties.get(field);
-    if (!prop || isStatusCode(ctx.program, prop)) return undefined;
+    if (!prop || prop.optional || isResponseDispatchMetadata(ctx, response, prop.name)) {
+      return undefined;
+    }
     if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
     const value = String(prop.type.value);
     if (values.has(value)) return undefined;
     values.add(value);
-    entries.push(`${JSON.stringify(value)}: ${emitResponseVariant(response)}`);
+    branches.push({
+      response,
+      condition: `typeof result === "object" && result !== null && ${JSON.stringify(field)} in result && result[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`,
+    });
   }
 
-  return `{ kind: "field", field: ${JSON.stringify(field)}, cases: { ${entries.join(", ")} } }`;
+  return branches;
 }
 
-function emitStatusFieldMatcher(
-  field: string,
-  responses: readonly SuccessResponseVariant[],
-): string {
-  const entries = responses
-    .map((response) => `${JSON.stringify(String(response.statusCode))}: ${emitResponseVariant(response)}`)
-    .join(", ");
-  return `{ kind: "field", field: ${JSON.stringify(field)}, cases: { ${entries} } }`;
-}
-
-function resolvePropertyMatcher(
+function resolvePropertyBranches(
   ctx: EmitterCtx,
   responses: readonly SuccessResponseVariant[],
-): string | undefined {
+): ResponseBranch[] | undefined {
   const modelProps = responses.map((response) => {
     const props = new Set<string>();
     for (const prop of response.model?.properties.values() ?? []) {
-      if (!prop.optional && !isStatusCode(ctx.program, prop) && !isHeader(ctx.program, prop)) {
+      if (!prop.optional && !isResponseDispatchMetadata(ctx, response, prop.name)) {
         props.add(prop.name);
       }
     }
     return props;
   });
 
-  const entries: string[] = [];
+  const branches: ResponseBranch[] = [];
   for (let i = 0; i < responses.length; i++) {
     let uniqueProp: string | undefined;
     for (const prop of modelProps[i]) {
@@ -529,10 +551,46 @@ function resolvePropertyMatcher(
       }
     }
     if (!uniqueProp) return undefined;
-    entries.push(`${JSON.stringify(uniqueProp)}: ${emitResponseVariant(responses[i])}`);
+    branches.push({
+      response: responses[i],
+      condition: `typeof result === "object" && result !== null && ${JSON.stringify(uniqueProp)} in result`,
+    });
   }
 
-  return `{ kind: "property", cases: { ${entries.join(", ")} } }`;
+  return branches;
+}
+
+function isResponseDispatchMetadata(
+  ctx: EmitterCtx,
+  response: SuccessResponseVariant,
+  propertyName: string,
+): boolean {
+  if (response.hiddenProperties.has(propertyName)) return true;
+  const prop = response.model?.properties.get(propertyName);
+  return prop !== undefined && isHeader(ctx.program, prop);
+}
+
+function emitResponseDecisionEncoder(
+  resultType: string,
+  branches: readonly ResponseBranch[],
+): string {
+  const lines: string[] = [];
+  lines.push("(() => {");
+  branches.forEach((branch, index) => {
+    lines.push(`const response${index} = ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)});`);
+  });
+  lines.push("return {");
+  lines.push(`encode(result: ${resultType}): Response {`);
+  branches.forEach((branch, index) => {
+    lines.push(`if (${branch.condition}) {`);
+    lines.push(`return response${index}.encode(result as ${branch.response.tsType});`);
+    lines.push("}");
+  });
+  lines.push("return ResponseEncoders.unreachable(result);");
+  lines.push("},");
+  lines.push("};");
+  lines.push("})()");
+  return lines.join("\n");
 }
 
 function emitResponseVariant(response: SuccessResponseVariant): string {
