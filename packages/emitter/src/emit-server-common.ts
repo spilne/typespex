@@ -1,5 +1,10 @@
-import type { Model, Type } from "@typespec/compiler";
-import { getDiscriminator, isArrayModelType, isRecordModelType } from "@typespec/compiler";
+import type { Model, ModelProperty, Type } from "@typespec/compiler";
+import {
+  getDiscriminator,
+  isArrayModelType,
+  isRecordModelType,
+  walkPropertiesInherited,
+} from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
 import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
@@ -472,10 +477,14 @@ function resolveExplicitDiscriminatorBranches(
   responses: readonly SuccessResponseVariant[],
 ): ResponseBranch[] | undefined {
   const returnType = op.operation.returnType;
-  if (returnType.kind !== "Union") return undefined;
-  const discriminator = getDiscriminator(ctx.program, returnType);
-  if (!discriminator) return undefined;
-  return emitLiteralFieldBranches(ctx, discriminator.propertyName, responses);
+  const discriminator = returnType.kind === "Union"
+    ? getDiscriminator(ctx.program, returnType)?.propertyName
+    : undefined;
+  return emitLiteralFieldBranches(
+    ctx,
+    discriminator ?? findCommonModelDiscriminator(ctx, responses),
+    responses,
+  );
 }
 
 function resolveImplicitLiteralBranches(
@@ -484,7 +493,7 @@ function resolveImplicitLiteralBranches(
 ): ResponseBranch[] | undefined {
   const candidateFields = new Set<string>();
   for (const response of responses) {
-    for (const prop of response.model?.properties.values() ?? []) {
+    for (const prop of getResponseProperties(response)) {
       if (isResponseDispatchMetadata(ctx, response, prop.name)) continue;
       if (prop.type.kind === "String" || prop.type.kind === "Number") {
         candidateFields.add(prop.name);
@@ -502,14 +511,16 @@ function resolveImplicitLiteralBranches(
 
 function emitLiteralFieldBranches(
   ctx: EmitterCtx,
-  field: string,
+  field: string | undefined,
   responses: readonly SuccessResponseVariant[],
 ): ResponseBranch[] | undefined {
+  if (!field) return undefined;
+
   const branches: ResponseBranch[] = [];
   const values = new Set<string>();
 
   for (const response of responses) {
-    const prop = response.model?.properties.get(field);
+    const prop = getResponseProperty(response, field);
     if (!prop || prop.optional || isResponseDispatchMetadata(ctx, response, prop.name)) {
       return undefined;
     }
@@ -532,7 +543,7 @@ function resolvePropertyBranches(
 ): ResponseBranch[] | undefined {
   const modelProps = responses.map((response) => {
     const props = new Set<string>();
-    for (const prop of response.model?.properties.values() ?? []) {
+    for (const prop of getResponseProperties(response)) {
       if (!prop.optional && !isResponseDispatchMetadata(ctx, response, prop.name)) {
         props.add(prop.name);
       }
@@ -566,8 +577,42 @@ function isResponseDispatchMetadata(
   propertyName: string,
 ): boolean {
   if (response.hiddenProperties.has(propertyName)) return true;
-  const prop = response.model?.properties.get(propertyName);
+  const prop = getResponseProperty(response, propertyName);
   return prop !== undefined && isHeader(ctx.program, prop);
+}
+
+function findCommonModelDiscriminator(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): string | undefined {
+  const fields = responses.map((response) => findModelDiscriminator(ctx, response.model));
+  const [first] = fields;
+  if (!first) return undefined;
+  return fields.every((field) => field === first) ? first : undefined;
+}
+
+function findModelDiscriminator(
+  ctx: EmitterCtx,
+  model: Model | undefined,
+): string | undefined {
+  let current = model;
+  while (current) {
+    const discriminator = getDiscriminator(ctx.program, current);
+    if (discriminator) return discriminator.propertyName;
+    current = current.baseModel;
+  }
+  return undefined;
+}
+
+function getResponseProperties(response: SuccessResponseVariant): ModelProperty[] {
+  return response.model ? [...walkPropertiesInherited(response.model)] : [];
+}
+
+function getResponseProperty(
+  response: SuccessResponseVariant,
+  propertyName: string,
+): ModelProperty | undefined {
+  return getResponseProperties(response).find((prop) => prop.name === propertyName);
 }
 
 function emitResponseDecisionEncoder(
@@ -575,15 +620,25 @@ function emitResponseDecisionEncoder(
   branches: readonly ResponseBranch[],
 ): string {
   const lines: string[] = [];
+  const usedNames = new Set<string>();
   lines.push("(() => {");
+  const encoderNames = branches.map((branch, index) =>
+    uniqueIdentifier(responseEncoderName(branch.response, index), usedNames)
+  );
+  const guardNames = branches.map((branch, index) =>
+    uniqueIdentifier(responseGuardName(branch.response, index), usedNames)
+  );
   branches.forEach((branch, index) => {
-    lines.push(`const response${index} = ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)});`);
+    lines.push(`const ${encoderNames[index]} = ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)});`);
+  });
+  branches.forEach((branch, index) => {
+    lines.push(`const ${guardNames[index]} = (result: ${resultType}): result is ${branch.response.tsType} => ${branch.condition};`);
   });
   lines.push("return {");
   lines.push(`encode(result: ${resultType}): Response {`);
   branches.forEach((branch, index) => {
-    lines.push(`if (${branch.condition}) {`);
-    lines.push(`return response${index}.encode(result as ${branch.response.tsType});`);
+    lines.push(`if (${guardNames[index]}(result)) {`);
+    lines.push(`return ${encoderNames[index]}.encode(result);`);
     lines.push("}");
   });
   lines.push("return ResponseEncoders.unreachable(result);");
@@ -592,6 +647,50 @@ function emitResponseDecisionEncoder(
   lines.push("})()");
   return lines.join("\n");
 }
+
+function responseEncoderName(response: SuccessResponseVariant, index: number): string {
+  if (response.model?.name) return `${lowerFirst(response.model.name)}Response`;
+  if (response.isVoid) return "emptyResponse";
+  return `response${index}`;
+}
+
+function responseGuardName(response: SuccessResponseVariant, index: number): string {
+  if (response.model?.name) return `is${response.model.name}`;
+  if (response.isVoid) return "isEmptyResponse";
+  return `isResponse${index}`;
+}
+
+function lowerFirst(value: string): string {
+  return value ? value[0].toLowerCase() + value.slice(1) : value;
+}
+
+function uniqueIdentifier(name: string, usedNames: Set<string>): string {
+  const base = sanitizeIdentifier(name);
+  let candidate = base;
+  let suffix = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${base}${suffix}`;
+    suffix++;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+function sanitizeIdentifier(name: string): string {
+  const identifier = name.replace(/[^A-Za-z0-9_$]/g, "_");
+  const safe = /^[A-Za-z_$]/.test(identifier) ? identifier : `_${identifier}`;
+  return RESERVED_IDENTIFIERS.has(safe) ? `${safe}_` : safe;
+}
+
+const RESERVED_IDENTIFIERS = new Set([
+  "break", "case", "catch", "class", "const", "continue", "debugger",
+  "default", "delete", "do", "else", "export", "extends", "finally",
+  "for", "function", "if", "import", "in", "instanceof", "new",
+  "return", "super", "switch", "this", "throw", "try", "typeof",
+  "var", "void", "while", "with", "yield", "let", "static", "enum",
+  "await", "implements", "package", "protected", "interface", "private",
+  "public",
+]);
 
 function emitResponseVariant(response: SuccessResponseVariant): string {
   const fields = [`status: ${response.statusCode}`];

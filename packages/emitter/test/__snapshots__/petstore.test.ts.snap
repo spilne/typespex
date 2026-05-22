@@ -105,41 +105,48 @@ const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
   create: ResponseEncoders.json<Pet>(200),
   read: (() => {
-    const response0 = ResponseEncoders.variant<Pet>({
+    const petResponse = ResponseEncoders.variant<Pet>({
       status: 200,
       contentType: "application/json",
     });
-    const response1 = ResponseEncoders.variant<NotFoundError>({
+    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
       status: 404,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isPet = (result: Pet | NotFoundError): result is Pet =>
+      typeof result === "object" && result !== null && "id" in result;
+    const isNotFoundError = (result: Pet | NotFoundError): result is NotFoundError =>
+      typeof result === "object" && result !== null && "code" in result;
     return {
       encode(result: Pet | NotFoundError): Response {
-        if (typeof result === "object" && result !== null && "id" in result) {
-          return response0.encode(result as Pet);
+        if (isPet(result)) {
+          return petResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && "code" in result) {
-          return response1.encode(result as NotFoundError);
+        if (isNotFoundError(result)) {
+          return notFoundErrorResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },
     };
   })(),
   delete: (() => {
-    const response0 = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
-    const response1 = ResponseEncoders.variant<NotFoundError>({
+    const emptyResponse = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
+    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
       status: 404,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isEmptyResponse = (result: void | NotFoundError): result is void => result === undefined;
+    const isNotFoundError = (result: void | NotFoundError): result is NotFoundError =>
+      typeof result === "object" && result !== null && !Array.isArray(result);
     return {
       encode(result: void | NotFoundError): Response {
-        if (result === undefined) {
-          return response0.encode(result as void);
+        if (isEmptyResponse(result)) {
+          return emptyResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && !Array.isArray(result)) {
-          return response1.encode(result as NotFoundError);
+        if (isNotFoundError(result)) {
+          return notFoundErrorResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },

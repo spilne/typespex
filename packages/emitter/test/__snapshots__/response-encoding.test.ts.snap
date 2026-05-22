@@ -290,89 +290,108 @@ const ItemsInput = {
 
 const ItemsOutput = {
   read: (() => {
-    const response0 = ResponseEncoders.variant<Item>({
+    const itemResponse = ResponseEncoders.variant<Item>({
       status: 200,
       contentType: "application/json",
     });
-    const response1 = ResponseEncoders.variant<NotFoundError>({
+    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
       status: 404,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isItem = (result: Item | NotFoundError): result is Item =>
+      typeof result === "object" && result !== null && "id" in result;
+    const isNotFoundError = (result: Item | NotFoundError): result is NotFoundError =>
+      typeof result === "object" && result !== null && "code" in result;
     return {
       encode(result: Item | NotFoundError): Response {
-        if (typeof result === "object" && result !== null && "id" in result) {
-          return response0.encode(result as Item);
+        if (isItem(result)) {
+          return itemResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && "code" in result) {
-          return response1.encode(result as NotFoundError);
+        if (isNotFoundError(result)) {
+          return notFoundErrorResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },
     };
   })(),
   remove: (() => {
-    const response0 = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
-    const response1 = ResponseEncoders.variant<NotFoundError>({
+    const emptyResponse = ResponseEncoders.variant<void>({ status: 204, kind: "empty" });
+    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
       status: 404,
       contentType: "application/json",
       omit: ["_"],
     });
-    const response2 = ResponseEncoders.variant<ForbiddenError>({
+    const forbiddenErrorResponse = ResponseEncoders.variant<ForbiddenError>({
       status: 403,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isEmptyResponse = (result: void | NotFoundError | ForbiddenError): result is void =>
+      result === undefined;
+    const isNotFoundError = (
+      result: void | NotFoundError | ForbiddenError,
+    ): result is NotFoundError =>
+      typeof result === "object" &&
+      result !== null &&
+      "code" in result &&
+      result["code"] === "NOT_FOUND";
+    const isForbiddenError = (
+      result: void | NotFoundError | ForbiddenError,
+    ): result is ForbiddenError =>
+      typeof result === "object" &&
+      result !== null &&
+      "code" in result &&
+      result["code"] === "FORBIDDEN";
     return {
       encode(result: void | NotFoundError | ForbiddenError): Response {
-        if (result === undefined) {
-          return response0.encode(result as void);
+        if (isEmptyResponse(result)) {
+          return emptyResponse.encode(result);
         }
-        if (
-          typeof result === "object" &&
-          result !== null &&
-          "code" in result &&
-          result["code"] === "NOT_FOUND"
-        ) {
-          return response1.encode(result as NotFoundError);
+        if (isNotFoundError(result)) {
+          return notFoundErrorResponse.encode(result);
         }
-        if (
-          typeof result === "object" &&
-          result !== null &&
-          "code" in result &&
-          result["code"] === "FORBIDDEN"
-        ) {
-          return response2.encode(result as ForbiddenError);
+        if (isForbiddenError(result)) {
+          return forbiddenErrorResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },
     };
   })(),
   update: (() => {
-    const response0 = ResponseEncoders.variant<Item>({
+    const itemResponse = ResponseEncoders.variant<Item>({
       status: 200,
       contentType: "application/json",
     });
-    const response1 = ResponseEncoders.variant<NotFoundError>({
+    const notFoundErrorResponse = ResponseEncoders.variant<NotFoundError>({
       status: 404,
       contentType: "application/json",
       omit: ["_"],
     });
-    const response2 = ResponseEncoders.variant<ConflictError>({
+    const conflictErrorResponse = ResponseEncoders.variant<ConflictError>({
       status: 409,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isItem = (result: Item | NotFoundError | ConflictError): result is Item =>
+      typeof result === "object" && result !== null && "id" in result;
+    const isNotFoundError = (
+      result: Item | NotFoundError | ConflictError,
+    ): result is NotFoundError => typeof result === "object" && result !== null && "code" in result;
+    const isConflictError = (
+      result: Item | NotFoundError | ConflictError,
+    ): result is ConflictError =>
+      typeof result === "object" && result !== null && "conflictId" in result;
     return {
       encode(result: Item | NotFoundError | ConflictError): Response {
-        if (typeof result === "object" && result !== null && "id" in result) {
-          return response0.encode(result as Item);
+        if (isItem(result)) {
+          return itemResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && "code" in result) {
-          return response1.encode(result as NotFoundError);
+        if (isNotFoundError(result)) {
+          return notFoundErrorResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && "conflictId" in result) {
-          return response2.encode(result as ConflictError);
+        if (isConflictError(result)) {
+          return conflictErrorResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },
@@ -494,23 +513,27 @@ import type { AcceptedJob, CreatedItem } from "./models.js";
 
 const ItemsOutput = {
   create: (() => {
-    const response0 = ResponseEncoders.variant<CreatedItem>({
+    const createdItemResponse = ResponseEncoders.variant<CreatedItem>({
       status: 201,
       contentType: "application/json",
       omit: ["_"],
     });
-    const response1 = ResponseEncoders.variant<AcceptedJob>({
+    const acceptedJobResponse = ResponseEncoders.variant<AcceptedJob>({
       status: 202,
       contentType: "application/json",
       omit: ["_"],
     });
+    const isCreatedItem = (result: CreatedItem | AcceptedJob): result is CreatedItem =>
+      typeof result === "object" && result !== null && "id" in result;
+    const isAcceptedJob = (result: CreatedItem | AcceptedJob): result is AcceptedJob =>
+      typeof result === "object" && result !== null && "operationId" in result;
     return {
       encode(result: CreatedItem | AcceptedJob): Response {
-        if (typeof result === "object" && result !== null && "id" in result) {
-          return response0.encode(result as CreatedItem);
+        if (isCreatedItem(result)) {
+          return createdItemResponse.encode(result);
         }
-        if (typeof result === "object" && result !== null && "operationId" in result) {
-          return response1.encode(result as AcceptedJob);
+        if (isAcceptedJob(result)) {
+          return acceptedJobResponse.encode(result);
         }
         return ResponseEncoders.unreachable(result);
       },
@@ -551,5 +574,102 @@ export interface ItemsServer<Ctx = MatchedRequestContext> {
 export interface MultiSuccessApiServer<Ctx = MatchedRequestContext> {
   readonly Items: ItemsServer<Ctx>;
 }
+"
+`;
+
+exports[`response encoding discriminator response unions generate readable type guards 1`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+export interface CreateResult {
+  kind: string;
+}
+
+export interface CreatedItem extends CreateResult {
+  kind: "created";
+  id: string;
+}
+
+export interface AcceptedJob extends CreateResult {
+  kind: "accepted";
+  operationId: string;
+}
+"
+`;
+
+exports[`response encoding discriminator response unions generate readable type guards 2`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+import type { Decoder, ServerOperation } from "@typespex/runtime/server";
+import {
+  Either,
+  createHints,
+  emptyHints,
+  ResponseEncoders,
+  Decoders,
+  RequestDecoders,
+  Validators,
+  decodeRequestInput,
+  decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
+  decodeJsonBody,
+  decodeFormBody,
+  decodeMultipartBody,
+} from "@typespex/runtime/server";
+import * as ServerHints from "./server-hints.js";
+import type { AcceptedJob, CreatedItem } from "./models.js";
+
+const ItemsOutput = {
+  create: (() => {
+    const createdItemResponse = ResponseEncoders.variant<CreatedItem>({
+      status: 201,
+      contentType: "application/json",
+      omit: ["_"],
+    });
+    const acceptedJobResponse = ResponseEncoders.variant<AcceptedJob>({
+      status: 202,
+      contentType: "application/json",
+      omit: ["_"],
+    });
+    const isCreatedItem = (result: CreatedItem | AcceptedJob): result is CreatedItem =>
+      typeof result === "object" &&
+      result !== null &&
+      "kind" in result &&
+      result["kind"] === "created";
+    const isAcceptedJob = (result: CreatedItem | AcceptedJob): result is AcceptedJob =>
+      typeof result === "object" &&
+      result !== null &&
+      "kind" in result &&
+      result["kind"] === "accepted";
+    return {
+      encode(result: CreatedItem | AcceptedJob): Response {
+        if (isCreatedItem(result)) {
+          return createdItemResponse.encode(result);
+        }
+        if (isAcceptedJob(result)) {
+          return acceptedJobResponse.encode(result);
+        }
+        return ResponseEncoders.unreachable(result);
+      },
+    };
+  })(),
+};
+
+export const ItemsOperations = {
+  create: {
+    endpoint: {
+      service: { name: "DiscriminatorApi", hints: emptyHints() },
+      namespaces: [],
+      operation: {
+        name: "create",
+        operationId: "Items.create",
+        method: "POST" as const,
+        path: "/items",
+        hints: emptyHints(),
+      },
+    },
+    decodeInput: () => Either.right({} as Record<string, never>),
+    encodeResult: (result: CreatedItem | AcceptedJob) => ItemsOutput.create.encode(result),
+  } satisfies ServerOperation<Record<string, never>, CreatedItem | AcceptedJob>,
+} as const;
 "
 `;

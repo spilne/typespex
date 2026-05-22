@@ -158,6 +158,36 @@ interface Items {
 }
 `;
 
+const discriminatorSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "DiscriminatorApi" })
+namespace DiscriminatorApi;
+
+@discriminator("kind")
+model CreateResult {
+  kind: string;
+}
+
+model CreatedItem extends CreateResult {
+  @statusCode _: 201;
+  kind: "created";
+  id: string;
+}
+
+model AcceptedJob extends CreateResult {
+  @statusCode _: 202;
+  kind: "accepted";
+  operationId: string;
+}
+
+@route("/items")
+interface Items {
+  @post create(): CreatedItem | AcceptedJob;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -208,5 +238,12 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("discriminator response unions generate readable type guards", () => {
+    const r = compileFixture("discriminator", discriminatorSpec);
+
+    expect(r.readFile("discriminator-api", "models.ts")).toMatchSnapshot();
+    expect(r.readFile("discriminator-api", "server-operations.ts")).toMatchSnapshot();
   });
 });
