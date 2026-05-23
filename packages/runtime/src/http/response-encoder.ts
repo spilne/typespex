@@ -103,6 +103,123 @@ function jsonWithHeadersResponseEncoder<A>(
   });
 }
 
+export interface ResponseVariant {
+  readonly status: number;
+  readonly kind?: "json" | "text" | "bytes" | "empty";
+  readonly headers?: ReadonlyArray<readonly [property: string, header: string]>;
+  readonly body?: string;
+  readonly omit?: readonly string[];
+  readonly contentType?: string;
+}
+
+export interface ResponseVariantMatch<A, B extends A = A> {
+  readonly when: (value: A) => value is B;
+  readonly encoder: ResponseEncoder<B>;
+}
+
+function encodeVariantResponse<A>(
+  value: A,
+  variant: ResponseVariant,
+): Response {
+  if (variant.kind === "empty") {
+    return new Response(null, { status: variant.status });
+  }
+
+  const src = value as Record<string, unknown>;
+  const isObject = typeof value === "object" && value !== null;
+  const responseHeaders: Record<string, string> = {};
+  const contentType = variant.contentType ??
+    (variant.kind === "json" || variant.kind === undefined ? "application/json" : undefined);
+  if (contentType) responseHeaders["content-type"] = contentType;
+
+  if (isObject) {
+    for (const [property, header] of variant.headers ?? []) {
+      const v = src[property];
+      if (v !== undefined && (typeof v !== "object" || v === null)) {
+        responseHeaders[header] = String(v);
+      }
+    }
+  }
+
+  const body = resolveVariantBody(value, src, isObject, variant);
+
+  if (variant.kind === "text") {
+    return new Response(String(body ?? ""), {
+      status: variant.status,
+      headers: responseHeaders,
+    });
+  }
+
+  if (variant.kind === "bytes") {
+    const bytes = body instanceof Uint8Array ? body : new Uint8Array();
+    return new Response(new Uint8Array(bytes).buffer, {
+      status: variant.status,
+      headers: responseHeaders,
+    });
+  }
+
+  return new Response(JSON.stringify(body), {
+    status: variant.status,
+    headers: responseHeaders,
+  });
+}
+
+function resolveVariantBody<A>(
+  value: A,
+  src: Record<string, unknown>,
+  isObject: boolean,
+  variant: ResponseVariant,
+): unknown {
+  if (variant.body === undefined) {
+    return isObject ? omitVariantProperties(src, variant) : value;
+  }
+  return isObject ? src[variant.body] : undefined;
+}
+
+function omitVariantProperties(
+  src: Record<string, unknown>,
+  variant: ResponseVariant,
+): unknown {
+  const omit = new Set<string>(variant.omit ?? []);
+  for (const [property] of variant.headers ?? []) {
+    omit.add(property);
+  }
+
+  if (omit.size === 0) return src;
+
+  const body: Record<string, unknown> = {};
+  for (const key of Object.keys(src)) {
+    if (!omit.has(key)) body[key] = src[key];
+  }
+  return body;
+}
+
+function variantResponseEncoder<A>(
+  variant: ResponseVariant,
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => encodeVariantResponse(value, variant));
+}
+
+function matchVariantResponseEncoder<A>(
+  cases: readonly ResponseVariantMatch<A>[],
+): ResponseEncoder<A> {
+  return ResponseEncoder.of((value) => {
+    for (const match of cases) {
+      if (match.when(value)) {
+        return match.encoder.encode(value);
+      }
+    }
+
+    return unreachableResponse(value);
+  });
+}
+
+function unreachableResponse(value: unknown): never {
+  throw new TypeError(
+    `Result value did not match any declared HTTP response variant: ${String(value)}`,
+  );
+}
+
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
@@ -111,97 +228,7 @@ export const ResponseEncoders = {
   bytes: bytesResponseEncoder,
   stream: streamResponseEncoder,
   response: rawResponseEncoder,
-} as const;
-
-// ---------------------------------------------------------------------------
-// Error encoders — data-driven error → Response mapping
-// ---------------------------------------------------------------------------
-
-/** Single-status JSON error encoder. */
-function jsonErrorEncoder<E>(status: number): ResponseEncoder<E> {
-  return jsonResponseEncoder(status);
-}
-
-/** Per-variant config: status code + optional header mappings. */
-export interface ErrorVariant {
-  readonly status: number;
-  readonly headers?: ReadonlyArray<readonly [property: string, header: string]>;
-}
-
-/** Encodes a JSON error response, optionally extracting headers. */
-function encodeErrorResponse<E>(error: E, status: number, headerDefs?: ReadonlyArray<readonly [string, string]>): Response {
-  if (!headerDefs || headerDefs.length === 0) {
-    return Response.json(error, { status });
-  }
-  const src = error as Record<string, unknown>;
-  const responseHeaders: Record<string, string> = { "content-type": "application/json" };
-  const body: Record<string, unknown> = {};
-  for (const key of Object.keys(src)) {
-    let isHeader = false;
-    for (const [prop, header] of headerDefs) {
-      if (key === prop) {
-        const v = src[key];
-        if (v !== undefined && (typeof v !== "object" || v === null)) {
-          responseHeaders[header] = String(v);
-        }
-        isHeader = true;
-        break;
-      }
-    }
-    if (!isHeader) body[key] = src[key];
-  }
-  return new Response(JSON.stringify(body), { status, headers: responseHeaders });
-}
-
-/** Discriminated by a field with unique literal values per variant. */
-function discriminatedErrorEncoder<E>(
-  field: string,
-  variants: Readonly<Record<string, number | ErrorVariant>>,
-  fallbackStatus = 500,
-): ResponseEncoder<E> {
-  return ResponseEncoder.of((error) => {
-    const tag = (error as Record<string, unknown>)[field];
-    const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
-    const variant = key !== undefined ? variants[key] : undefined;
-    if (variant === undefined) return encodeErrorResponse(error, fallbackStatus);
-    if (typeof variant === "number") return encodeErrorResponse(error, variant);
-    return encodeErrorResponse(error, variant.status, variant.headers);
-  });
-}
-
-/** Discriminated by unique property existence per variant. */
-function byPropertyErrorEncoder<E>(
-  mapping: Readonly<Record<string, number | ErrorVariant>>,
-  fallbackStatus = 500,
-): ResponseEncoder<E> {
-  const entries = Object.entries(mapping);
-  return ResponseEncoder.of((error) => {
-    const obj = error as Record<string, unknown>;
-    for (const [prop, variant] of entries) {
-      if (prop in obj) {
-        if (typeof variant === "number") return encodeErrorResponse(error, variant);
-        return encodeErrorResponse(error, variant.status, variant.headers);
-      }
-    }
-    return encodeErrorResponse(error, fallbackStatus);
-  });
-}
-
-/** Single-status JSON error encoder with response headers. */
-function jsonWithHeadersErrorEncoder<E>(
-  status: number,
-  headers: ReadonlyArray<readonly [property: string, header: string]>,
-): ResponseEncoder<E> {
-  return ResponseEncoder.of((error) => encodeErrorResponse(error, status, headers));
-}
-
-export const ErrorEncoders = {
-  /** Single-status — no discrimination needed. */
-  json: jsonErrorEncoder,
-  /** Single-status with response headers extracted from the error object. */
-  jsonWithHeaders: jsonWithHeadersErrorEncoder,
-  /** Discriminated by a field with unique literal values. */
-  discriminated: discriminatedErrorEncoder,
-  /** Discriminated by unique property existence. */
-  byProperty: byPropertyErrorEncoder,
+  variant: variantResponseEncoder,
+  matchVariant: matchVariantResponseEncoder,
+  unreachable: unreachableResponse,
 } as const;

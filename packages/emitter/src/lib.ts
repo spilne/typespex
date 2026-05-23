@@ -38,6 +38,12 @@ export const $lib = createTypeSpecLibrary({
         default: "No HTTP services found in program",
       },
     },
+    "undifferentiable-response-union": {
+      severity: "error",
+      messages: {
+        default: "HTTP response union variants cannot be safely differentiated.",
+      },
+    },
   },
   emitter: {
     options: EmitterOptionsSchema,

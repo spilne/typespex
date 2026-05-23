@@ -66,7 +66,11 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   ctx.emittedModels.add(model.name);
 
   const props = [...model.properties.values()];
-  lines.push(`export interface ${model.name} {`);
+  const baseModel = model.baseModel && shouldEmitBaseModel(ctx, model.baseModel)
+    ? model.baseModel
+    : undefined;
+  const extendsClause = baseModel ? ` extends ${baseModel.name}` : "";
+  lines.push(`export interface ${model.name}${extendsClause} {`);
   for (const prop of props) {
     if (isMetadata(ctx.program, prop)) continue;
     const optional = prop.optional ? "?" : "";
@@ -75,6 +79,16 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   }
   lines.push("}");
   lines.push("");
+}
+
+function shouldEmitBaseModel(ctx: EmitterCtx, model: Model): boolean {
+  return Boolean(
+    model.name &&
+      model.name !== "" &&
+      model.namespace?.name !== "TypeSpec" &&
+      !isArrayModelType(ctx.program, model) &&
+      !isRecordModelType(ctx.program, model),
+  );
 }
 
 function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {

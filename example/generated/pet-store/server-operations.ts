@@ -6,7 +6,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -61,21 +60,87 @@ const PetsInput = {
 
 const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
-  create: ResponseEncoders.json<Pet>(200),
-  read: ResponseEncoders.json<Pet>(200),
-  delete: ResponseEncoders.empty(204),
-  uploadPhoto: ResponseEncoders.json<UploadResult>(200),
-};
-
-const PetsErrors = {
-  list: ErrorEncoders.json<never>(500),
-  create: ErrorEncoders.json<ConflictError>(409),
-  read: ErrorEncoders.json<NotFoundError>(404),
-  delete: ErrorEncoders.discriminated<NotFoundError | ForbiddenError>("code", {
-    NOT_FOUND: 404,
-    FORBIDDEN: 403,
-  }),
-  uploadPhoto: ErrorEncoders.json<NotFoundError>(404),
+  create: ResponseEncoders.matchVariant<Pet | ConflictError>([
+    {
+      when: (result): result is Pet =>
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
+      encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is ConflictError =>
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
+      encoder: ResponseEncoders.variant<ConflictError>({
+        status: 409,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  read: ResponseEncoders.matchVariant<Pet | NotFoundError>([
+    {
+      when: (result): result is Pet =>
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
+      encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  delete: ResponseEncoders.matchVariant<void | NotFoundError | ForbiddenError>([
+    {
+      when: (result): result is void => result === undefined,
+      encoder: ResponseEncoders.variant<void>({ status: 204, kind: "empty" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "NOT_FOUND",
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is ForbiddenError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "FORBIDDEN",
+      encoder: ResponseEncoders.variant<ForbiddenError>({
+        status: 403,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  uploadPhoto: ResponseEncoders.matchVariant<UploadResult | NotFoundError>([
+    {
+      when: (result): result is UploadResult =>
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
+      encoder: ResponseEncoders.variant<UploadResult>({
+        status: 200,
+        contentType: "application/json",
+      }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
 };
 
 export const PetsOperations = {
@@ -93,9 +158,8 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ limit?: number; offset?: number }>(PetsInput.list, request, pathParams),
-    encodeOutput: (output: Pet[]) => PetsOutput.list.encode(output),
-    encodeError: (error: never) => PetsErrors.list.encode(error),
-  } satisfies ServerOperation<{ limit?: number; offset?: number }, never, Pet[]>,
+    encodeResult: (result: Pet[]) => PetsOutput.list.encode(result),
+  } satisfies ServerOperation<{ limit?: number; offset?: number }, Pet[]>,
 
   create: {
     endpoint: {
@@ -110,9 +174,8 @@ export const PetsOperations = {
       },
     },
     decodeInput: async (request) => decodeJsonBody<CreatePetInput>(request, PetsInput.create),
-    encodeOutput: (output: Pet) => PetsOutput.create.encode(output),
-    encodeError: (error: ConflictError) => PetsErrors.create.encode(error),
-  } satisfies ServerOperation<CreatePetInput, ConflictError, Pet>,
+    encodeResult: (result: Pet | ConflictError) => PetsOutput.create.encode(result),
+  } satisfies ServerOperation<CreatePetInput, Pet | ConflictError>,
 
   read: {
     endpoint: {
@@ -128,9 +191,8 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.read, request, pathParams),
-    encodeOutput: (output: Pet) => PetsOutput.read.encode(output),
-    encodeError: (error: NotFoundError) => PetsErrors.read.encode(error),
-  } satisfies ServerOperation<{ petId: string }, NotFoundError, Pet>,
+    encodeResult: (result: Pet | NotFoundError) => PetsOutput.read.encode(result),
+  } satisfies ServerOperation<{ petId: string }, Pet | NotFoundError>,
 
   delete: {
     endpoint: {
@@ -146,9 +208,9 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.delete, request, pathParams),
-    encodeOutput: () => PetsOutput.delete.encode(undefined),
-    encodeError: (error: NotFoundError | ForbiddenError) => PetsErrors.delete.encode(error),
-  } satisfies ServerOperation<{ petId: string }, NotFoundError | ForbiddenError, void>,
+    encodeResult: (result: void | NotFoundError | ForbiddenError) =>
+      PetsOutput.delete.encode(result),
+  } satisfies ServerOperation<{ petId: string }, void | NotFoundError | ForbiddenError>,
 
   uploadPhoto: {
     endpoint: {
@@ -169,11 +231,9 @@ export const PetsOperations = {
         request,
         pathParams,
       ),
-    encodeOutput: (output: UploadResult) => PetsOutput.uploadPhoto.encode(output),
-    encodeError: (error: NotFoundError) => PetsErrors.uploadPhoto.encode(error),
+    encodeResult: (result: UploadResult | NotFoundError) => PetsOutput.uploadPhoto.encode(result),
   } satisfies ServerOperation<
     { petId: string; caption?: string; photo: File },
-    NotFoundError,
-    UploadResult
+    UploadResult | NotFoundError
   >,
 } as const;

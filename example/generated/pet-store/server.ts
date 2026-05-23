@@ -11,14 +11,13 @@ import type {
 } from "./models.js";
 
 export interface PetsServer<Ctx = MatchedRequestContext> {
-  readonly list: OperationHandler<{ limit?: number; offset?: number }, never, Pet[], Ctx>;
-  readonly create: OperationHandler<CreatePetInput, ConflictError, Pet, Ctx>;
-  readonly read: OperationHandler<{ petId: string }, NotFoundError, Pet, Ctx>;
-  readonly delete: OperationHandler<{ petId: string }, NotFoundError | ForbiddenError, void, Ctx>;
+  readonly list: OperationHandler<{ limit?: number; offset?: number }, Pet[], Ctx>;
+  readonly create: OperationHandler<CreatePetInput, Pet | ConflictError, Ctx>;
+  readonly read: OperationHandler<{ petId: string }, Pet | NotFoundError, Ctx>;
+  readonly delete: OperationHandler<{ petId: string }, void | NotFoundError | ForbiddenError, Ctx>;
   readonly uploadPhoto: OperationHandler<
     { petId: string; caption?: string; photo: File },
-    NotFoundError,
-    UploadResult,
+    UploadResult | NotFoundError,
     Ctx
   >;
 }

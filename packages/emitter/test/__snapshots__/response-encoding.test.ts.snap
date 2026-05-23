@@ -9,7 +9,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -30,10 +29,6 @@ const ItemsOutput = {
   remove: ResponseEncoders.empty(204),
 };
 
-const ItemsErrors = {
-  remove: ErrorEncoders.json<never>(500),
-};
-
 export const ItemsOperations = {
   remove: {
     endpoint: {
@@ -49,9 +44,8 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ itemId: string }>(ItemsInput.remove, request, pathParams),
-    encodeOutput: () => ItemsOutput.remove.encode(undefined),
-    encodeError: (error: never) => ItemsErrors.remove.encode(error),
-  } satisfies ServerOperation<{ itemId: string }, never, void>,
+    encodeResult: () => ItemsOutput.remove.encode(undefined),
+  } satisfies ServerOperation<{ itemId: string }, void>,
 } as const;
 "
 `;
@@ -61,7 +55,7 @@ exports[`response encoding void response emits 204 with empty body 2`] = `
 
 import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/server";
 export interface ItemsServer<Ctx = MatchedRequestContext> {
-  readonly remove: OperationHandler<{ itemId: string }, never, void, Ctx>;
+  readonly remove: OperationHandler<{ itemId: string }, void, Ctx>;
 }
 
 export interface VoidApiServer<Ctx = MatchedRequestContext> {
@@ -77,8 +71,8 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { Tag } from "./models.js";
 
 export interface TagsServer<Ctx = MatchedRequestContext> {
-  readonly list: OperationHandler<Record<string, never>, never, Tag[], Ctx>;
-  readonly create: OperationHandler<Tag, never, Tag, Ctx>;
+  readonly list: OperationHandler<Record<string, never>, Tag[], Ctx>;
+  readonly create: OperationHandler<Tag, Tag, Ctx>;
 }
 
 export interface ArrayApiServer<Ctx = MatchedRequestContext> {
@@ -125,7 +119,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -140,14 +133,15 @@ import * as ServerHints from "./server-hints.js";
 import type { RateLimitedResponse } from "./models.js";
 
 const DataOutput = {
-  fetch: ResponseEncoders.jsonWithHeaders<RateLimitedResponse>(200, [
-    ["rateLimit", "x-rate-limit"],
-    ["requestId", "x-request-id"],
-  ]),
-};
-
-const DataErrors = {
-  fetch: ErrorEncoders.json<never>(500),
+  fetch: ResponseEncoders.variant<{ rateLimit: number; requestId: string; data: string }>({
+    status: 200,
+    contentType: "application/json",
+    headers: [
+      ["rateLimit", "x-rate-limit"],
+      ["requestId", "x-request-id"],
+    ],
+    omit: ["rateLimit", "requestId"],
+  }),
 };
 
 export const DataOperations = {
@@ -164,9 +158,12 @@ export const DataOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: RateLimitedResponse) => DataOutput.fetch.encode(output),
-    encodeError: (error: never) => DataErrors.fetch.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, RateLimitedResponse>,
+    encodeResult: (result: { rateLimit: number; requestId: string; data: string }) =>
+      DataOutput.fetch.encode(result),
+  } satisfies ServerOperation<
+    Record<string, never>,
+    { rateLimit: number; requestId: string; data: string }
+  >,
 } as const;
 "
 `;
@@ -189,7 +186,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -203,11 +199,13 @@ import {
 import * as ServerHints from "./server-hints.js";
 
 const TextOutput = {
-  plain: ResponseEncoders.text(200),
-};
-
-const TextErrors = {
-  plain: ErrorEncoders.json<never>(500),
+  plain: ResponseEncoders.variant<{ body: string }>({
+    status: 200,
+    kind: "text",
+    contentType: "text/plain",
+    body: "body",
+    omit: ["contentType", "body"],
+  }),
 };
 
 export const TextOperations = {
@@ -224,22 +222,18 @@ export const TextOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: { contentType: "text/plain"; body: string }) =>
-      TextOutput.plain.encode(output),
-    encodeError: (error: never) => TextErrors.plain.encode(error),
-  } satisfies ServerOperation<
-    Record<string, never>,
-    never,
-    { contentType: "text/plain"; body: string }
-  >,
+    encodeResult: (result: { body: string }) => TextOutput.plain.encode(result),
+  } satisfies ServerOperation<Record<string, never>, { body: string }>,
 } as const;
 
 const BinaryOutput = {
-  download: ResponseEncoders.bytes(200),
-};
-
-const BinaryErrors = {
-  download: ErrorEncoders.json<never>(500),
+  download: ResponseEncoders.variant<{ body: Uint8Array }>({
+    status: 200,
+    kind: "bytes",
+    contentType: "application/octet-stream",
+    body: "body",
+    omit: ["contentType", "body"],
+  }),
 };
 
 export const BinaryOperations = {
@@ -256,19 +250,13 @@ export const BinaryOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: { contentType: "application/octet-stream"; body: Uint8Array }) =>
-      BinaryOutput.download.encode(output),
-    encodeError: (error: never) => BinaryErrors.download.encode(error),
-  } satisfies ServerOperation<
-    Record<string, never>,
-    never,
-    { contentType: "application/octet-stream"; body: Uint8Array }
-  >,
+    encodeResult: (result: { body: Uint8Array }) => BinaryOutput.download.encode(result),
+  } satisfies ServerOperation<Record<string, never>, { body: Uint8Array }>,
 } as const;
 "
 `;
 
-exports[`response encoding multiple error types generate discriminated or byProperty encoders 1`] = `
+exports[`response encoding multiple error types generate matchVariant result encoders 1`] = `
 "// AUTO-GENERATED by @typespex/emitter — do not edit
 
 import type { Decoder, ServerOperation } from "@typespex/runtime/server";
@@ -277,7 +265,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -302,18 +289,89 @@ const ItemsInput = {
 };
 
 const ItemsOutput = {
-  read: ResponseEncoders.json<Item>(200),
-  remove: ResponseEncoders.empty(204),
-  update: ResponseEncoders.json<Item>(200),
-};
-
-const ItemsErrors = {
-  read: ErrorEncoders.json<NotFoundError>(404),
-  remove: ErrorEncoders.discriminated<NotFoundError | ForbiddenError>("code", {
-    NOT_FOUND: 404,
-    FORBIDDEN: 403,
-  }),
-  update: ErrorEncoders.byProperty<NotFoundError | ConflictError>({ code: 404, conflictId: 409 }),
+  read: ResponseEncoders.matchVariant<Item | NotFoundError>([
+    {
+      when: (result): result is Item =>
+        typeof result === "object" && result !== null && "id" in result && !("code" in result),
+      encoder: ResponseEncoders.variant<Item>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" && result !== null && "code" in result && !("id" in result),
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  remove: ResponseEncoders.matchVariant<void | NotFoundError | ForbiddenError>([
+    {
+      when: (result): result is void => result === undefined,
+      encoder: ResponseEncoders.variant<void>({ status: 204, kind: "empty" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "NOT_FOUND",
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is ForbiddenError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        result["code"] === "FORBIDDEN",
+      encoder: ResponseEncoders.variant<ForbiddenError>({
+        status: 403,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+  update: ResponseEncoders.matchVariant<Item | NotFoundError | ConflictError>([
+    {
+      when: (result): result is Item =>
+        typeof result === "object" &&
+        result !== null &&
+        "id" in result &&
+        !("code" in result) &&
+        !("conflictId" in result),
+      encoder: ResponseEncoders.variant<Item>({ status: 200, contentType: "application/json" }),
+    },
+    {
+      when: (result): result is NotFoundError =>
+        typeof result === "object" &&
+        result !== null &&
+        "code" in result &&
+        !("id" in result) &&
+        !("conflictId" in result),
+      encoder: ResponseEncoders.variant<NotFoundError>({
+        status: 404,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is ConflictError =>
+        typeof result === "object" &&
+        result !== null &&
+        "conflictId" in result &&
+        !("id" in result) &&
+        !("code" in result),
+      encoder: ResponseEncoders.variant<ConflictError>({
+        status: 409,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
 };
 
 export const ItemsOperations = {
@@ -331,9 +389,8 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ itemId: string }>(ItemsInput.read, request, pathParams),
-    encodeOutput: (output: Item) => ItemsOutput.read.encode(output),
-    encodeError: (error: NotFoundError) => ItemsErrors.read.encode(error),
-  } satisfies ServerOperation<{ itemId: string }, NotFoundError, Item>,
+    encodeResult: (result: Item | NotFoundError) => ItemsOutput.read.encode(result),
+  } satisfies ServerOperation<{ itemId: string }, Item | NotFoundError>,
 
   remove: {
     endpoint: {
@@ -349,9 +406,9 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ itemId: string }>(ItemsInput.remove, request, pathParams),
-    encodeOutput: () => ItemsOutput.remove.encode(undefined),
-    encodeError: (error: NotFoundError | ForbiddenError) => ItemsErrors.remove.encode(error),
-  } satisfies ServerOperation<{ itemId: string }, NotFoundError | ForbiddenError, void>,
+    encodeResult: (result: void | NotFoundError | ForbiddenError) =>
+      ItemsOutput.remove.encode(result),
+  } satisfies ServerOperation<{ itemId: string }, void | NotFoundError | ForbiddenError>,
 
   update: {
     endpoint: {
@@ -372,18 +429,17 @@ export const ItemsOperations = {
         request,
         pathParams,
       ),
-    encodeOutput: (output: Item) => ItemsOutput.update.encode(output),
-    encodeError: (error: NotFoundError | ConflictError) => ItemsErrors.update.encode(error),
+    encodeResult: (result: Item | NotFoundError | ConflictError) =>
+      ItemsOutput.update.encode(result),
   } satisfies ServerOperation<
     { itemId: string; id: string; name: string },
-    NotFoundError | ConflictError,
-    Item
+    Item | NotFoundError | ConflictError
   >,
 } as const;
 "
 `;
 
-exports[`response encoding multiple error types generate discriminated or byProperty encoders 2`] = `
+exports[`response encoding multiple error types generate matchVariant result encoders 2`] = `
 "// AUTO-GENERATED by @typespex/emitter — do not edit
 
 export interface Item {
@@ -405,5 +461,182 @@ export interface ConflictError {
   conflictId: string;
   message: string;
 }
+"
+`;
+
+exports[`response encoding multiple success types generate matchVariant result encoders 1`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+import type { Decoder, ServerOperation } from "@typespex/runtime/server";
+import {
+  Either,
+  createHints,
+  emptyHints,
+  ResponseEncoders,
+  Decoders,
+  RequestDecoders,
+  Validators,
+  decodeRequestInput,
+  decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
+  decodeJsonBody,
+  decodeFormBody,
+  decodeMultipartBody,
+} from "@typespex/runtime/server";
+import * as ServerHints from "./server-hints.js";
+import type { AcceptedJob, CreatedItem } from "./models.js";
+
+const ItemsOutput = {
+  create: ResponseEncoders.matchVariant<CreatedItem | AcceptedJob>([
+    {
+      when: (result): result is CreatedItem =>
+        typeof result === "object" &&
+        result !== null &&
+        "id" in result &&
+        !("operationId" in result),
+      encoder: ResponseEncoders.variant<CreatedItem>({
+        status: 201,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is AcceptedJob =>
+        typeof result === "object" &&
+        result !== null &&
+        "operationId" in result &&
+        !("id" in result),
+      encoder: ResponseEncoders.variant<AcceptedJob>({
+        status: 202,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+};
+
+export const ItemsOperations = {
+  create: {
+    endpoint: {
+      service: { name: "MultiSuccessApi", hints: emptyHints() },
+      namespaces: [],
+      operation: {
+        name: "create",
+        operationId: "Items.create",
+        method: "POST" as const,
+        path: "/items",
+        hints: emptyHints(),
+      },
+    },
+    decodeInput: () => Either.right({} as Record<string, never>),
+    encodeResult: (result: CreatedItem | AcceptedJob) => ItemsOutput.create.encode(result),
+  } satisfies ServerOperation<Record<string, never>, CreatedItem | AcceptedJob>,
+} as const;
+"
+`;
+
+exports[`response encoding multiple success types generate matchVariant result encoders 2`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/server";
+import type { AcceptedJob, CreatedItem } from "./models.js";
+
+export interface ItemsServer<Ctx = MatchedRequestContext> {
+  readonly create: OperationHandler<Record<string, never>, CreatedItem | AcceptedJob, Ctx>;
+}
+
+export interface MultiSuccessApiServer<Ctx = MatchedRequestContext> {
+  readonly Items: ItemsServer<Ctx>;
+}
+"
+`;
+
+exports[`response encoding discriminator response unions generate readable type guards 1`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+export interface CreateResult {
+  kind: string;
+}
+
+export interface CreatedItem extends CreateResult {
+  kind: "created";
+  id: string;
+}
+
+export interface AcceptedJob extends CreateResult {
+  kind: "accepted";
+  operationId: string;
+}
+"
+`;
+
+exports[`response encoding discriminator response unions generate readable type guards 2`] = `
+"// AUTO-GENERATED by @typespex/emitter — do not edit
+
+import type { Decoder, ServerOperation } from "@typespex/runtime/server";
+import {
+  Either,
+  createHints,
+  emptyHints,
+  ResponseEncoders,
+  Decoders,
+  RequestDecoders,
+  Validators,
+  decodeRequestInput,
+  decodeRequestInputAndBody,
+  decodeRequestInputAndMultipartBody,
+  decodeJsonBody,
+  decodeFormBody,
+  decodeMultipartBody,
+} from "@typespex/runtime/server";
+import * as ServerHints from "./server-hints.js";
+import type { AcceptedJob, CreatedItem } from "./models.js";
+
+const ItemsOutput = {
+  create: ResponseEncoders.matchVariant<CreatedItem | AcceptedJob>([
+    {
+      when: (result): result is CreatedItem =>
+        typeof result === "object" &&
+        result !== null &&
+        "kind" in result &&
+        result["kind"] === "created",
+      encoder: ResponseEncoders.variant<CreatedItem>({
+        status: 201,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+    {
+      when: (result): result is AcceptedJob =>
+        typeof result === "object" &&
+        result !== null &&
+        "kind" in result &&
+        result["kind"] === "accepted",
+      encoder: ResponseEncoders.variant<AcceptedJob>({
+        status: 202,
+        contentType: "application/json",
+        omit: ["_"],
+      }),
+    },
+  ]),
+};
+
+export const ItemsOperations = {
+  create: {
+    endpoint: {
+      service: { name: "DiscriminatorApi", hints: emptyHints() },
+      namespaces: [],
+      operation: {
+        name: "create",
+        operationId: "Items.create",
+        method: "POST" as const,
+        path: "/items",
+        hints: emptyHints(),
+      },
+    },
+    decodeInput: () => Either.right({} as Record<string, never>),
+    encodeResult: (result: CreatedItem | AcceptedJob) => ItemsOutput.create.encode(result),
+  } satisfies ServerOperation<Record<string, never>, CreatedItem | AcceptedJob>,
+} as const;
 "
 `;

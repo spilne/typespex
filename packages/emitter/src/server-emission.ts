@@ -1,9 +1,8 @@
 import type { HttpOperation, HttpService } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import {
-  buildErrorType,
   buildInputType,
-  buildSuccessType,
+  buildResultType,
   collectModelImports,
   groupOperations,
   toColonPath,
@@ -32,8 +31,7 @@ export interface ServerOperationEmission {
   readonly name: string;
   readonly operationId: string;
   readonly inputType: string;
-  readonly successType: string;
-  readonly errorType: string;
+  readonly resultType: string;
   readonly method: string;
   readonly path: string;
   readonly serviceHints: readonly EmittedHintEntry[];
@@ -78,8 +76,7 @@ function buildOperationEmission(
       ? `${interfaceName}.${operationName}`
       : `${ctx.serviceName}.${operationName}`,
     inputType: buildInputType(ctx, operation),
-    successType: buildSuccessType(ctx, operation),
-    errorType: buildErrorType(ctx, operation),
+    resultType: buildResultType(ctx, operation),
     method: operation.verb.toUpperCase(),
     path: toColonPath(operation.path),
     serviceHints: emitHintEntries(ctx, ctx.service.namespace),
@@ -101,7 +98,7 @@ export function collectReferencedModelImports(
 
   for (const group of emission.groups) {
     for (const operation of group.operations) {
-      for (const text of [operation.inputType, operation.successType, operation.errorType]) {
+      for (const text of [operation.inputType, operation.resultType]) {
         for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
           const name = match[0];
           if (available.has(name)) {

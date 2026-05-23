@@ -135,6 +135,59 @@ interface Items {
 }
 `;
 
+const multiSuccessSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "MultiSuccessApi" })
+namespace MultiSuccessApi;
+
+model CreatedItem {
+  @statusCode _: 201;
+  id: string;
+}
+
+model AcceptedJob {
+  @statusCode _: 202;
+  operationId: string;
+}
+
+@route("/items")
+interface Items {
+  @post create(): CreatedItem | AcceptedJob;
+}
+`;
+
+const discriminatorSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "DiscriminatorApi" })
+namespace DiscriminatorApi;
+
+@discriminator("kind")
+model CreateResult {
+  kind: string;
+}
+
+model CreatedItem extends CreateResult {
+  @statusCode _: 201;
+  kind: "created";
+  id: string;
+}
+
+model AcceptedJob extends CreateResult {
+  @statusCode _: 202;
+  kind: "accepted";
+  operationId: string;
+}
+
+@route("/items")
+interface Items {
+  @post create(): CreatedItem | AcceptedJob;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -173,10 +226,24 @@ describe("response encoding", () => {
     expect(r.readFile("content-api", "server-operations.ts")).toMatchSnapshot();
   });
 
-  test("multiple error types generate discriminated or byProperty encoders", () => {
+  test("multiple error types generate matchVariant result encoders", () => {
     const r = compileFixture("multi-errors", multiErrorSpec);
 
     expect(r.readFile("multi-error-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("multiple success types generate matchVariant result encoders", () => {
+    const r = compileFixture("multi-success", multiSuccessSpec);
+
+    expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("discriminator response unions generate readable type guards", () => {
+    const r = compileFixture("discriminator", discriminatorSpec);
+
+    expect(r.readFile("discriminator-api", "models.ts")).toMatchSnapshot();
+    expect(r.readFile("discriminator-api", "server-operations.ts")).toMatchSnapshot();
   });
 });

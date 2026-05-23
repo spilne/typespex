@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ResponseEncoders, ErrorEncoders } from "../src/server.js";
+import { ResponseEncoders } from "../src/server.js";
 
 // ---------------------------------------------------------------------------
 // ResponseEncoders
@@ -111,98 +111,67 @@ describe("ResponseEncoders", () => {
 
     expect(response.headers.get("x-tag")).toBe("null");
   });
-});
 
-// ---------------------------------------------------------------------------
-// ErrorEncoders
-// ---------------------------------------------------------------------------
-
-describe("ErrorEncoders", () => {
-  test("json encodes error with fixed status", async () => {
-    const encoder = ErrorEncoders.json<{ message: string }>(422);
-    const response = encoder.encode({ message: "invalid" });
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ message: "invalid" });
-  });
-
-  test("discriminated dispatches by string tag", async () => {
-    type E = { code: "NOT_FOUND"; message: string } | { code: "FORBIDDEN"; message: string };
-
-    const encoder = ErrorEncoders.discriminated<E>("code", {
-      NOT_FOUND: 404,
-      FORBIDDEN: 403,
+  test("variant extracts body and headers from response envelopes", async () => {
+    const encoder = ResponseEncoders.variant<{
+      requestId: string;
+      body: string;
+    }>({
+      status: 201,
+      kind: "text",
+      contentType: "text/plain",
+      headers: [["requestId", "x-request-id"]],
+      body: "body",
+      omit: ["requestId"],
     });
 
-    const notFound = encoder.encode({ code: "NOT_FOUND", message: "gone" });
-    expect(notFound.status).toBe(404);
-    expect(await notFound.json()).toEqual({ code: "NOT_FOUND", message: "gone" });
+    const response = encoder.encode({ requestId: "req-1", body: "created" });
 
-    const forbidden = encoder.encode({ code: "FORBIDDEN", message: "nope" });
-    expect(forbidden.status).toBe(403);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("x-request-id")).toBe("req-1");
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    expect(await response.text()).toBe("created");
   });
 
-  test("discriminated dispatches by numeric tag", async () => {
-    const encoder = ErrorEncoders.discriminated<{ status: number }>("status", {
-      "404": 404,
-      "409": 409,
+  test("variant omits metadata properties that are not in the handler type", async () => {
+    const encoder = ResponseEncoders.variant<{ code: "NOT_FOUND"; message: string }>({
+      status: 404,
+      omit: ["_"],
     });
 
-    const response = encoder.encode({ status: 404 });
+    const response = encoder.encode({ code: "NOT_FOUND", message: "missing" });
+
     expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
   });
 
-  test("discriminated uses fallback for unknown tag", async () => {
-    const encoder = ErrorEncoders.discriminated<{ code: string }>("code", {
-      KNOWN: 400,
-    }, 500);
+  test("matchVariant dispatches to the first matching response encoder", async () => {
+    type Result =
+      | { id: string; name: string }
+      | { code: "NOT_FOUND"; message: string };
 
-    const response = encoder.encode({ code: "UNKNOWN" });
-    expect(response.status).toBe(500);
+    const encoder = ResponseEncoders.matchVariant<Result>([
+      {
+        when: (value): value is Extract<Result, { id: string }> => "id" in value,
+        encoder: ResponseEncoders.variant<Extract<Result, { id: string }>>({ status: 200 }),
+      },
+      {
+        when: (value): value is Extract<Result, { code: "NOT_FOUND" }> => "code" in value,
+        encoder: ResponseEncoders.variant<Extract<Result, { code: "NOT_FOUND" }>>({
+          status: 404,
+        }),
+      },
+    ]);
+
+    const response = encoder.encode({ code: "NOT_FOUND", message: "missing" });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ code: "NOT_FOUND", message: "missing" });
   });
 
-  test("discriminated uses fallback when tag field is missing", async () => {
-    const encoder = ErrorEncoders.discriminated<Record<string, unknown>>("code", {
-      KNOWN: 400,
-    }, 500);
-
-    const response = encoder.encode({ message: "no code field" });
-    expect(response.status).toBe(500);
-  });
-
-  test("byProperty dispatches by unique property existence", async () => {
-    type E = { retryAfter: number } | { conflictId: string };
-
-    const encoder = ErrorEncoders.byProperty<E>({
-      retryAfter: 429,
-      conflictId: 409,
-    });
-
-    const retry = encoder.encode({ retryAfter: 30 });
-    expect(retry.status).toBe(429);
-    expect(await retry.json()).toEqual({ retryAfter: 30 });
-
-    const conflict = encoder.encode({ conflictId: "abc" });
-    expect(conflict.status).toBe(409);
-  });
-
-  test("byProperty uses fallback when no property matches", async () => {
-    const encoder = ErrorEncoders.byProperty<{ message: string }>({
-      retryAfter: 429,
-    }, 500);
-
-    const response = encoder.encode({ message: "unknown" });
-    expect(response.status).toBe(500);
-  });
-
-  test("byProperty checks first matching property", async () => {
-    const encoder = ErrorEncoders.byProperty<{ a: number; b: number }>({
-      a: 400,
-      b: 401,
-    });
-
-    // Both properties present — first one wins
-    const response = encoder.encode({ a: 1, b: 2 });
-    expect(response.status).toBe(400);
+  test("unreachable throws for unmatched generated branches", () => {
+    expect(() => ResponseEncoders.unreachable({ code: "UNKNOWN" })).toThrow(
+      "did not match",
+    );
   });
 });

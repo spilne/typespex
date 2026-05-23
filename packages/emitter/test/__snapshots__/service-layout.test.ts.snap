@@ -57,7 +57,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -75,10 +74,6 @@ const PublicApiOutput = {
   listItems: ResponseEncoders.json<Item[]>(200),
 };
 
-const PublicApiErrors = {
-  listItems: ErrorEncoders.json<never>(500),
-};
-
 export const PublicApiOperations = {
   listItems: {
     endpoint: {
@@ -93,9 +88,8 @@ export const PublicApiOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: Item[]) => PublicApiOutput.listItems.encode(output),
-    encodeError: (error: never) => PublicApiErrors.listItems.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, Item[]>,
+    encodeResult: (result: Item[]) => PublicApiOutput.listItems.encode(result),
+  } satisfies ServerOperation<Record<string, never>, Item[]>,
 } as const;
 "
 `;
@@ -133,7 +127,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -151,10 +144,6 @@ const BillingAPIOutput = {
   listInvoices: ResponseEncoders.json<Invoice[]>(200),
 };
 
-const BillingAPIErrors = {
-  listInvoices: ErrorEncoders.json<never>(500),
-};
-
 export const BillingAPIOperations = {
   listInvoices: {
     endpoint: {
@@ -169,9 +158,8 @@ export const BillingAPIOperations = {
       },
     },
     decodeInput: () => Either.right({} as Record<string, never>),
-    encodeOutput: (output: Invoice[]) => BillingAPIOutput.listInvoices.encode(output),
-    encodeError: (error: never) => BillingAPIErrors.listInvoices.encode(error),
-  } satisfies ServerOperation<Record<string, never>, never, Invoice[]>,
+    encodeResult: (result: Invoice[]) => BillingAPIOutput.listInvoices.encode(result),
+  } satisfies ServerOperation<Record<string, never>, Invoice[]>,
 } as const;
 "
 `;

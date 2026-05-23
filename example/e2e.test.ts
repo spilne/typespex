@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { Either } from "@typespex/runtime/server";
 import type { PetStoreServer } from "./generated/pet-store/server.js";
 import type { Pet, UploadResult } from "./generated/pet-store/models.js";
 import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
@@ -17,22 +16,22 @@ function createTestServer() {
         const all = [...store.values()];
         const start = offset ?? 0;
         const end = limit ? start + limit : undefined;
-        return Either.right(all.slice(start, end));
+        return all.slice(start, end);
       },
 
       create: async (input) => {
         if (store.has(input.name)) {
-          return Either.left({ code: "CONFLICT" as const, message: `${input.name} exists` });
+          return { code: "CONFLICT" as const, message: `${input.name} exists` };
         }
         const item: Pet = { id: crypto.randomUUID(), name: input.name, tag: input.tag };
         store.set(item.name, item);
-        return Either.right(item);
+        return item;
       },
 
       read: async ({ petId }) => {
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
-        return Either.right(item);
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
+        return item;
       },
 
       delete: async ({ petId }, ctx) => {
@@ -42,24 +41,24 @@ function createTestServer() {
         if (authScope === "admin") {
           const isAdmin = ctx.request.headers.get("x-role") === "admin";
           if (!isAdmin) {
-            return Either.left({ code: "FORBIDDEN" as const, message: "admin only" });
+            return { code: "FORBIDDEN" as const, message: "admin only" };
           }
         }
 
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
         store.delete(item.name);
-        return Either.right(undefined);
+        return undefined;
       },
 
       uploadPhoto: async ({ petId, caption, photo }) => {
         const item = [...store.values()].find((i) => i.id === petId);
-        if (!item) return Either.left({ code: "NOT_FOUND" as const, message: "not found" });
-        return Either.right({
+        if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
+        return {
           id: crypto.randomUUID(),
           filename: photo.name,
           size: photo.size,
-        });
+        };
       },
     },
   };

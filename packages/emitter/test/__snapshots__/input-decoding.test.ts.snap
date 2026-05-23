@@ -9,7 +9,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -38,10 +37,6 @@ const ItemsOutput = {
   list: ResponseEncoders.json<Item[]>(200),
 };
 
-const ItemsErrors = {
-  list: ErrorEncoders.json<never>(500),
-};
-
 export const ItemsOperations = {
   list: {
     endpoint: {
@@ -61,13 +56,8 @@ export const ItemsOperations = {
         request,
         pathParams,
       ),
-    encodeOutput: (output: Item[]) => ItemsOutput.list.encode(output),
-    encodeError: (error: never) => ItemsErrors.list.encode(error),
-  } satisfies ServerOperation<
-    { limit?: number; offset?: number; requestId?: string },
-    never,
-    Item[]
-  >,
+    encodeResult: (result: Item[]) => ItemsOutput.list.encode(result),
+  } satisfies ServerOperation<{ limit?: number; offset?: number; requestId?: string }, Item[]>,
 } as const;
 "
 `;
@@ -81,7 +71,6 @@ import type { Item } from "./models.js";
 export interface ItemsServer<Ctx = MatchedRequestContext> {
   readonly list: OperationHandler<
     { limit?: number; offset?: number; requestId?: string },
-    never,
     Item[],
     Ctx
   >;
@@ -102,7 +91,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -153,12 +141,6 @@ const ItemsOutput = {
   create: ResponseEncoders.json<CreateItem>(200),
 };
 
-const ItemsErrors = {
-  list: ErrorEncoders.json<never>(500),
-  read: ErrorEncoders.json<never>(500),
-  create: ErrorEncoders.json<never>(500),
-};
-
 export const ItemsOperations = {
   list: {
     endpoint: {
@@ -174,9 +156,8 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ limit: number; ratio: number }>(ItemsInput.list, request, pathParams),
-    encodeOutput: (output: CreateItem[]) => ItemsOutput.list.encode(output),
-    encodeError: (error: never) => ItemsErrors.list.encode(error),
-  } satisfies ServerOperation<{ limit: number; ratio: number }, never, CreateItem[]>,
+    encodeResult: (result: CreateItem[]) => ItemsOutput.list.encode(result),
+  } satisfies ServerOperation<{ limit: number; ratio: number }, CreateItem[]>,
 
   read: {
     endpoint: {
@@ -192,9 +173,8 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ itemId: bigint }>(ItemsInput.read, request, pathParams),
-    encodeOutput: (output: CreateItem) => ItemsOutput.read.encode(output),
-    encodeError: (error: never) => ItemsErrors.read.encode(error),
-  } satisfies ServerOperation<{ itemId: bigint }, never, CreateItem>,
+    encodeResult: (result: CreateItem) => ItemsOutput.read.encode(result),
+  } satisfies ServerOperation<{ itemId: bigint }, CreateItem>,
 
   create: {
     endpoint: {
@@ -209,9 +189,8 @@ export const ItemsOperations = {
       },
     },
     decodeInput: async (request) => decodeJsonBody<CreateItem>(request, ItemsInput.create),
-    encodeOutput: (output: CreateItem) => ItemsOutput.create.encode(output),
-    encodeError: (error: never) => ItemsErrors.create.encode(error),
-  } satisfies ServerOperation<CreateItem, never, CreateItem>,
+    encodeResult: (result: CreateItem) => ItemsOutput.create.encode(result),
+  } satisfies ServerOperation<CreateItem, CreateItem>,
 } as const;
 "
 `;
@@ -225,7 +204,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -257,10 +235,6 @@ const ItemsOutput = {
   update: ResponseEncoders.json<Item>(200),
 };
 
-const ItemsErrors = {
-  update: ErrorEncoders.json<never>(500),
-};
-
 export const ItemsOperations = {
   update: {
     endpoint: {
@@ -281,11 +255,9 @@ export const ItemsOperations = {
         request,
         pathParams,
       ),
-    encodeOutput: (output: Item) => ItemsOutput.update.encode(output),
-    encodeError: (error: never) => ItemsErrors.update.encode(error),
+    encodeResult: (result: Item) => ItemsOutput.update.encode(result),
   } satisfies ServerOperation<
     { itemId: string; dryRun?: boolean; name: string; tags?: string[] },
-    never,
     Item
   >,
 } as const;
@@ -301,7 +273,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -329,10 +300,6 @@ const UsersOutput = {
   me: ResponseEncoders.json<Profile>(200),
 };
 
-const UsersErrors = {
-  me: ErrorEncoders.json<never>(500),
-};
-
 export const UsersOperations = {
   me: {
     endpoint: {
@@ -348,9 +315,8 @@ export const UsersOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ sessionId: string; theme?: string }>(UsersInput.me, request, pathParams),
-    encodeOutput: (output: Profile) => UsersOutput.me.encode(output),
-    encodeError: (error: never) => UsersErrors.me.encode(error),
-  } satisfies ServerOperation<{ sessionId: string; theme?: string }, never, Profile>,
+    encodeResult: (result: Profile) => UsersOutput.me.encode(result),
+  } satisfies ServerOperation<{ sessionId: string; theme?: string }, Profile>,
 } as const;
 "
 `;
@@ -362,7 +328,7 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { Profile } from "./models.js";
 
 export interface UsersServer<Ctx = MatchedRequestContext> {
-  readonly me: OperationHandler<{ sessionId: string; theme?: string }, never, Profile, Ctx>;
+  readonly me: OperationHandler<{ sessionId: string; theme?: string }, Profile, Ctx>;
 }
 
 export interface CookieApiServer<Ctx = MatchedRequestContext> {
@@ -380,7 +346,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -419,10 +384,6 @@ const TreeOutput = {
   create: ResponseEncoders.json<TreeNode>(200),
 };
 
-const TreeErrors = {
-  create: ErrorEncoders.json<never>(500),
-};
-
 export const TreeOperations = {
   create: {
     endpoint: {
@@ -437,9 +398,8 @@ export const TreeOperations = {
       },
     },
     decodeInput: async (request) => decodeJsonBody<TreeNode>(request, TreeInput.create),
-    encodeOutput: (output: TreeNode) => TreeOutput.create.encode(output),
-    encodeError: (error: never) => TreeErrors.create.encode(error),
-  } satisfies ServerOperation<TreeNode, never, TreeNode>,
+    encodeResult: (result: TreeNode) => TreeOutput.create.encode(result),
+  } satisfies ServerOperation<TreeNode, TreeNode>,
 } as const;
 "
 `;
@@ -453,7 +413,6 @@ import {
   createHints,
   emptyHints,
   ResponseEncoders,
-  ErrorEncoders,
   Decoders,
   RequestDecoders,
   Validators,
@@ -482,12 +441,6 @@ const UploadsOutput = {
   optional: ResponseEncoders.json<UploadResult>(200),
 };
 
-const UploadsErrors = {
-  single: ErrorEncoders.json<never>(500),
-  multi: ErrorEncoders.json<never>(500),
-  optional: ErrorEncoders.json<never>(500),
-};
-
 export const UploadsOperations = {
   single: {
     endpoint: {
@@ -503,9 +456,8 @@ export const UploadsOperations = {
     },
     decodeInput: async (request) =>
       decodeMultipartBody<{ name: string; file: File }>(request, UploadsInput.single),
-    encodeOutput: (output: UploadResult) => UploadsOutput.single.encode(output),
-    encodeError: (error: never) => UploadsErrors.single.encode(error),
-  } satisfies ServerOperation<{ name: string; file: File }, never, UploadResult>,
+    encodeResult: (result: UploadResult) => UploadsOutput.single.encode(result),
+  } satisfies ServerOperation<{ name: string; file: File }, UploadResult>,
 
   multi: {
     endpoint: {
@@ -521,9 +473,8 @@ export const UploadsOperations = {
     },
     decodeInput: async (request) =>
       decodeMultipartBody<{ label: string; files: File[] }>(request, UploadsInput.multi),
-    encodeOutput: (output: UploadResult) => UploadsOutput.multi.encode(output),
-    encodeError: (error: never) => UploadsErrors.multi.encode(error),
-  } satisfies ServerOperation<{ label: string; files: File[] }, never, UploadResult>,
+    encodeResult: (result: UploadResult) => UploadsOutput.multi.encode(result),
+  } satisfies ServerOperation<{ label: string; files: File[] }, UploadResult>,
 
   optional: {
     endpoint: {
@@ -539,9 +490,8 @@ export const UploadsOperations = {
     },
     decodeInput: async (request) =>
       decodeMultipartBody<{ name: string; description?: string }>(request, UploadsInput.optional),
-    encodeOutput: (output: UploadResult) => UploadsOutput.optional.encode(output),
-    encodeError: (error: never) => UploadsErrors.optional.encode(error),
-  } satisfies ServerOperation<{ name: string; description?: string }, never, UploadResult>,
+    encodeResult: (result: UploadResult) => UploadsOutput.optional.encode(result),
+  } satisfies ServerOperation<{ name: string; description?: string }, UploadResult>,
 } as const;
 "
 `;
@@ -553,14 +503,9 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { UploadResult } from "./models.js";
 
 export interface UploadsServer<Ctx = MatchedRequestContext> {
-  readonly single: OperationHandler<{ name: string; file: File }, never, UploadResult, Ctx>;
-  readonly multi: OperationHandler<{ label: string; files: File[] }, never, UploadResult, Ctx>;
-  readonly optional: OperationHandler<
-    { name: string; description?: string },
-    never,
-    UploadResult,
-    Ctx
-  >;
+  readonly single: OperationHandler<{ name: string; file: File }, UploadResult, Ctx>;
+  readonly multi: OperationHandler<{ label: string; files: File[] }, UploadResult, Ctx>;
+  readonly optional: OperationHandler<{ name: string; description?: string }, UploadResult, Ctx>;
 }
 
 export interface UploadApiServer<Ctx = MatchedRequestContext> {
