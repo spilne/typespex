@@ -174,4 +174,31 @@ describe("ResponseEncoders", () => {
       "did not match",
     );
   });
+
+  test("Content-Type headers match the selected encoder kind", () => {
+    const json = ResponseEncoders.json<{ id: string }>(200).encode({ id: "p-1" });
+    expect(json.headers.get("content-type")).toMatch(/^application\/json/);
+
+    const text = ResponseEncoders.text(200).encode("hello");
+    expect(text.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+
+    const bytes = ResponseEncoders.bytes(200).encode(new Uint8Array([1, 2]));
+    expect(bytes.headers.get("content-type")).toBe("application/octet-stream");
+  });
+
+  test("variant encoder sets Content-Type from declared kind when not overridden", () => {
+    const text = ResponseEncoders.variant<{ body: string }>({
+      status: 200,
+      kind: "text",
+      body: "body",
+    }).encode({ body: "hi" });
+    expect(text.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+
+    const bytes = ResponseEncoders.variant<{ body: Uint8Array }>({
+      status: 200,
+      kind: "bytes",
+      body: "body",
+    }).encode({ body: new Uint8Array([42]) });
+    expect(bytes.headers.get("content-type")).toBe("application/octet-stream");
+  });
 });

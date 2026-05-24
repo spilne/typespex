@@ -37,12 +37,42 @@ export interface CompileResult {
   typecheck(serviceDir: string, extraFiles?: Record<string, string>): void;
 }
 
+export interface CompileDiagnostics {
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
 export function compileFixture(
   name: string,
   source: string,
   configExtra = "",
   extraFiles?: Record<string, string>,
 ): CompileResult {
+  const { result } = runCompiler(name, source, configExtra, extraFiles, { expectFailure: false });
+  return result;
+}
+
+/**
+ * Runs the compiler expecting it to surface diagnostics (non-zero exit).
+ * Returns the captured stdout/stderr so tests can assert on emitted codes.
+ */
+export function compileFixtureExpectingDiagnostics(
+  name: string,
+  source: string,
+  configExtra = "",
+  extraFiles?: Record<string, string>,
+): CompileDiagnostics {
+  const { diagnostics } = runCompiler(name, source, configExtra, extraFiles, { expectFailure: true });
+  return diagnostics;
+}
+
+function runCompiler(
+  name: string,
+  source: string,
+  configExtra: string,
+  extraFiles: Record<string, string> | undefined,
+  options: { expectFailure: boolean },
+): { result: CompileResult; diagnostics: CompileDiagnostics } {
   const fixtureDir = mkdtempSync(join(repoRoot, `example/tmp-typespex-${name}-`));
   tempDirs.push(fixtureDir);
 
@@ -67,13 +97,24 @@ export function compileFixture(
     { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
   );
 
-  if (proc.exitCode !== 0) {
+  const diagnostics: CompileDiagnostics = {
+    stdout: proc.stdout.toString(),
+    stderr: proc.stderr.toString(),
+  };
+
+  if (options.expectFailure && proc.exitCode === 0) {
     throw new Error(
-      `TypeSpec compile failed\nstdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+      `TypeSpec compile succeeded but diagnostics were expected\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
     );
   }
 
-  return {
+  if (!options.expectFailure && proc.exitCode !== 0) {
+    throw new Error(
+      `TypeSpec compile failed\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
+    );
+  }
+
+  const result: CompileResult = {
     outputDir,
     readFile(serviceDirOrFile: string, fileName?: string): string {
       const path = fileName
@@ -136,6 +177,8 @@ export function compileFixture(
       }
     },
   };
+
+  return { result, diagnostics };
 }
 
 function ensureRuntimeDeclarationsExist(): void {

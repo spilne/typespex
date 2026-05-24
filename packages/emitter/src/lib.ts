@@ -1,4 +1,4 @@
-import { createTypeSpecLibrary, type JSONSchemaType } from "@typespec/compiler";
+import { createTypeSpecLibrary, paramMessage, type JSONSchemaType } from "@typespec/compiler";
 
 export interface TypespexEmitterOptions {
   "output-dir"?: string;
@@ -42,6 +42,12 @@ export const $lib = createTypeSpecLibrary({
       severity: "error",
       messages: {
         default: "HTTP response union variants cannot be safely differentiated.",
+      },
+    },
+    "unsupported-response-content-type": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Unsupported HTTP response content type "${"contentType"}" for operation "${"operationName"}". Supported types: application/json, text/*, application/octet-stream.`,
       },
     },
   },

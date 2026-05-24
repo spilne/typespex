@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { buildEmitter, cleanupFixtures, compileFixture } from "./compile-fixture.js";
+import {
+  buildEmitter,
+  cleanupFixtures,
+  compileFixture,
+  compileFixtureExpectingDiagnostics,
+} from "./compile-fixture.js";
 
 afterAll(cleanupFixtures);
 beforeAll(buildEmitter);
@@ -94,6 +99,19 @@ interface Text {
 @route("/binary")
 interface Binary {
   @get download(): { @header contentType: "application/octet-stream"; @body body: bytes };
+}
+`;
+
+const unsupportedContentTypeSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "UnsupportedApi" })
+namespace UnsupportedApi;
+
+@route("/feed")
+interface Feed {
+  @get list(): { @header contentType: "application/xml"; @body body: string };
 }
 `;
 
@@ -222,8 +240,28 @@ describe("response encoding", () => {
 
   test("text and binary content types use correct encoders", () => {
     const r = compileFixture("content-types", contentTypeSpec);
+    const operations = r.readFile("content-api", "server-operations.ts");
 
-    expect(r.readFile("content-api", "server-operations.ts")).toMatchSnapshot();
+    expect(operations).toMatchSnapshot();
+    // Text/binary responses must not be silently wrapped in JSON encoders.
+    expect(operations).toContain(`kind: "text"`);
+    expect(operations).toContain(`kind: "bytes"`);
+    expect(operations).not.toContain("ResponseEncoders.json<string>");
+    expect(operations).not.toContain("ResponseEncoders.json<Uint8Array>");
+    expect(operations).not.toContain("ResponseEncoders.json<{ body: string }>");
+    expect(operations).not.toContain("ResponseEncoders.json<{ body: Uint8Array }>");
+  });
+
+  test("unsupported response content type produces a diagnostic", () => {
+    const diagnostics = compileFixtureExpectingDiagnostics(
+      "unsupported-response-ct",
+      unsupportedContentTypeSpec,
+    );
+
+    const combined = `${diagnostics.stdout}\n${diagnostics.stderr}`;
+    expect(combined).toContain("unsupported-response-content-type");
+    expect(combined).toContain("application/xml");
+    expect(combined).toContain("list");
   });
 
   test("multiple error types generate matchVariant result encoders", () => {
