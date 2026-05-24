@@ -1,5 +1,5 @@
 import type {
-  Entity,
+  EnumMember,
   Model,
   Scalar,
   TemplateParameter,
@@ -17,8 +17,10 @@ import {
   isValue,
   walkPropertiesInherited,
 } from "@typespec/compiler";
+import { SyntaxKind } from "@typespec/compiler/ast";
 import type { EmitterCtx } from "./ctx.js";
 import { scalarToTs } from "./scalar-map.js";
+import { isEntityLike } from "./type-guards.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 type TemplateParameterDeclaration = NonNullable<Extract<
@@ -40,6 +42,8 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     case "Model": {
       const templateArgs = type.templateMapper?.args ?? [];
       const firstTemplateArg = templateArgs[0];
+      // Some compiler-created template instantiations do not expose an indexer,
+      // so handle nominal Array<T>/Record<T> before the structural helpers.
       if (type.name === "Array" && templateArgs.length === 1 && isType(firstTemplateArg)) {
         return `${typeToTs(ctx, firstTemplateArg)}[]`;
       }
@@ -145,6 +149,8 @@ export function templateParametersToTs(ctx: EmitterCtx, type: TemplatedType): st
 }
 
 export function isTypeSpecNamespaceModel(model: Model): boolean {
+  // Built-in TypeSpec helper models are inlined; HTTP library models with their
+  // own namespaces are handled by explicit cases such as HttpPart and File.
   return model.namespace?.name === "TypeSpec";
 }
 
@@ -210,10 +216,13 @@ function templateParameterConstraintToTs(
   ctx: EmitterCtx,
   constraint: TemplateParameterDeclaration["constraint"],
 ): string {
-  const constraintTarget = constraint && "target" in constraint && !("arguments" in constraint)
+  const constraintTarget = constraint?.kind === SyntaxKind.ValueOfExpression
     ? constraint.target
     : constraint;
   if (!constraintTarget) return "";
+  // `valueof string` is a value constraint in TypeSpec. TypeScript has no
+  // equivalent type-parameter value space, so the closest emitted constraint is
+  // the underlying type.
   const tsType = typeToTs(ctx, ctx.program.checker.getTypeForNode(constraintTarget));
   return tsType === "unknown" ? "" : ` extends ${tsType}`;
 }
@@ -263,15 +272,7 @@ function valueToTs(ctx: EmitterCtx, value: Value): string {
   }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isEntityLike(value: unknown): value is Entity {
-  return isObject(value) && "entityKind" in value;
-}
-
-function enumMemberToTs(type: { name: string; value?: string | number }): string {
+function enumMemberToTs(type: EnumMember): string {
   return typeof type.value === "string"
     ? JSON.stringify(type.value)
     : type.value != null

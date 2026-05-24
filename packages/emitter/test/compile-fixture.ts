@@ -3,6 +3,10 @@ import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
+const runtimeDeclarationPaths = [
+  resolve(repoRoot, "packages/runtime/dist/index.d.ts"),
+  resolve(repoRoot, "packages/runtime/dist/server.d.ts"),
+];
 
 const tempDirs: string[] = [];
 
@@ -83,6 +87,8 @@ export function compileFixture(
       return existsSync(path);
     },
     typecheck(serviceDir: string): void {
+      assertRuntimeDeclarationsExist();
+
       const generatedTsconfig = join(fixtureDir, "tsconfig.generated.json");
       writeFileSync(
         generatedTsconfig,
@@ -123,4 +129,15 @@ export function compileFixture(
       }
     },
   };
+}
+
+function assertRuntimeDeclarationsExist(): void {
+  const missing = runtimeDeclarationPaths.filter((path) => !existsSync(path));
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Generated TypeScript typecheck requires built @typespex/runtime declarations.\n` +
+      `Missing:\n${missing.map((path) => `- ${path}`).join("\n")}\n` +
+      `Run \`bun run --filter @typespex/runtime build\` before emitter fixture typechecks.`,
+  );
 }

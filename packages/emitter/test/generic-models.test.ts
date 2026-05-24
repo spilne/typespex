@@ -192,10 +192,23 @@ model TaggedPet {
   maybe: Maybe<Pet>;
 }
 
+model Accepted<T> {
+  @statusCode _: 202;
+  value: T;
+}
+
+union Result<T> {
+  ok: T,
+  accepted: Accepted<T>,
+}
+
 @route("/types")
 interface Types {
   @route("/maybe")
   @get readMaybe(): Maybe<Pet>;
+
+  @route("/result")
+  @get readResult(): Result<Pet>;
 
   @route("/maybe")
   @post createMaybe(@body body: Maybe<Pet>): TaggedPet;
@@ -267,6 +280,7 @@ describe("generic models", () => {
     expect(server).toContain(
       "OperationHandler<Page<Pair<Pet, User>>, Page<Pair<Pet, User>>, Ctx>",
     );
+    expect(operations).toContain("data: Decoders.object<Pair<Pet, User>>");
     expect(operations).toContain("Decoders.record(");
     expect(operations).toContain("Decoders.tuple<[Pair<Pet, User>, string]>");
     r.typecheck("nested-generic-api");
@@ -331,10 +345,14 @@ describe("generic models", () => {
 
     expect(models).toContain("export type Tagged<Name extends string> = string;");
     expect(models).toContain("export type Maybe<T> = T | null;");
+    expect(models).toContain("export interface Accepted<T>");
     expect(models).toContain("id: Tagged<\"pet\">;");
     expect(models).toContain("maybe: Maybe<Pet>;");
     expect(server).toContain(
       "readonly readMaybe: OperationHandler<Record<string, never>, Maybe<Pet>, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly readResult: OperationHandler<Record<string, never>, Pet | Accepted<Pet>, Ctx>",
     );
     expect(server).toContain(
       "readonly createMaybe: OperationHandler<Maybe<Pet>, TaggedPet, Ctx>",
@@ -352,6 +370,7 @@ describe("generic models", () => {
       "readonly search: OperationHandler<{ tag: Tagged<\"pet\"> }, TaggedPet, Ctx>",
     );
     expect(operations).toContain("ResponseEncoders.json<Maybe<Pet>>(200)");
+    expect(operations).toContain("ResponseEncoders.matchVariant<Pet | Accepted<Pet>>");
     expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("echoTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("Decoders.union<Maybe<Pet>>");

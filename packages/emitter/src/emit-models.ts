@@ -1,9 +1,18 @@
-import type { Model, Enum, Scalar, Union, Type } from "@typespec/compiler";
+import type { Enum, Expression, Model, Scalar, Type, Union, UnionVariant } from "@typespec/compiler";
 import { isArrayModelType, isRecordModelType, isTemplateDeclaration } from "@typespec/compiler";
+import { SyntaxKind, type TypeReferenceNode } from "@typespec/compiler/ast";
 import { isMetadata } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { templateParametersToTs, typeToTs } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+
+const SEMANTIC_TYPE_REFERENCE_NAMES = new Set([
+  "Array", "Record", "string", "int8", "int16", "int32", "int64",
+  "uint8", "uint16", "uint32", "uint64", "float32", "float64",
+  "boolean", "bytes", "plainDate", "plainTime", "utcDateTime",
+  "offsetDateTime", "duration", "url", "numeric", "integer", "float",
+  "decimal", "decimal128", "safeint", "void", "null", "never", "unknown",
+]);
 
 /**
  * Emit TypeScript interfaces for all models used by the service.
@@ -95,57 +104,63 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
 
 function getBaseModelReference(ctx: EmitterCtx, model: Model): string | undefined {
   const node = model.node;
-  const resolvedBase = node && "extends" in node && node.extends
-    ? ctx.program.checker.getTypeForNode(node.extends)
+  const baseExpression = node?.kind === SyntaxKind.ModelStatement
+    ? node.extends
+    : undefined;
+  const resolvedBase = baseExpression
+    ? ctx.program.checker.getTypeForNode(baseExpression)
     : undefined;
   const baseModel = resolvedBase?.kind === "Model" ? resolvedBase : model.baseModel;
   if (!baseModel || !shouldEmitBaseModel(ctx, baseModel)) return undefined;
-  const sourceReference = node && "extends" in node && node.extends
-    ? typeReferenceExpressionToTs(ctx, node.extends)
-    : undefined;
+  const sourceReference = baseExpression ? typeReferenceExpressionToTs(ctx, baseExpression) : undefined;
   return sourceReference ?? typeToTs(ctx, baseModel);
 }
 
-function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: unknown): string | undefined {
-  if (!isObject(expression) || !("target" in expression) || !("arguments" in expression)) {
-    return undefined;
-  }
+function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: Expression): string | undefined {
+  if (expression.kind !== SyntaxKind.TypeReference) return undefined;
+  if (shouldUseSemanticTypeReference(expression)) return undefined;
 
   const target = referenceTargetToTs(expression.target);
   if (!target) return undefined;
 
-  const args = Array.isArray(expression.arguments)
-    ? expression.arguments
-      .map((arg) => isObject(arg) && "argument" in arg
-        ? expressionTypeToTs(ctx, arg.argument)
-        : "unknown")
-    : [];
-
+  const args = expression.arguments.map((arg) =>
+    expressionSourceToTs(ctx, arg.argument) ?? expressionTypeToTs(ctx, arg.argument)
+  );
   return args.length > 0 ? `${target}<${args.join(", ")}>` : target;
 }
 
-function referenceTargetToTs(target: unknown): string | undefined {
-  if (!isObject(target)) return undefined;
-  if ("sv" in target && typeof target.sv === "string") {
-    return tsIdentifier(target.sv, "Model");
-  }
-  if ("base" in target && "id" in target) {
-    const base = referenceTargetToTs(target.base);
-    const id = isObject(target.id) && "sv" in target.id && typeof target.id.sv === "string"
-      ? tsIdentifier(target.id.sv, "Model")
-      : undefined;
-    return base && id ? `${base}.${id}` : undefined;
-  }
-  return undefined;
+function shouldUseSemanticTypeReference(expression: TypeReferenceNode): boolean {
+  return expression.target.kind === SyntaxKind.Identifier &&
+    SEMANTIC_TYPE_REFERENCE_NAMES.has(expression.target.sv);
 }
 
-function expressionTypeToTs(ctx: EmitterCtx, expression: unknown): string {
-  if (!isObject(expression)) return "unknown";
-  return typeToTs(ctx, ctx.program.checker.getTypeForNode(expression as never));
+function referenceTargetToTs(target: TypeReferenceNode["target"]): string | undefined {
+  switch (target.kind) {
+    case SyntaxKind.Identifier:
+      return tsIdentifier(target.sv, "Model");
+    case SyntaxKind.MemberExpression: {
+      const base = referenceTargetToTs(target.base);
+      const id = tsIdentifier(target.id.sv, "Model");
+      return base ? `${base}.${id}` : undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function expressionTypeToTs(ctx: EmitterCtx, expression: Expression): string {
+  return typeToTs(ctx, ctx.program.checker.getTypeForNode(expression));
+}
+
+function expressionSourceToTs(ctx: EmitterCtx, expression: Expression): string | undefined {
+  switch (expression.kind) {
+    case SyntaxKind.TypeReference:
+      return typeReferenceExpressionToTs(ctx, expression);
+    case SyntaxKind.ValueOfExpression:
+      return expressionSourceToTs(ctx, expression.target);
+    default:
+      return undefined;
+  }
 }
 
 function shouldEmitBaseModel(ctx: EmitterCtx, model: Model): boolean {
@@ -198,8 +213,15 @@ function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
 
   const typeParams = templateParametersToTs(ctx, union);
   const variants = [...union.variants.values()];
-  const variantTypes = variants.map((v) => typeToTs(ctx, v.type)).join(" | ");
+  const variantTypes = variants.map((v) => unionVariantToTs(ctx, v)).join(" | ");
 
   lines.push(`export type ${tsIdentifier(union.name, "Union")}${typeParams} = ${variantTypes};`);
   lines.push("");
+}
+
+function unionVariantToTs(ctx: EmitterCtx, variant: UnionVariant): string {
+  const source = variant.node?.kind === SyntaxKind.UnionVariant
+    ? expressionSourceToTs(ctx, variant.node.value)
+    : undefined;
+  return source ?? typeToTs(ctx, variant.type);
 }

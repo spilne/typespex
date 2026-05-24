@@ -1,4 +1,4 @@
-import type { Entity, Model, ModelProperty, Type } from "@typespec/compiler";
+import type { Model, ModelProperty, Type } from "@typespec/compiler";
 import {
   getDiscriminator,
   isArrayModelType,
@@ -11,6 +11,7 @@ import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
 import { scalarToTs } from "./scalar-map.js";
+import { isEntityLike } from "./type-guards.js";
 import {
   isTemplatedScalarReference,
   isTemplatedUnionReference,
@@ -168,10 +169,6 @@ function addTemplateArgumentModelNames(
   }
 }
 
-function isEntityLike(value: unknown): value is Entity {
-  return typeof value === "object" && value !== null && "entityKind" in value;
-}
-
 export function groupOperations(operations: HttpOperation[]): OperationGroup[] {
   const standalone: HttpOperation[] = [];
   const groups = new Map<string, OperationGroup>();
@@ -270,8 +267,13 @@ export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
 }
 
 function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | undefined {
+  if (op.responses.length !== 1) return undefined;
+
   const returnType = op.operation.returnType;
   if (returnType.kind === "Union" && isTemplatedUnionReference(returnType)) {
+    // Preserve source aliases only when TypeSpec HTTP produced one response
+    // surface. Multi-response unions need normalized response shapes so status,
+    // body, and header variants stay visible to handlers and encoders.
     return typeToTs(ctx, returnType);
   }
   if (returnType.kind === "Scalar" && isTemplatedScalarReference(returnType)) {
