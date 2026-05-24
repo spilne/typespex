@@ -155,15 +155,15 @@ export function emitDecoder(
     };
   }
 
-  const bodyOptionsArg = hasBody ? emitBodyOptionsArg(op) : "";
+  const body = hasBody ? analyzeBody(op) : undefined;
+  const bodyOptionsArg = body ? emitBodyOptionsArg(body.contentTypes) : "";
 
   // Case 3: body only — async Either
-  if (!hasRequestInput && hasBody) {
+  if (!hasRequestInput && body) {
     const ref = tsPropertyAccess(inputsRef, opName);
-    const bodyDecodeFn = pickBodyDecodeFn(op);
     return {
       inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op)],
-      decodeExpression: `${bodyDecodeFn}<${inputType}>(request, ${ref}${bodyOptionsArg})`,
+      decodeExpression: `${body.decodeFn}<${inputType}>(request, ${ref}${bodyOptionsArg})`,
       needsPathParams: false,
       isAsync: true,
       hoistedDecoders: buildHoistedDecoders(ctx, dec),
@@ -175,7 +175,7 @@ export function emitDecoder(
   const bodyRef = tsPropertyAccess(inputsRef, `${opName}Body`);
   const bodyInputType = buildBodyInputType(ctx, op);
   const requestType = buildRequestOnlyType(ctx, op);
-  const combinedDecodeFn = pickBodyDecodeFn(op) === "decodeMultipartBody"
+  const combinedDecodeFn = body?.decodeFn === "decodeMultipartBody"
     ? "decodeRequestInputAndMultipartBody"
     : "decodeRequestInputAndBody";
   return {
@@ -191,41 +191,43 @@ export function emitDecoder(
 }
 
 /** Emits the trailing `, { contentTypes: [...] }` options arg, or an empty string. */
-function emitBodyOptionsArg(op: HttpOperation): string {
-  const contentTypes = declaredBodyContentTypes(op);
+function emitBodyOptionsArg(contentTypes: readonly string[]): string {
   if (contentTypes.length === 0) return "";
   const literal = contentTypes.map((ct) => JSON.stringify(ct)).join(", ");
   return `, { contentTypes: [${literal}] }`;
 }
 
-/** Resolves declared body content types, defaulting multipart bodies when absent. */
-function declaredBodyContentTypes(op: HttpOperation): readonly string[] {
+interface BodyEmission {
+  readonly decodeFn: "decodeJsonBody" | "decodeFormBody" | "decodeMultipartBody";
+  readonly contentTypes: readonly string[];
+}
+
+/**
+ * Resolves the body decode function and declared media types in one pass.
+ * Multipart bodies default to `["multipart/form-data"]` when no list is set.
+ */
+function analyzeBody(op: HttpOperation): BodyEmission {
   const body = op.parameters.body;
-  if (!body) return [];
+  if (!body) return { decodeFn: "decodeJsonBody", contentTypes: [] };
+
   const declared = "contentTypes" in body && Array.isArray(body.contentTypes)
     ? body.contentTypes.filter((ct): ct is string => typeof ct === "string" && ct.length > 0)
     : [];
-  if (declared.length > 0) return declared;
-  if ("bodyKind" in body && body.bodyKind === "multipart") {
-    return ["multipart/form-data"];
-  }
-  return [];
-}
 
-/** Picks the right body decode function based on content type and body kind. */
-function pickBodyDecodeFn(op: HttpOperation): string {
-  const body = op.parameters.body;
-  if (!body) return "decodeJsonBody";
-  if ("bodyKind" in body && body.bodyKind === "multipart") return "decodeMultipartBody";
-  if ("contentTypes" in body) {
-    if (body.contentTypes.some((ct) => ct === "application/x-www-form-urlencoded")) {
-      return "decodeFormBody";
-    }
-    if (body.contentTypes.some((ct) => ct.startsWith("multipart/"))) {
-      return "decodeMultipartBody";
-    }
+  if ("bodyKind" in body && body.bodyKind === "multipart") {
+    return {
+      decodeFn: "decodeMultipartBody",
+      contentTypes: declared.length > 0 ? declared : ["multipart/form-data"],
+    };
   }
-  return "decodeJsonBody";
+
+  if (declared.some((ct) => ct === "application/x-www-form-urlencoded")) {
+    return { decodeFn: "decodeFormBody", contentTypes: declared };
+  }
+  if (declared.some((ct) => ct.startsWith("multipart/"))) {
+    return { decodeFn: "decodeMultipartBody", contentTypes: declared };
+  }
+  return { decodeFn: "decodeJsonBody", contentTypes: declared };
 }
 
 // ---------------------------------------------------------------------------
