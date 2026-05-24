@@ -1,4 +1,4 @@
-import type { Model, ModelProperty, Type } from "@typespec/compiler";
+import type { Entity, Model, ModelProperty, Type } from "@typespec/compiler";
 import {
   getDiscriminator,
   isArrayModelType,
@@ -10,7 +10,13 @@ import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
 import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
-import { isTypeSpecNamespaceModel, typeToTs } from "./type-reference.js";
+import { scalarToTs } from "./scalar-map.js";
+import {
+  isTemplatedScalarReference,
+  isTemplatedUnionReference,
+  isTypeSpecNamespaceModel,
+  typeToTs,
+} from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 export interface OperationGroup {
@@ -51,6 +57,8 @@ function collectTypeNames(
   if (op.parameters.body?.type) {
     addModelName(ctx, op.parameters.body.type, names, new Set());
   }
+
+  addModelName(ctx, op.operation.returnType, names, new Set());
 
   for (const resp of op.responses) {
     addModelName(ctx, resp.type, names, new Set());
@@ -104,9 +112,14 @@ function addModelName(
   }
 
   if (type.kind === "Union") {
+    addTemplatedUnionName(ctx, type, names, seen);
     for (const v of type.variants.values()) {
       addModelName(ctx, v.type, names, seen);
     }
+  }
+
+  if (type.kind === "Scalar") {
+    addTemplatedScalarName(ctx, type, names, seen);
   }
 
   if (type.kind === "Tuple") {
@@ -118,6 +131,45 @@ function addModelName(
   if (type.kind === "ModelProperty" || type.kind === "UnionVariant") {
     addModelName(ctx, type.type, names, seen);
   }
+}
+
+function addTemplatedUnionName(
+  ctx: EmitterCtx,
+  type: Extract<Type, { kind: "Union" }>,
+  names: Set<string>,
+  seen: Set<Type>,
+): void {
+  if (!type.name || !isTemplatedUnionReference(type)) return;
+  names.add(tsIdentifier(type.name, "Union"));
+  addTemplateArgumentModelNames(ctx, type.templateMapper?.args ?? [], names, seen);
+}
+
+function addTemplatedScalarName(
+  ctx: EmitterCtx,
+  type: Extract<Type, { kind: "Scalar" }>,
+  names: Set<string>,
+  seen: Set<Type>,
+): void {
+  if (!isTemplatedScalarReference(type)) return;
+  names.add(tsIdentifier(type.name, "Scalar"));
+  addTemplateArgumentModelNames(ctx, type.templateMapper?.args ?? [], names, seen);
+}
+
+function addTemplateArgumentModelNames(
+  ctx: EmitterCtx,
+  args: readonly unknown[],
+  names: Set<string>,
+  seen: Set<Type>,
+): void {
+  for (const arg of args) {
+    if (isEntityLike(arg) && isType(arg)) {
+      addModelName(ctx, arg, names, seen);
+    }
+  }
+}
+
+function isEntityLike(value: unknown): value is Entity {
+  return typeof value === "object" && value !== null && "entityKind" in value;
 }
 
 export function groupOperations(operations: HttpOperation[]): OperationGroup[] {
@@ -176,16 +228,18 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
       }
     } else {
       const bodyType = body.type;
-      if (parts.length === 0 && bodyType.kind === "Model" && bodyType.name) {
+      if (parts.length === 0) {
         return typeToTs(ctx, bodyType);
       }
 
-      if (bodyType.kind === "Model") {
+      if (shouldFlattenBodyType(ctx, bodyType)) {
         for (const [, prop] of bodyType.properties) {
           parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
             optional: prop.optional,
           }));
         }
+      } else {
+        parts.push(tsPropertyDeclaration("body", typeToTs(ctx, bodyType)));
       }
     }
   }
@@ -195,6 +249,9 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
 }
 
 export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
+  const sourceAlias = operationReturnAliasToTs(ctx, op);
+  if (sourceAlias) return sourceAlias;
+
   const types: string[] = [];
   const seen = new Set<string>();
 
@@ -210,6 +267,23 @@ export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
 
   if (types.length === 0) return "void";
   return types.join(" | ");
+}
+
+function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | undefined {
+  const returnType = op.operation.returnType;
+  if (returnType.kind === "Union" && isTemplatedUnionReference(returnType)) {
+    return typeToTs(ctx, returnType);
+  }
+  if (returnType.kind === "Scalar" && isTemplatedScalarReference(returnType)) {
+    return typeToTs(ctx, returnType);
+  }
+  return undefined;
+}
+
+export function shouldFlattenBodyType(ctx: EmitterCtx, type: Type): type is Model {
+  return type.kind === "Model" &&
+    !isArrayModelType(ctx.program, type) &&
+    !isRecordModelType(ctx.program, type);
 }
 
 function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string {
@@ -466,27 +540,21 @@ function emitDirectTypeCondition(
 
   if (response.type.kind !== "Scalar") return undefined;
 
-  const scalarName = response.type.name;
-  if (scalarName === "string") {
+  const scalarType = scalarToTs(response.type);
+  if (scalarType === "string") {
     return `typeof result === "string"`;
   }
-  if (scalarName === "boolean") {
+  if (scalarType === "boolean") {
     return `typeof result === "boolean"`;
   }
-  if (scalarName === "bytes") {
+  if (scalarType === "Uint8Array") {
     return "result instanceof Uint8Array";
   }
-  if (
-    scalarName === "int32" ||
-    scalarName === "int64" ||
-    scalarName === "float32" ||
-    scalarName === "float64" ||
-    scalarName === "numeric" ||
-    scalarName === "integer" ||
-    scalarName === "float" ||
-    scalarName === "decimal"
-  ) {
+  if (scalarType === "number") {
     return `typeof result === "number"`;
+  }
+  if (scalarType === "bigint") {
+    return `typeof result === "bigint"`;
   }
 
   return undefined;

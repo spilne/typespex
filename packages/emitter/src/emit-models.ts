@@ -1,5 +1,5 @@
-import type { Model, Enum, Union, Type } from "@typespec/compiler";
-import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
+import type { Model, Enum, Scalar, Union, Type } from "@typespec/compiler";
+import { isArrayModelType, isRecordModelType, isTemplateDeclaration } from "@typespec/compiler";
 import { isMetadata } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { templateParametersToTs, typeToTs } from "./type-reference.js";
@@ -21,12 +21,24 @@ export function emitModels(ctx: EmitterCtx): string {
 
 function collectModelsFromNamespace(
   ctx: EmitterCtx,
-  ns: Type & { models?: Map<string, Model>; enums?: Map<string, Enum>; unions?: Map<string, Union>; namespaces?: Map<string, any> },
+  ns: Type & {
+    models?: Map<string, Model>;
+    scalars?: Map<string, Scalar>;
+    enums?: Map<string, Enum>;
+    unions?: Map<string, Union>;
+    namespaces?: Map<string, any>;
+  },
   lines: string[],
 ): void {
   if (ns.models) {
     for (const [, model] of ns.models) {
       emitModel(ctx, model, lines);
+    }
+  }
+
+  if (ns.scalars) {
+    for (const [, scalar] of ns.scalars) {
+      emitScalar(ctx, scalar, lines);
     }
   }
 
@@ -166,14 +178,28 @@ function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {
   lines.push("");
 }
 
+function emitScalar(ctx: EmitterCtx, scalar: Scalar, lines: string[]): void {
+  if (!scalar.name || scalar.namespace?.name === "TypeSpec") return;
+  if (!isTemplateDeclaration(scalar)) return;
+  if (ctx.emittedModels.has(scalar.name)) return;
+  ctx.emittedModels.add(scalar.name);
+
+  const scalarName = tsIdentifier(scalar.name, "Scalar");
+  const typeParams = templateParametersToTs(ctx, scalar);
+  const baseType = scalar.baseScalar ? typeToTs(ctx, scalar.baseScalar) : "unknown";
+  lines.push(`export type ${scalarName}${typeParams} = ${baseType};`);
+  lines.push("");
+}
+
 function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
   if (!union.name) return;
   if (ctx.emittedModels.has(union.name)) return;
   ctx.emittedModels.add(union.name);
 
+  const typeParams = templateParametersToTs(ctx, union);
   const variants = [...union.variants.values()];
   const variantTypes = variants.map((v) => typeToTs(ctx, v.type)).join(" | ");
 
-  lines.push(`export type ${tsIdentifier(union.name, "Union")} = ${variantTypes};`);
+  lines.push(`export type ${tsIdentifier(union.name, "Union")}${typeParams} = ${variantTypes};`);
   lines.push("");
 }

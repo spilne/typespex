@@ -169,6 +169,51 @@ interface Pets extends ReadOps<Pet> {
 }
 `;
 
+const templatedUnionAndScalarSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "TemplateTypeApi" })
+namespace TemplateTypeApi;
+
+model Pet {
+  id: string;
+}
+
+union Maybe<T> {
+  value: T,
+  none: null,
+}
+
+scalar Tagged<Name extends valueof string> extends string;
+
+model TaggedPet {
+  id: Tagged<"pet">;
+  maybe: Maybe<Pet>;
+}
+
+@route("/types")
+interface Types {
+  @route("/maybe")
+  @get readMaybe(): Maybe<Pet>;
+
+  @route("/maybe")
+  @post createMaybe(@body body: Maybe<Pet>): TaggedPet;
+
+  @route("/tagged")
+  @post createTagged(@body body: TaggedPet): Tagged<"pet">;
+
+  @route("/tag")
+  @post echoTagged(@body body: Tagged<"pet">): Tagged<"pet">;
+
+  @route("/scoped/{ownerId}")
+  @post createScoped(@path ownerId: string, @body body: Maybe<Pet>): TaggedPet;
+
+  @route("/search")
+  @get search(@query tag: Tagged<"pet">): TaggedPet;
+}
+`;
+
 describe("generic models", () => {
   test("emits generic model declarations and instantiated operation types", () => {
     const r = compileFixture("generic-response", genericResponseSpec);
@@ -276,5 +321,47 @@ describe("generic models", () => {
     expect(operations).toContain("read: ResponseEncoders.json<Page<Pet>>(200)");
     expect(operations).toContain("readFromTemplate: ResponseEncoders.json<Page<Pet>>(200)");
     r.typecheck("template-surface-api");
+  });
+
+  test("emits templated union and scalar aliases used by operations and models", () => {
+    const r = compileFixture("generic-union-scalar", templatedUnionAndScalarSpec);
+    const models = r.readFile("template-type-api", "models.ts");
+    const server = r.readFile("template-type-api", "server.ts");
+    const operations = r.readFile("template-type-api", "server-operations.ts");
+
+    expect(models).toContain("export type Tagged<Name extends string> = string;");
+    expect(models).toContain("export type Maybe<T> = T | null;");
+    expect(models).toContain("id: Tagged<\"pet\">;");
+    expect(models).toContain("maybe: Maybe<Pet>;");
+    expect(server).toContain(
+      "readonly readMaybe: OperationHandler<Record<string, never>, Maybe<Pet>, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly createMaybe: OperationHandler<Maybe<Pet>, TaggedPet, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly createTagged: OperationHandler<TaggedPet, Tagged<\"pet\">, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly echoTagged: OperationHandler<Tagged<\"pet\">, Tagged<\"pet\">, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly createScoped: OperationHandler<{ ownerId: string; body: Maybe<Pet> }, TaggedPet, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly search: OperationHandler<{ tag: Tagged<\"pet\"> }, TaggedPet, Ctx>",
+    );
+    expect(operations).toContain("ResponseEncoders.json<Maybe<Pet>>(200)");
+    expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
+    expect(operations).toContain("echoTagged: ResponseEncoders.text(200)");
+    expect(operations).toContain("Decoders.union<Maybe<Pet>>");
+    expect(operations).toContain("decodeJsonBody<Maybe<Pet>>(request, TypesInput.createMaybe)");
+    expect(operations).toContain("decodeJsonBody<Tagged<\"pet\">>(request, TypesInput.echoTagged)");
+    expect(operations).toContain("Decoders.object<TaggedPet>({");
+    expect(operations).toContain("maybe: Decoders.union<Maybe<Pet>>");
+    expect(operations).toContain(".map((body) => ({ body }))");
+    expect(operations).toContain("decodeRequestInputAndBody<{ ownerId: string }, { body: Maybe<Pet> }>");
+    expect(operations).toContain("RequestDecoders.query(\"tag\", Decoders.string)");
+    r.typecheck("template-type-api");
   });
 });

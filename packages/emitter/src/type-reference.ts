@@ -1,8 +1,11 @@
 import type {
   Entity,
   Model,
+  Scalar,
   TemplateParameter,
+  TemplatedType,
   Type,
+  Union,
   Value,
 } from "@typespec/compiler";
 import {
@@ -19,7 +22,7 @@ import { scalarToTs } from "./scalar-map.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 type TemplateParameterDeclaration = NonNullable<Extract<
-  Model["node"],
+  TemplatedType["node"],
   { templateParameters: readonly unknown[] }
 >["templateParameters"]>[number];
 
@@ -29,6 +32,9 @@ type TemplateParameterDeclaration = NonNullable<Extract<
 export function typeToTs(ctx: EmitterCtx, type: Type): string {
   switch (type.kind) {
     case "Scalar":
+      if (shouldReferenceScalar(type)) {
+        return templatedNamedTypeToTs(ctx, type, "Scalar");
+      }
       return scalarToTs(type);
 
     case "Model": {
@@ -67,6 +73,9 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     }
 
     case "Union": {
+      if (shouldReferenceUnion(type)) {
+        return templatedNamedTypeToTs(ctx, type, "Union");
+      }
       const variants = [...type.variants.values()];
       const parts = variants.map((v) => typeToTs(ctx, v.type));
       return parts.join(" | ");
@@ -128,7 +137,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
   }
 }
 
-export function templateParametersToTs(ctx: EmitterCtx, type: Model): string {
+export function templateParametersToTs(ctx: EmitterCtx, type: TemplatedType): string {
   if (!isTemplateDeclaration(type)) return "";
   const params = getTemplateParameters(type)
     .map((param) => templateParameterDeclarationToTs(ctx, param));
@@ -139,17 +148,45 @@ export function isTypeSpecNamespaceModel(model: Model): boolean {
   return model.namespace?.name === "TypeSpec";
 }
 
-function modelToTs(ctx: EmitterCtx, model: Model): string {
-  const name = tsIdentifier(model.name, "Model");
-  if (isTemplateInstance(model)) {
-    const args = model.templateMapper.args
-      .map((arg) => templateArgumentToTs(ctx, arg));
-    return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
-  }
-  return name;
+export function isTemplatedScalarReference(scalar: Scalar): boolean {
+  return shouldReferenceScalar(scalar);
 }
 
-function getTemplateParameters(type: Model): readonly TemplateParameterDeclaration[] {
+export function isTemplatedUnionReference(union: Union): boolean {
+  return shouldReferenceUnion(union);
+}
+
+function modelToTs(ctx: EmitterCtx, model: Model): string {
+  return templatedNamedTypeToTs(ctx, model, "Model");
+}
+
+function templatedNamedTypeToTs(
+  ctx: EmitterCtx,
+  type: TemplatedType & { name?: string },
+  fallback: string,
+): string {
+  const name = tsIdentifier(type.name, fallback);
+  if (!isTemplateInstance(type)) return name;
+  const args = type.templateMapper.args.map((arg) => templateArgumentToTs(ctx, arg));
+  return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
+}
+
+function shouldReferenceScalar(scalar: Scalar): boolean {
+  return Boolean(
+    scalar.name &&
+      scalar.namespace?.name !== "TypeSpec" &&
+      (isTemplateDeclaration(scalar) || isTemplateInstance(scalar)),
+  );
+}
+
+function shouldReferenceUnion(union: Union): boolean {
+  return Boolean(
+    union.name &&
+      (isTemplateDeclaration(union) || isTemplateInstance(union)),
+  );
+}
+
+function getTemplateParameters(type: TemplatedType): readonly TemplateParameterDeclaration[] {
   const node = type.node;
   if (!node || !("templateParameters" in node)) return [];
   return node.templateParameters;
