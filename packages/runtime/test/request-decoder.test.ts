@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   Decoders,
   Either,
+  UnsupportedMediaTypeError,
   ValidationError,
   decodeRequestInput,
   decodeRequestInputAndBody,
@@ -173,10 +174,42 @@ describe("http request decoders (sync)", () => {
     expect(isLeft(result)).toBe(true);
     if (isLeft(result)) {
       expect(result.left).toBeInstanceOf(ValidationError);
-      expect(result.left.issues).toEqual([
+      const err = result.left as ValidationError;
+      expect(err.issues).toEqual([
         { path: "$path.petId", message: "Expected a string." },
         { path: "$body.name", message: "Expected a string." },
       ]);
+    }
+  });
+
+  test("decodeRequestInputAndBody short-circuits with 415 on bad Content-Type", async () => {
+    const requestDecoder = RequestDecoders.combine(
+      [RequestDecoders.path("petId", Decoders.string)],
+      (petId) => ({ petId }),
+    );
+    const bodyDecoder = Decoders.object<{ name: string }>({
+      name: Decoders.string,
+    });
+
+    // Both inputs are invalid: missing path param AND wrong Content-Type.
+    // The 415 must take precedence and request-input errors must NOT be merged in.
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/pets", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "not-json",
+      }),
+      {},
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(isLeft(result)).toBe(true);
+    if (isLeft(result)) {
+      expect(result.left).toBeInstanceOf(UnsupportedMediaTypeError);
+      expect(result.left).not.toBeInstanceOf(ValidationError);
+      expect((result.left as UnsupportedMediaTypeError).received).toBe("text/plain");
     }
   });
 
@@ -308,8 +341,9 @@ describe("http request decoders (sync)", () => {
 
     expect(isLeft(result)).toBe(true);
     if (isLeft(result)) {
+      expect(result.left).toBeInstanceOf(ValidationError);
       // Should have errors from both request params and body
-      expect(result.left.issues.length).toBeGreaterThanOrEqual(3);
+      expect((result.left as ValidationError).issues.length).toBeGreaterThanOrEqual(3);
     }
   });
 });

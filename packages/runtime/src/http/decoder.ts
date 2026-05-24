@@ -1,5 +1,12 @@
 import { Either, isLeft, type Either as EitherT } from "../core/either.js";
-import { type ValidationIssue, type Validator, ValidationError, Validators } from "./validation.js";
+import { isContentTypeAccepted } from "./media-type.js";
+import {
+  type ValidationIssue,
+  type Validator,
+  UnsupportedMediaTypeError,
+  ValidationError,
+  Validators,
+} from "./validation.js";
 
 /** Internal decoder result — lightweight issue array, no Error allocation. */
 export type DecoderResult<A> = EitherT<readonly ValidationIssue[], A>;
@@ -496,58 +503,99 @@ export function decodeOptional<A>(
   return decoder.decode(input);
 }
 
-/** Parses and validates the request JSON body. Returns Either<ValidationError, A>. */
-export async function decodeJsonBody<A>(
+/**
+ * Optional shared body decode options.
+ * - `contentTypes`: when non-empty, the request `Content-Type` is validated;
+ *   requests whose header does not match any entry are rejected with a
+ *   415 `UnsupportedMediaTypeError` before body parsing.
+ * - `root`: path prefix used in validation issue paths (default `"$body"`).
+ */
+export interface BodyDecodeOptions {
+  readonly contentTypes?: readonly string[];
+  readonly root?: string;
+}
+
+export type BodyDecodeError = ValidationError | UnsupportedMediaTypeError;
+
+/** Parses and validates the request JSON body. */
+export function decodeJsonBody<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  return decodeBody(request, decoder, options, parseJsonBody, "Body must contain valid JSON.");
+}
+
+/** Parses and validates a URL-encoded form body. */
+export function decodeFormBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  return decodeBody(request, decoder, options, parseFormBody, "Body must contain valid form data.");
+}
+
+/** Parses and validates a multipart/form-data body. */
+export function decodeMultipartBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  return decodeBody(request, decoder, options, parseMultipartBody, "Body must contain valid multipart form data.");
+}
+
+async function decodeBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions,
+  parse: (request: Request) => Promise<unknown>,
+  parseFailureMessage: string,
+): Promise<EitherT<BodyDecodeError, A>> {
+  const root = options.root ?? "$body";
+  const ctError = checkContentType(request, options.contentTypes);
+  if (ctError) return Either.left(ctError);
+
   let value: unknown;
   try {
-    value = await request.json();
+    value = await parse(request);
   } catch {
-    return Either.left(new ValidationError([{ path: root, message: "Body must contain valid JSON." }]));
+    return Either.left(new ValidationError([{ path: root, message: parseFailureMessage }]));
   }
   return toValidationResult(decoder.decode(value), root);
 }
 
-/** Parses and validates a URL-encoded form body. Returns Either<ValidationError, A>. */
-export async function decodeFormBody<A>(
-  request: Request,
-  decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
-  let value: Record<string, unknown>;
-  try {
-    const text = await request.text();
-    const params = new URLSearchParams(text);
-    value = Object.create(null);
-    for (const [key, val] of params) {
-      appendBodyField(value, key, val);
-    }
-  } catch {
-    return Either.left(new ValidationError([{ path: root, message: "Body must contain valid form data." }]));
-  }
-  return toValidationResult(decoder.decode(value), root);
+function parseJsonBody(request: Request): Promise<unknown> {
+  return request.json();
 }
 
-/** Parses and validates a multipart/form-data body. Returns Either<ValidationError, A>. */
-export async function decodeMultipartBody<A>(
-  request: Request,
-  decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
-  let value: Record<string, unknown>;
-  try {
-    const formData = await request.formData();
-    value = Object.create(null);
-    for (const [key, val] of formData) {
-      appendBodyField(value, key, val);
-    }
-  } catch {
-    return Either.left(new ValidationError([{ path: root, message: "Body must contain valid multipart form data." }]));
+async function parseFormBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  return collectBodyFields(new URLSearchParams(text));
+}
+
+async function parseMultipartBody(request: Request): Promise<Record<string, unknown>> {
+  const formData = await request.formData();
+  return collectBodyFields(formData);
+}
+
+function collectBodyFields(
+  entries: Iterable<readonly [string, unknown]>,
+): Record<string, unknown> {
+  const value: Record<string, unknown> = Object.create(null);
+  for (const [key, val] of entries) {
+    appendBodyField(value, key, val);
   }
-  return toValidationResult(decoder.decode(value), root);
+  return value;
+}
+
+function checkContentType(
+  request: Request,
+  declared: readonly string[] | undefined,
+): UnsupportedMediaTypeError | undefined {
+  if (!declared || declared.length === 0) return undefined;
+  const received = request.headers.get("content-type");
+  if (isContentTypeAccepted(received, declared)) return undefined;
+  return new UnsupportedMediaTypeError(received ?? undefined, declared);
 }
 
 /** Decodes one value and throws `ValidationError` on failure. */
@@ -581,9 +629,9 @@ export function decodeOptionalOrThrow<A>(
 export async function decodeJsonBodyOrThrow<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
+  options: BodyDecodeOptions = {},
 ): Promise<A> {
-  return Either.getOrElseThrow(await decodeJsonBody(request, decoder, root));
+  return Either.getOrElseThrow(await decodeJsonBody(request, decoder, options));
 }
 
 // ---------------------------------------------------------------------------

@@ -188,7 +188,10 @@ export const ItemsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) => decodeJsonBody<CreateItem>(request, ItemsInput.create),
+    decodeInput: async (request) =>
+      decodeJsonBody<CreateItem>(request, ItemsInput.create, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: CreateItem) => ItemsOutput.create.encode(result),
   } satisfies ServerOperation<CreateItem, CreateItem>,
 } as const;
@@ -254,6 +257,7 @@ export const ItemsOperations = {
         ItemsInput.updateBody,
         request,
         pathParams,
+        { contentTypes: ["application/json"] },
       ),
     encodeResult: (result: Item) => ItemsOutput.update.encode(result),
   } satisfies ServerOperation<
@@ -397,7 +401,8 @@ export const TreeOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) => decodeJsonBody<TreeNode>(request, TreeInput.create),
+    decodeInput: async (request) =>
+      decodeJsonBody<TreeNode>(request, TreeInput.create, { contentTypes: ["application/json"] }),
     encodeResult: (result: TreeNode) => TreeOutput.create.encode(result),
   } satisfies ServerOperation<TreeNode, TreeNode>,
 } as const;
@@ -455,7 +460,9 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: string; file: File }>(request, UploadsInput.single),
+      decodeMultipartBody<{ name: string; file: File }>(request, UploadsInput.single, {
+        contentTypes: ["multipart/form-data"],
+      }),
     encodeResult: (result: UploadResult) => UploadsOutput.single.encode(result),
   } satisfies ServerOperation<{ name: string; file: File }, UploadResult>,
 
@@ -472,7 +479,9 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ label: string; files: File[] }>(request, UploadsInput.multi),
+      decodeMultipartBody<{ label: string; files: File[] }>(request, UploadsInput.multi, {
+        contentTypes: ["multipart/form-data"],
+      }),
     encodeResult: (result: UploadResult) => UploadsOutput.multi.encode(result),
   } satisfies ServerOperation<{ label: string; files: File[] }, UploadResult>,
 
@@ -489,7 +498,9 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: string; description?: string }>(request, UploadsInput.optional),
+      decodeMultipartBody<{ name: string; description?: string }>(request, UploadsInput.optional, {
+        contentTypes: ["multipart/form-data"],
+      }),
     encodeResult: (result: UploadResult) => UploadsOutput.optional.encode(result),
   } satisfies ServerOperation<{ name: string; description?: string }, UploadResult>,
 } as const;

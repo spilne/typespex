@@ -2,6 +2,8 @@ import type { Either as EitherT } from "../core/either.js";
 import { Either, isLeft } from "../core/either.js";
 import { getSearchParams } from "./query-params.js";
 import {
+  type BodyDecodeError,
+  type BodyDecodeOptions,
   type DecoderResult,
   Decoder,
   decodeJsonBody,
@@ -9,7 +11,11 @@ import {
   fail,
   prefixIssues,
 } from "./decoder.js";
-import { type ValidationIssue, ValidationError } from "./validation.js";
+import {
+  type ValidationIssue,
+  UnsupportedMediaTypeError,
+  ValidationError,
+} from "./validation.js";
 
 /** Request data available to path/query/header/cookie decoders. */
 export interface RequestInputSource {
@@ -146,7 +152,9 @@ export function decodeRequestInput<A>(
 
 /**
  * Decodes both sync request input and an async JSON body with error accumulation.
- * Returns Either<ValidationError, A & B> — wraps issues at the boundary.
+ * Returns Either<BodyDecodeError, A & B> — wraps issues at the boundary.
+ * If `options.contentTypes` is set, the request Content-Type is validated and
+ * a 415 short-circuits without merging request input errors.
  */
 export async function decodeRequestInputAndBody<
   A extends object,
@@ -156,20 +164,12 @@ export async function decodeRequestInputAndBody<
   bodyDecoder: Decoder<B>,
   request: Request,
   pathParams: Readonly<Record<string, string>>,
-): Promise<EitherT<ValidationError, A & B>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A & B>> {
   const requestResult = requestDecoder.decode(createRequestInputSource(request, pathParams));
-  const bodyResult = await decodeJsonBody(request, bodyDecoder, "$body");
+  const bodyResult = await decodeJsonBody(request, bodyDecoder, { ...options, root: "$body" });
 
-  const requestFailed = isLeft(requestResult);
-  const bodyFailed = isLeft(bodyResult);
-  if (requestFailed || bodyFailed) {
-    const issues: ValidationIssue[] = [];
-    if (requestFailed) issues.push(...requestResult.left);
-    if (bodyFailed) issues.push(...bodyResult.left.issues);
-    return Either.left(new ValidationError(issues));
-  }
-
-  return Either.right({ ...requestResult.right, ...bodyResult.right } as A & B);
+  return mergeRequestAndBodyResults(requestResult, bodyResult);
 }
 
 /**
@@ -183,16 +183,30 @@ export async function decodeRequestInputAndMultipartBody<
   bodyDecoder: Decoder<B>,
   request: Request,
   pathParams: Readonly<Record<string, string>>,
-): Promise<EitherT<ValidationError, A & B>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A & B>> {
   const requestResult = requestDecoder.decode(createRequestInputSource(request, pathParams));
-  const bodyResult = await decodeMultipartBody(request, bodyDecoder, "$body");
+  const bodyResult = await decodeMultipartBody(request, bodyDecoder, { ...options, root: "$body" });
+
+  return mergeRequestAndBodyResults(requestResult, bodyResult);
+}
+
+function mergeRequestAndBodyResults<A extends object, B extends object>(
+  requestResult: DecoderResult<A>,
+  bodyResult: EitherT<BodyDecodeError, B>,
+): EitherT<BodyDecodeError, A & B> {
+  // 415 takes precedence: a wrong Content-Type means we cannot trust the body
+  // shape, so request-input errors are not merged in.
+  if (isLeft(bodyResult) && bodyResult.left instanceof UnsupportedMediaTypeError) {
+    return Either.left(bodyResult.left);
+  }
 
   const requestFailed = isLeft(requestResult);
   const bodyFailed = isLeft(bodyResult);
   if (requestFailed || bodyFailed) {
     const issues: ValidationIssue[] = [];
     if (requestFailed) issues.push(...requestResult.left);
-    if (bodyFailed) issues.push(...bodyResult.left.issues);
+    if (bodyFailed) issues.push(...(bodyResult.left as ValidationError).issues);
     return Either.left(new ValidationError(issues));
   }
 

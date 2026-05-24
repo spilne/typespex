@@ -17,6 +17,25 @@ export class ValidationError extends HttpError {
   }
 }
 
+/**
+ * Structured 415 error raised before body decoding when the request
+ * `Content-Type` does not match any media type declared for the operation.
+ */
+export class UnsupportedMediaTypeError extends HttpError {
+  constructor(
+    public readonly received: string | undefined,
+    public readonly supported: readonly string[],
+    message = "Unsupported Media Type",
+  ) {
+    super(415, message, {
+      error: message,
+      contentType: received ?? null,
+      supported,
+    });
+    this.name = "UnsupportedMediaTypeError";
+  }
+}
+
 /** Typed value check that runs after structural decoding succeeds. */
 export interface Validator<A> {
   validate(value: A): readonly ValidationIssue[];
