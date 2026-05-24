@@ -186,6 +186,44 @@ describe("ResponseEncoders", () => {
     expect(bytes.headers.get("content-type")).toBe("application/octet-stream");
   });
 
+  test("matchVariant dispatches same-status variants on body shape", async () => {
+    type JsonFeed = { body: { id: string }[] };
+    type CsvFeed = { body: string };
+    type Result = JsonFeed | CsvFeed;
+
+    const encoder = ResponseEncoders.matchVariant<Result>([
+      {
+        when: (v): v is JsonFeed => Array.isArray((v as Record<string, unknown>).body),
+        encoder: ResponseEncoders.variant<JsonFeed>({
+          status: 200,
+          contentType: "application/json",
+          body: "body",
+          omit: ["body"],
+        }),
+      },
+      {
+        when: (v): v is CsvFeed => typeof (v as Record<string, unknown>).body === "string",
+        encoder: ResponseEncoders.variant<CsvFeed>({
+          status: 200,
+          kind: "text",
+          contentType: "text/csv",
+          body: "body",
+          omit: ["body"],
+        }),
+      },
+    ]);
+
+    const json = encoder.encode({ body: [{ id: "p-1" }] });
+    expect(json.status).toBe(200);
+    expect(json.headers.get("content-type")).toBe("application/json");
+    expect(await json.json()).toEqual([{ id: "p-1" }]);
+
+    const csv = encoder.encode({ body: "id\np-1\n" });
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get("content-type")).toBe("text/csv");
+    expect(await csv.text()).toBe("id\np-1\n");
+  });
+
   test("unsupported encoder throws with the configured reason when invoked", () => {
     const encoder = ResponseEncoders.unsupported<{ id: string }>(
       `Operation "list" declares unsupported response content type "application/xml".`,

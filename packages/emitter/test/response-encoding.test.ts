@@ -115,6 +115,31 @@ interface Feed {
 }
 `;
 
+const multiSuccessContentTypeSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "FeedApi" })
+namespace FeedApi;
+
+model Pet { id: string; }
+
+model JsonFeed {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: Pet[];
+}
+
+model CsvFeed {
+  @statusCode _: 200;
+  @header contentType: "text/csv";
+  @body body: string;
+}
+
+@route("/feed")
+@get op list(): JsonFeed | CsvFeed;
+`;
+
 const multiErrorSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -283,6 +308,35 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("multiple success content types under one status emit per-variant encoders", () => {
+    const r = compileFixture("multi-success-ct", multiSuccessContentTypeSpec);
+    const operations = r.readFile("feed-api", "server-operations.ts");
+    const server = r.readFile("feed-api", "server.ts");
+
+    // Handler signature exposes BOTH variants. contentType is set by the
+    // runtime per-variant, so it stays out of the handler-facing shape.
+    expect(server).toContain(`{ body: Pet[] }`);
+    expect(server).toContain(`{ body: string }`);
+
+    // matchVariant dispatcher with one branch per declared content type.
+    expect(operations).toContain("ResponseEncoders.matchVariant<");
+    expect(operations).toContain(`contentType: "application/json"`);
+    expect(operations).toContain(`contentType: "text/csv"`);
+
+    // Each branch uses the encoder kind matching its declared CT.
+    // CSV must NOT serialize through the JSON path.
+    expect(operations).toContain(`kind: "text"`);
+    expect(operations).not.toContain(`ResponseEncoders.json<{ body: string }>`);
+
+    // No silent fallback / unsupported placeholder.
+    expect(operations).not.toContain("ResponseEncoders.unsupported<");
+
+    // Dispatch predicates discriminate on the body's runtime shape, not on
+    // status alone (which would always pick the first variant).
+    expect(operations).toMatch(/Array\.isArray\(.*?\["body"\]\)/);
+    expect(operations).toMatch(/typeof .*?\["body"\] === "string"/);
   });
 
   test("discriminator response unions generate readable type guards", () => {
