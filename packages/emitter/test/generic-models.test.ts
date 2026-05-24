@@ -192,6 +192,14 @@ model TaggedPet {
   maybe: Maybe<Pet>;
 }
 
+namespace Shared {
+  model Box<T> {
+    boxed: T;
+  }
+}
+
+model QualifiedPetBox extends Shared.Box<Pet> {}
+
 model Accepted<T> {
   @statusCode _: 202;
   value: T;
@@ -202,6 +210,11 @@ union Result<T> {
   accepted: Accepted<T>,
 }
 
+union Qualified<T> {
+  boxed: Shared.Box<T>,
+  accepted: Accepted<T>,
+}
+
 @route("/types")
 interface Types {
   @route("/maybe")
@@ -209,6 +222,9 @@ interface Types {
 
   @route("/result")
   @get readResult(): Result<Pet>;
+
+  @route("/qualified")
+  @get readQualified(): Qualified<Pet>;
 
   @route("/maybe")
   @post createMaybe(@body body: Maybe<Pet>): TaggedPet;
@@ -346,6 +362,10 @@ describe("generic models", () => {
     expect(models).toContain("export type Tagged<Name extends string> = string;");
     expect(models).toContain("export type Maybe<T> = T | null;");
     expect(models).toContain("export interface Accepted<T>");
+    expect(models).toContain("export interface Box<T>");
+    expect(models).toContain("export interface QualifiedPetBox extends Box<Pet>");
+    expect(models).toContain("export type Qualified<T> = Box<T> | Accepted<T>;");
+    expect(models).not.toContain("Shared.Box");
     expect(models).toContain("id: Tagged<\"pet\">;");
     expect(models).toContain("maybe: Maybe<Pet>;");
     expect(server).toContain(
@@ -353,6 +373,9 @@ describe("generic models", () => {
     );
     expect(server).toContain(
       "readonly readResult: OperationHandler<Record<string, never>, Pet | Accepted<Pet>, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly readQualified: OperationHandler<Record<string, never>, Box<Pet> | Accepted<Pet>, Ctx>",
     );
     expect(server).toContain(
       "readonly createMaybe: OperationHandler<Maybe<Pet>, TaggedPet, Ctx>",
@@ -371,6 +394,7 @@ describe("generic models", () => {
     );
     expect(operations).toContain("ResponseEncoders.json<Maybe<Pet>>(200)");
     expect(operations).toContain("ResponseEncoders.matchVariant<Pet | Accepted<Pet>>");
+    expect(operations).toContain("ResponseEncoders.matchVariant<Box<Pet> | Accepted<Pet>>");
     expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("echoTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("Decoders.union<Maybe<Pet>>");

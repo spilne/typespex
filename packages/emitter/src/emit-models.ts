@@ -138,11 +138,10 @@ function referenceTargetToTs(target: TypeReferenceNode["target"]): string | unde
   switch (target.kind) {
     case SyntaxKind.Identifier:
       return tsIdentifier(target.sv, "Model");
-    case SyntaxKind.MemberExpression: {
-      const base = referenceTargetToTs(target.base);
-      const id = tsIdentifier(target.id.sv, "Model");
-      return base ? `${base}.${id}` : undefined;
-    }
+    case SyntaxKind.MemberExpression:
+      // models.ts currently flattens TypeSpec namespaces to top-level exports.
+      // Keep qualified source refs resolvable by emitting the leaf type name.
+      return tsIdentifier(target.id.sv, "Model");
     default:
       return undefined;
   }

@@ -9,6 +9,7 @@ const runtimeDeclarationPaths = [
 ];
 
 const tempDirs: string[] = [];
+let runtimeDeclarationsReady = false;
 
 export function cleanupFixtures(): void {
   for (const dir of tempDirs) {
@@ -87,7 +88,7 @@ export function compileFixture(
       return existsSync(path);
     },
     typecheck(serviceDir: string): void {
-      assertRuntimeDeclarationsExist();
+      ensureRuntimeDeclarationsExist();
 
       const generatedTsconfig = join(fixtureDir, "tsconfig.generated.json");
       writeFileSync(
@@ -131,13 +132,32 @@ export function compileFixture(
   };
 }
 
-function assertRuntimeDeclarationsExist(): void {
-  const missing = runtimeDeclarationPaths.filter((path) => !existsSync(path));
-  if (missing.length === 0) return;
+function ensureRuntimeDeclarationsExist(): void {
+  if (runtimeDeclarationsReady && runtimeDeclarationPaths.every((path) => existsSync(path))) {
+    return;
+  }
 
-  throw new Error(
-    `Generated TypeScript typecheck requires built @typespex/runtime declarations.\n` +
-      `Missing:\n${missing.map((path) => `- ${path}`).join("\n")}\n` +
-      `Run \`bun run --filter @typespex/runtime build\` before emitter fixture typechecks.`,
-  );
+  if (runtimeDeclarationPaths.some((path) => !existsSync(path))) {
+    const proc = Bun.spawnSync(
+      ["bun", "run", "--filter", "@typespex/runtime", "build"],
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
+    );
+
+    if (proc.exitCode !== 0) {
+      throw new Error(
+        `Runtime build failed before generated TypeScript typecheck\n` +
+          `stdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+      );
+    }
+  }
+
+  const missing = runtimeDeclarationPaths.filter((path) => !existsSync(path));
+  if (missing.length > 0) {
+    throw new Error(
+      `Runtime build did not produce declarations required for generated TypeScript typecheck.\n` +
+        `Missing:\n${missing.map((path) => `- ${path}`).join("\n")}`,
+    );
+  }
+
+  runtimeDeclarationsReady = true;
 }
