@@ -355,7 +355,7 @@ export function emitResultResponseEncoder(
   if (responses.length > 1) {
     const branches = buildResponseBranches(ctx, op, responses);
     if (branches.length > 0) {
-      return emitResponseDecisionEncoder(resultType, branches);
+      return emitResponseDecisionEncoder(ctx, op, resultType, branches);
     }
     $lib.reportDiagnostic(ctx.program, {
       code: "undifferentiable-response-union",
@@ -371,14 +371,19 @@ export function emitResultResponseEncoder(
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
 
+  const kind = classifyResponseContentType(ctx, op, response.contentType);
+  if (kind === "unsupported") {
+    return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
+  }
+
   if (shouldUseVariantEncoder(response)) {
-    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(response)})`;
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response)})`;
   }
 
   const headers = response.headers;
-  const encoder = pickEncoderForContentType(response.contentType, resultType, response.statusCode);
+  const encoder = encoderForKind(kind, resultType, response.statusCode);
 
-  if (headers.length > 0 && encoder.startsWith("ResponseEncoders.json")) {
+  if (headers.length > 0 && kind === "json") {
     const entries = headers
       .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
       .join(", ");
@@ -728,15 +733,23 @@ function getResponseProperty(
 }
 
 function emitResponseDecisionEncoder(
+  ctx: EmitterCtx,
+  op: HttpOperation,
   resultType: string,
   branches: readonly ResponseBranch[],
 ): string {
   const lines: string[] = [];
   lines.push(`ResponseEncoders.matchVariant<${resultType}>([`);
   branches.forEach((branch) => {
+    const kind = branch.response.isVoid
+      ? "empty"
+      : classifyResponseContentType(ctx, op, branch.response.contentType);
+    const branchEncoder = kind === "unsupported"
+      ? emitUnsupportedEncoder(branch.response.tsType, op.operation.name, branch.response.contentType)
+      : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(kind, branch.response)})`;
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
-    lines.push(`encoder: ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(branch.response)}),`);
+    lines.push(`encoder: ${branchEncoder},`);
     lines.push("},");
   });
   // TODO: Benchmark matchVariant against generated direct if/switch dispatch for hot response paths.
@@ -744,9 +757,11 @@ function emitResponseDecisionEncoder(
   return lines.join("\n");
 }
 
-function emitResponseVariant(response: SuccessResponseVariant): string {
+function emitResponseVariant(
+  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  response: SuccessResponseVariant,
+): string {
   const fields = [`status: ${response.statusCode}`];
-  const kind = pickVariantKind(response);
   if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
   if (response.contentType) fields.push(`contentType: ${JSON.stringify(response.contentType)}`);
   if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
@@ -762,25 +777,61 @@ function emitResponseVariant(response: SuccessResponseVariant): string {
   return `{ ${fields.join(", ")} }`;
 }
 
-function pickVariantKind(response: SuccessResponseVariant): "json" | "text" | "bytes" | "empty" {
-  if (response.isVoid) return "empty";
-  if (!response.contentType || response.contentType.includes("json")) return "json";
-  if (response.contentType === "text/plain" || response.contentType.startsWith("text/")) return "text";
-  if (response.contentType === "application/octet-stream") return "bytes";
-  return "json";
+type ResponseEncoderKind = "json" | "text" | "bytes" | "empty" | "unsupported";
+
+/**
+ * Maps an HTTP response content type to the matching `ResponseEncoders` kind.
+ * Unrecognized types (e.g. `application/xml`, `multipart/*`) report a hard
+ * diagnostic and return `"unsupported"`; callers emit a placeholder encoder
+ * that throws at runtime so we never silently coerce a non-conforming
+ * response to JSON. Missing content types default to JSON without warning
+ * — TypeSpec doesn't require operations to declare one.
+ */
+function classifyResponseContentType(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  contentType: string | undefined,
+): ResponseEncoderKind {
+  if (!contentType) return "json";
+  if (contentType.includes("json")) return "json";
+  if (contentType === "text/plain" || contentType.startsWith("text/")) return "text";
+  if (contentType === "application/octet-stream") return "bytes";
+
+  $lib.reportDiagnostic(ctx.program, {
+    code: "unsupported-response-content-type",
+    format: { contentType, operationName: op.operation.name },
+    target: op.operation,
+  });
+  return "unsupported";
 }
 
-function pickEncoderForContentType(contentType: string | undefined, tsType: string, status: number): string {
-  if (!contentType || contentType.includes("json")) {
-    return `ResponseEncoders.json<${tsType}>(${status})`;
+function encoderForKind(
+  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  tsType: string,
+  status: number,
+): string {
+  switch (kind) {
+    case "empty":
+      return `ResponseEncoders.empty(${status})`;
+    case "text":
+      return `ResponseEncoders.text(${status})`;
+    case "bytes":
+      return `ResponseEncoders.bytes(${status})`;
+    case "json":
+      return `ResponseEncoders.json<${tsType}>(${status})`;
   }
-  if (contentType === "text/plain" || contentType.startsWith("text/")) {
-    return `ResponseEncoders.text(${status})`;
-  }
-  if (contentType === "application/octet-stream") {
-    return `ResponseEncoders.bytes(${status})`;
-  }
-  return `ResponseEncoders.json<${tsType}>(${status})`;
+}
+
+function emitUnsupportedEncoder(
+  resultType: string,
+  operationName: string,
+  contentType: string | undefined,
+): string {
+  const reason = JSON.stringify(
+    `Operation "${operationName}" declares unsupported response content type "${contentType ?? ""}". ` +
+      `@typespex/emitter cannot serialize this; regenerate after addressing the diagnostic.`,
+  );
+  return `ResponseEncoders.unsupported<${resultType}>(${reason})`;
 }
 
 interface ResponseHeader {

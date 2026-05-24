@@ -48,7 +48,7 @@ function textResponseEncoder(
   init?: ResponseInit,
 ): ResponseEncoder<string> {
   return ResponseEncoder.of((value) =>
-    new Response(value, responseInit(status, init)),
+    new Response(value, withContentType(responseInit(status, init), "text/plain; charset=utf-8")),
   );
 }
 
@@ -57,8 +57,17 @@ function bytesResponseEncoder(
   init?: ResponseInit,
 ): ResponseEncoder<Uint8Array> {
   return ResponseEncoder.of((value) =>
-    new Response(new Uint8Array(value).buffer, responseInit(status, init)),
+    new Response(
+      new Uint8Array(value).buffer,
+      withContentType(responseInit(status, init), "application/octet-stream"),
+    ),
   );
+}
+
+function withContentType(init: ResponseInit, contentType: string): ResponseInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", contentType);
+  return { ...init, headers };
 }
 
 function rawResponseEncoder(): ResponseEncoder<Response> {
@@ -128,8 +137,7 @@ function encodeVariantResponse<A>(
   const src = value as Record<string, unknown>;
   const isObject = typeof value === "object" && value !== null;
   const responseHeaders: Record<string, string> = {};
-  const contentType = variant.contentType ??
-    (variant.kind === "json" || variant.kind === undefined ? "application/json" : undefined);
+  const contentType = variant.contentType ?? defaultContentTypeForKind(variant.kind);
   if (contentType) responseHeaders["content-type"] = contentType;
 
   if (isObject) {
@@ -194,6 +202,20 @@ function omitVariantProperties(
   return body;
 }
 
+function defaultContentTypeForKind(kind: ResponseVariant["kind"]): string | undefined {
+  switch (kind) {
+    case "text":
+      return "text/plain; charset=utf-8";
+    case "bytes":
+      return "application/octet-stream";
+    case "json":
+    case undefined:
+      return "application/json";
+    default:
+      return undefined;
+  }
+}
+
 function variantResponseEncoder<A>(
   variant: ResponseVariant,
 ): ResponseEncoder<A> {
@@ -220,6 +242,18 @@ function unreachableResponse(value: unknown): never {
   );
 }
 
+/**
+ * Encoder placeholder for response variants whose declared content type the
+ * emitter cannot serialize. Construction is free; calling `encode` throws
+ * so that any code path that bypassed the emitter diagnostic fails loudly
+ * instead of returning a misleading response.
+ */
+function unsupportedResponseEncoder<A>(reason: string): ResponseEncoder<A> {
+  return ResponseEncoder.of(() => {
+    throw new TypeError(reason);
+  });
+}
+
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
@@ -231,4 +265,5 @@ export const ResponseEncoders = {
   variant: variantResponseEncoder,
   matchVariant: matchVariantResponseEncoder,
   unreachable: unreachableResponse,
+  unsupported: unsupportedResponseEncoder,
 } as const;
