@@ -45,14 +45,14 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       // Some compiler-created template instantiations do not expose an indexer,
       // so handle nominal Array<T>/Record<T> before the structural helpers.
       if (type.name === "Array" && templateArgs.length === 1 && isType(firstTemplateArg)) {
-        return `${typeToTs(ctx, firstTemplateArg)}[]`;
+        return arrayTypeToTs(typeToTs(ctx, firstTemplateArg));
       }
       if (type.name === "Record" && templateArgs.length === 1 && isType(firstTemplateArg)) {
         return `Record<string, ${typeToTs(ctx, firstTemplateArg)}>`;
       }
       if (isArrayModelType(ctx.program, type)) {
         const elementType = type.indexer!.value;
-        return `${typeToTs(ctx, elementType)}[]`;
+        return arrayTypeToTs(typeToTs(ctx, elementType));
       }
       if (isRecordModelType(ctx.program, type)) {
         const valueType = type.indexer!.value;
@@ -139,6 +139,11 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     default:
       return "unknown";
   }
+}
+
+function arrayTypeToTs(elementTs: string): string {
+  const trimmed = elementTs.trim();
+  return /[|&?]/.test(trimmed) ? `(${trimmed})[]` : `${trimmed}[]`;
 }
 
 export function templateParametersToTs(ctx: EmitterCtx, type: TemplatedType): string {

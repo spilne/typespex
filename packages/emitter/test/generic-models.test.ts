@@ -245,6 +245,33 @@ interface Types {
 }
 `;
 
+const arrayUnionElementSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ArrayUnionApi" })
+namespace ArrayUnionApi;
+
+model Pet {
+  kind: "pet";
+  petId: string;
+}
+
+model User {
+  kind: "user";
+  userId: string;
+}
+
+model Collection {
+  items: Array<Pet | User>;
+}
+
+@route("/collections")
+interface Collections {
+  @get read(): Collection;
+}
+`;
+
 describe("generic models", () => {
   test("emits generic model declarations and instantiated operation types", () => {
     const r = compileFixture("generic-response", genericResponseSpec);
@@ -442,5 +469,25 @@ export const handlers: NestedGenericApiServer = {
     expect(operations).toContain("decodeRequestInputAndBody<{ ownerId: string }, { body: Maybe<Pet> }>");
     expect(operations).toContain("RequestDecoders.query(\"tag\", Decoders.string)");
     r.typecheck("template-type-api");
+  });
+
+  test("preserves union element semantics for nominal Array instantiations", () => {
+    const r = compileFixture("generic-array-union-element", arrayUnionElementSpec);
+
+    r.typecheck("array-union-api", {
+      "consumer-contract.ts": `
+import type { Collection, Pet, User } from "./models.js";
+
+const pet: Pet = { kind: "pet", petId: "pet" };
+const user: User = { kind: "user", userId: "user" };
+
+const collection: Collection = {
+  items: [pet, user],
+};
+
+const first: Pet | User | undefined = collection.items[0];
+void first;
+`,
+    });
   });
 });
