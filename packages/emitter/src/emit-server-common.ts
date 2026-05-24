@@ -7,7 +7,7 @@ import {
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
-import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
+import { getHeaderFieldName, isHeader, isMetadata, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
 import { scalarToTs } from "./scalar-map.js";
@@ -230,7 +230,8 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
       }
 
       if (shouldFlattenBodyType(ctx, bodyType)) {
-        for (const [, prop] of bodyType.properties) {
+        for (const prop of walkPropertiesInherited(bodyType)) {
+          if (isMetadata(ctx.program, prop)) continue;
           parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
             optional: prop.optional,
           }));

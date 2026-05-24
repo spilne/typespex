@@ -34,7 +34,7 @@ export interface CompileResult {
   outputDir: string;
   readFile(serviceDirOrFile: string, fileName?: string): string;
   fileExists(serviceDirOrFile: string, fileName?: string): boolean;
-  typecheck(serviceDir: string): void;
+  typecheck(serviceDir: string, extraFiles?: Record<string, string>): void;
 }
 
 export function compileFixture(
@@ -87,8 +87,14 @@ export function compileFixture(
         : join(outputDir, serviceDirOrFile);
       return existsSync(path);
     },
-    typecheck(serviceDir: string): void {
+    typecheck(serviceDir: string, extraFiles?: Record<string, string>): void {
       ensureRuntimeDeclarationsExist();
+
+      if (extraFiles) {
+        for (const [name, content] of Object.entries(extraFiles)) {
+          writeFileSync(join(outputDir, serviceDir, name), content);
+        }
+      }
 
       const generatedTsconfig = join(fixtureDir, "tsconfig.generated.json");
       writeFileSync(

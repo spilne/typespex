@@ -91,6 +91,8 @@ model User {
 interface Nested {
   @get read(): Page<Pair<Pet, User>>;
   @post create(@body body: Page<Pair<Pet, User>>): Page<Pair<Pet, User>>;
+  @route("/{pageId}")
+  @put update(@path pageId: string, @body body: Page<Pair<Pet, User>>): Page<Pair<Pet, User>>;
 }
 `;
 
@@ -299,7 +301,41 @@ describe("generic models", () => {
     expect(operations).toContain("data: Decoders.object<Pair<Pet, User>>");
     expect(operations).toContain("Decoders.record(");
     expect(operations).toContain("Decoders.tuple<[Pair<Pet, User>, string]>");
-    r.typecheck("nested-generic-api");
+    r.typecheck("nested-generic-api", {
+      "handler-contract.ts": `
+import type { NestedGenericApiServer } from "./server.js";
+import type { Page, Pair, Pet, User } from "./models.js";
+
+const pair: Pair<Pet, User> = {
+  left: { id: "pet" },
+  right: { id: "user" },
+};
+
+const page: Page<Pair<Pet, User>> = {
+  data: pair,
+  items: [pair],
+  byId: { pair },
+  tuple: [pair, "cursor"],
+};
+
+export const handlers: NestedGenericApiServer = {
+  Nested: {
+    read: () => page,
+    create: (input) => input,
+    update: (input) => {
+      const pageId: string = input.pageId;
+      const data: Pair<Pet, User> = input.data;
+      return {
+        data,
+        items: input.items,
+        byId: { [pageId]: data, ...input.byId },
+        tuple: input.tuple,
+      };
+    },
+  },
+};
+`,
+    });
   });
 
   test("preserves value template arguments and defaulted type arguments", () => {
