@@ -1,6 +1,7 @@
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { buildServerEmission } from "./server-emission.js";
+import { tsIdentifier, tsPropertyAccess } from "./typescript-names.js";
 
 export function emitServerRouter(
   ctx: EmitterCtx,
@@ -14,26 +15,27 @@ export function emitServerRouter(
     'import type { HttpInterpreterOptions, HttpRouter, MatchedRequestContext } from "@typespex/runtime/server";',
   );
   lines.push('import { bindRoute, createHttpRouter } from "@typespex/runtime/server";');
-  lines.push(`import type { ${ctx.serviceName}Server } from "./${ctx.fileNames.server}.js";`);
+  const serviceName = tsIdentifier(ctx.serviceName, "Service");
+  lines.push(`import type { ${serviceName}Server } from "./${ctx.fileNames.server}.js";`);
 
   const operationConsts = emission.groups.map((group) => `${group.exportName}Operations`);
   lines.push(`import { ${operationConsts.join(", ")} } from "./${ctx.fileNames.serverOperations}.js";`);
   lines.push("");
 
   lines.push(
-    `export function create${ctx.serviceName}ServerRouter<Ctx extends MatchedRequestContext>(implementation: ${ctx.serviceName}Server<Ctx>, options?: HttpInterpreterOptions<Ctx>): HttpRouter {`,
+    `export function create${serviceName}ServerRouter<Ctx extends MatchedRequestContext>(implementation: ${serviceName}Server<Ctx>, options?: HttpInterpreterOptions<Ctx>): HttpRouter {`,
   );
   lines.push("  return createHttpRouter([");
 
   for (const group of emission.groups) {
     const groupAccess = group.interfaceName
-      ? `implementation.${group.propertyName}`
+      ? tsPropertyAccess("implementation", group.propertyName)
       : "implementation";
 
     const operationsConst = `${group.exportName}Operations`;
     for (const operation of group.operations) {
       lines.push(
-        `    bindRoute(${operationsConst}.${operation.name}, ${groupAccess}.${operation.name}),`,
+        `    bindRoute(${tsPropertyAccess(operationsConst, operation.name)}, ${tsPropertyAccess(groupAccess, operation.name)}),`,
       );
     }
   }

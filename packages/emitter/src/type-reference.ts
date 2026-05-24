@@ -2,6 +2,7 @@ import type { Type, Model } from "@typespec/compiler";
 import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
 import { scalarToTs } from "./scalar-map.js";
+import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 /**
  * Convert a TypeSpec type to a TypeScript type string.
@@ -32,7 +33,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       if (type.name === "" || type.name === undefined) {
         return emitInlineModel(ctx, type);
       }
-      return type.name;
+      return tsIdentifier(type.name, "Model");
     }
 
     case "Union": {
@@ -102,8 +103,9 @@ function isFileModel(model: Model): boolean {
 
 function emitInlineModel(ctx: EmitterCtx, model: Model): string {
   const props = [...model.properties.values()].map((prop) => {
-    const optional = prop.optional ? "?" : "";
-    return `${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`;
+    return tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
+      optional: prop.optional,
+    });
   });
   return `{ ${props.join("; ")} }`;
 }

@@ -8,6 +8,7 @@ import {
 } from "@typespec/compiler";
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
+import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
 
 interface HintDefinition {
   readonly id: string;
@@ -39,8 +40,9 @@ export function emitServerHints(
   lines.push("");
 
   for (const definition of definitions) {
+    const exportName = tsIdentifier(definition.exportName, "hint");
     lines.push(
-      `export const ${definition.exportName} = createHintKey<${definition.typeText}>(${JSON.stringify(definition.id)});`,
+      `export const ${exportName} = createHintKey<${definition.typeText}>(${JSON.stringify(definition.id)});`,
     );
   }
 
@@ -268,7 +270,7 @@ function valueToTs(value: JsonLike): string {
     return `[${value.map(valueToTs).join(", ")}]`;
   }
   return `{ ${Object.entries(value)
-    .map(([key, item]) => `${JSON.stringify(key)}: ${valueToTs(item)}`)
+    .map(([key, item]) => `${tsObjectKey(key)}: ${valueToTs(item)}`)
     .join(", ")} }`;
 }
 
@@ -303,7 +305,7 @@ function hintExportName(id: string): string {
     first.charAt(0).toLowerCase() + first.slice(1),
     ...rest.map((part) => part.charAt(0).toUpperCase() + part.slice(1)),
   ].join("");
-  return `${camel}Hint`;
+  return tsIdentifier(`${camel}Hint`, "customHint");
 }
 
 function dedupeHintEntries(entries: EmittedHintEntry[]): EmittedHintEntry[] {

@@ -10,6 +10,7 @@ import {
   getServerInputDecoderImports,
 } from "./server-input-decoders.js";
 import { buildServerEmission } from "./server-emission.js";
+import { tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
 
 export function emitServerOperations(
   ctx: EmitterCtx,
@@ -75,7 +76,7 @@ export function emitServerOperations(
     // Emit grouped output encoders object
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
-      lines.push(`  ${operation.name}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
+      lines.push(`  ${tsObjectKey(operation.name)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
     }
     lines.push("};");
     lines.push("");
@@ -86,7 +87,7 @@ export function emitServerOperations(
     for (const operation of group.operations) {
       const decoder = decodersByOpId.get(operation.operationId)!;
 
-      lines.push(`  ${operation.name}: {`);
+      lines.push(`  ${tsObjectKey(operation.name)}: {`);
       emitEndpoint(lines, emission.serviceName, operation);
 
       // decodeInput — expression-body arrow, async only when body is involved
@@ -168,10 +169,11 @@ function emitResultEncoderLine(
   operation: { name: string; resultType: string; httpOperation: HttpOperation },
   outputsName: string,
 ): void {
+  const encoderAccess = tsPropertyAccess(outputsName, operation.name);
   if (operation.resultType === "void") {
-    lines.push(`    encodeResult: () => ${outputsName}.${operation.name}.encode(undefined),`);
+    lines.push(`    encodeResult: () => ${encoderAccess}.encode(undefined),`);
   } else {
-    lines.push(`    encodeResult: (result: ${operation.resultType}) => ${outputsName}.${operation.name}.encode(result),`);
+    lines.push(`    encodeResult: (result: ${operation.resultType}) => ${encoderAccess}.encode(result),`);
   }
 }
 
@@ -184,7 +186,7 @@ function emitHintsExpression(
 ): string {
   if (entries.length === 0) return "emptyHints()";
   const items = entries
-    .map((e) => `[ServerHints.${e.keyExportName}, ${e.valueExpression}]`)
+    .map((e) => `[${tsPropertyAccess("ServerHints", e.keyExportName)}, ${e.valueExpression}]`)
     .join(", ");
   return `createHints([${items}])`;
 }
