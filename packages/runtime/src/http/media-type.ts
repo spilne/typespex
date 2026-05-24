@@ -13,7 +13,7 @@ export function parseMediaType(header: string | null | undefined): string | unde
 /**
  * Returns true when `received` matches one of `declared`. Each declared
  * entry is compared by bare `type/subtype` (parameters ignored) and may use
- * a `*` subtype wildcard such as `image/*` or the catch-all `* /*`.
+ * a `*` subtype wildcard such as `image/*` or the catch-all `*\/*`.
  */
 export function isContentTypeAccepted(
   received: string | null | undefined,
