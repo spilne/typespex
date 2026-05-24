@@ -10,7 +10,7 @@ import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
 import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
-import { typeToTs } from "./type-reference.js";
+import { isTypeSpecNamespaceModel, typeToTs } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 export interface OperationGroup {
@@ -75,6 +75,13 @@ function addModelName(
     if (isArrayModelType(ctx.program, type) || isRecordModelType(ctx.program, type)) {
       if (type.indexer) {
         addModelName(ctx, type.indexer.value, names, seen);
+      }
+      return;
+    }
+
+    if (isTypeSpecNamespaceModel(type)) {
+      for (const prop of walkPropertiesInherited(type)) {
+        addModelName(ctx, prop.type, names, seen);
       }
       return;
     }

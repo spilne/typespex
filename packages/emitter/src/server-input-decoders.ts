@@ -20,6 +20,7 @@ import {
   getPatternData,
   isArrayModelType,
   isRecordModelType,
+  walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
 import { buildInputType } from "./emit-server-common.js";
@@ -274,7 +275,7 @@ function emitBodyDecoderEntry(
   if (bodyType.kind === "Model" && !isArrayModelType(ctx.program, bodyType) && !isRecordModelType(ctx.program, bodyType)) {
     const tsType = typeToTs(ctx, bodyType);
     lines.push(`  ${tsObjectKey(name)}: Decoders.object<${tsType}>({`);
-    for (const prop of bodyType.properties.values()) {
+    for (const prop of modelDecoderProperties(bodyType)) {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set(), prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
       lines.push(`    ${tsObjectKey(prop.name)}: ${expr},`);
@@ -471,7 +472,7 @@ function emitObjectDecoder(
 
   const nextSeen = modelName ? new Set([...seenModels, modelName]) : seenModels;
 
-  const fields = [...model.properties.values()]
+  const fields = modelDecoderProperties(model)
     .map((prop) => {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, mode, nextSeen, prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
@@ -513,7 +514,7 @@ function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[
     const model = findModelByName(ctx, modelName);
     if (!model) continue;
 
-    const fields = [...model.properties.values()]
+    const fields = modelDecoderProperties(model)
       .map((prop) => {
         const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set([modelName]), prop);
         const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
@@ -525,6 +526,10 @@ function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[
     lines.push(`const ${varName}: Decoder<${tsType}> = Decoders.lazy(() => Decoders.object<${tsType}>({ ${fields} }));`);
   }
   return lines;
+}
+
+function modelDecoderProperties(model: Model): ModelProperty[] {
+  return [...walkPropertiesInherited(model)];
 }
 
 function findModelByName(ctx: EmitterCtx, name: string): Model | undefined {

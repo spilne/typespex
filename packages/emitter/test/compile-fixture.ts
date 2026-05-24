@@ -29,6 +29,7 @@ export interface CompileResult {
   outputDir: string;
   readFile(serviceDirOrFile: string, fileName?: string): string;
   fileExists(serviceDirOrFile: string, fileName?: string): boolean;
+  typecheck(serviceDir: string): void;
 }
 
 export function compileFixture(
@@ -80,6 +81,46 @@ export function compileFixture(
         ? join(outputDir, serviceDirOrFile, fileName)
         : join(outputDir, serviceDirOrFile);
       return existsSync(path);
+    },
+    typecheck(serviceDir: string): void {
+      const generatedTsconfig = join(fixtureDir, "tsconfig.generated.json");
+      writeFileSync(
+        generatedTsconfig,
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: "ES2022",
+              module: "NodeNext",
+              moduleResolution: "NodeNext",
+              strict: true,
+              skipLibCheck: true,
+              noEmit: true,
+              esModuleInterop: true,
+              isolatedModules: true,
+              lib: ["ES2022", "DOM"],
+              baseUrl: repoRoot,
+              paths: {
+                "@typespex/runtime": ["packages/runtime/dist/index.d.ts"],
+                "@typespex/runtime/server": ["packages/runtime/dist/server.d.ts"],
+              },
+            },
+            include: [`generated/${serviceDir}/*.ts`],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const proc = Bun.spawnSync(
+        ["bun", "run", "tsc", "--project", generatedTsconfig],
+        { cwd: join(repoRoot, "packages/emitter"), stdout: "pipe", stderr: "pipe" },
+      );
+
+      if (proc.exitCode !== 0) {
+        throw new Error(
+          `Generated TypeScript typecheck failed\nstdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+        );
+      }
     },
   };
 }

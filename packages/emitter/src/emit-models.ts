@@ -67,12 +67,10 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   ctx.emittedModels.add(model.name);
 
   const props = [...model.properties.values()];
-  const baseModel = model.baseModel && shouldEmitBaseModel(ctx, model.baseModel)
-    ? model.baseModel
-    : undefined;
+  const baseModel = getBaseModelReference(ctx, model);
   const modelName = tsIdentifier(model.name, "Model");
-  const typeParams = templateParametersToTs(model);
-  const extendsClause = baseModel ? ` extends ${typeToTs(ctx, baseModel)}` : "";
+  const typeParams = templateParametersToTs(ctx, model);
+  const extendsClause = baseModel ? ` extends ${baseModel}` : "";
   lines.push(`export interface ${modelName}${typeParams}${extendsClause} {`);
   for (const prop of props) {
     if (isMetadata(ctx.program, prop)) continue;
@@ -81,6 +79,61 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   }
   lines.push("}");
   lines.push("");
+}
+
+function getBaseModelReference(ctx: EmitterCtx, model: Model): string | undefined {
+  const node = model.node;
+  const resolvedBase = node && "extends" in node && node.extends
+    ? ctx.program.checker.getTypeForNode(node.extends)
+    : undefined;
+  const baseModel = resolvedBase?.kind === "Model" ? resolvedBase : model.baseModel;
+  if (!baseModel || !shouldEmitBaseModel(ctx, baseModel)) return undefined;
+  const sourceReference = node && "extends" in node && node.extends
+    ? typeReferenceExpressionToTs(ctx, node.extends)
+    : undefined;
+  return sourceReference ?? typeToTs(ctx, baseModel);
+}
+
+function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: unknown): string | undefined {
+  if (!isObject(expression) || !("target" in expression) || !("arguments" in expression)) {
+    return undefined;
+  }
+
+  const target = referenceTargetToTs(expression.target);
+  if (!target) return undefined;
+
+  const args = Array.isArray(expression.arguments)
+    ? expression.arguments
+      .map((arg) => isObject(arg) && "argument" in arg
+        ? expressionTypeToTs(ctx, arg.argument)
+        : "unknown")
+    : [];
+
+  return args.length > 0 ? `${target}<${args.join(", ")}>` : target;
+}
+
+function referenceTargetToTs(target: unknown): string | undefined {
+  if (!isObject(target)) return undefined;
+  if ("sv" in target && typeof target.sv === "string") {
+    return tsIdentifier(target.sv, "Model");
+  }
+  if ("base" in target && "id" in target) {
+    const base = referenceTargetToTs(target.base);
+    const id = isObject(target.id) && "sv" in target.id && typeof target.id.sv === "string"
+      ? tsIdentifier(target.id.sv, "Model")
+      : undefined;
+    return base && id ? `${base}.${id}` : undefined;
+  }
+  return undefined;
+}
+
+function expressionTypeToTs(ctx: EmitterCtx, expression: unknown): string {
+  if (!isObject(expression)) return "unknown";
+  return typeToTs(ctx, ctx.program.checker.getTypeForNode(expression as never));
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function shouldEmitBaseModel(ctx: EmitterCtx, model: Model): boolean {

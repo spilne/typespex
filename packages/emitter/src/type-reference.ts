@@ -1,14 +1,27 @@
-import type { Model, TemplateParameter, Type } from "@typespec/compiler";
+import type {
+  Entity,
+  Model,
+  TemplateParameter,
+  Type,
+  Value,
+} from "@typespec/compiler";
 import {
   isArrayModelType,
   isRecordModelType,
   isTemplateDeclaration,
   isTemplateInstance,
   isType,
+  isValue,
+  walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
 import { scalarToTs } from "./scalar-map.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+
+type TemplateParameterDeclaration = NonNullable<Extract<
+  Model["node"],
+  { templateParameters: readonly unknown[] }
+>["templateParameters"]>[number];
 
 /**
  * Convert a TypeSpec type to a TypeScript type string.
@@ -47,6 +60,9 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       if (type.name === "" || type.name === undefined) {
         return emitInlineModel(ctx, type);
       }
+      if (isTypeSpecNamespaceModel(type)) {
+        return emitInlineModel(ctx, type);
+      }
       return modelToTs(ctx, type);
     }
 
@@ -68,6 +84,9 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
         )
         .join(" | ");
     }
+
+    case "EnumMember":
+      return enumMemberToTs(type);
 
     case "String":
       return JSON.stringify(type.value);
@@ -109,32 +128,118 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
   }
 }
 
-export function templateParametersToTs(type: Model): string {
+export function templateParametersToTs(ctx: EmitterCtx, type: Model): string {
   if (!isTemplateDeclaration(type)) return "";
-  const params = getTemplateParameterNames(type);
+  const params = getTemplateParameters(type)
+    .map((param) => templateParameterDeclarationToTs(ctx, param));
   return params.length > 0 ? `<${params.join(", ")}>` : "";
+}
+
+export function isTypeSpecNamespaceModel(model: Model): boolean {
+  return model.namespace?.name === "TypeSpec";
 }
 
 function modelToTs(ctx: EmitterCtx, model: Model): string {
   const name = tsIdentifier(model.name, "Model");
   if (isTemplateInstance(model)) {
     const args = model.templateMapper.args
-      .map((arg) => isType(arg) ? typeToTs(ctx, arg) : "unknown");
+      .map((arg) => templateArgumentToTs(ctx, arg));
     return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
   }
-  return `${name}${templateParametersToTs(model)}`;
+  return name;
 }
 
-function getTemplateParameterNames(type: Model): string[] {
+function getTemplateParameters(type: Model): readonly TemplateParameterDeclaration[] {
   const node = type.node;
   if (!node || !("templateParameters" in node)) return [];
-  return node.templateParameters.map((param) => tsIdentifier(param.id.sv, "T"));
+  return node.templateParameters;
+}
+
+function templateParameterDeclarationToTs(
+  ctx: EmitterCtx,
+  param: TemplateParameterDeclaration,
+): string {
+  const name = tsIdentifier(param.id.sv, "T");
+  const constraint = param.constraint
+    ? templateParameterConstraintToTs(ctx, param.constraint)
+    : "";
+  const defaultType = param.default
+    ? ` = ${typeToTs(ctx, ctx.program.checker.getTypeForNode(param.default))}`
+    : "";
+  return `${name}${constraint}${defaultType}`;
+}
+
+function templateParameterConstraintToTs(
+  ctx: EmitterCtx,
+  constraint: TemplateParameterDeclaration["constraint"],
+): string {
+  const constraintTarget = constraint && "target" in constraint && !("arguments" in constraint)
+    ? constraint.target
+    : constraint;
+  if (!constraintTarget) return "";
+  const tsType = typeToTs(ctx, ctx.program.checker.getTypeForNode(constraintTarget));
+  return tsType === "unknown" ? "" : ` extends ${tsType}`;
+}
+
+function templateArgumentToTs(
+  ctx: EmitterCtx,
+  arg: unknown,
+): string {
+  if (!isEntityLike(arg)) return "unknown";
+  if (isType(arg)) return typeToTs(ctx, arg);
+  if (isValue(arg)) return valueToTs(ctx, arg);
+  if ("type" in arg && isEntityLike(arg.type) && isType(arg.type)) {
+    return typeToTs(ctx, arg.type);
+  }
+  return "unknown";
 }
 
 function templateParameterToTs(type: TemplateParameter): string {
   const node = type.node;
   const name = node && "id" in node ? node.id?.sv : undefined;
   return tsIdentifier(name, "T");
+}
+
+function valueToTs(ctx: EmitterCtx, value: Value): string {
+  const exactType = ctx.program.checker.getValueExactType(value);
+  if (exactType) return typeToTs(ctx, exactType);
+
+  switch (value.valueKind) {
+    case "StringValue":
+      return JSON.stringify(value.value);
+    case "NumericValue":
+      return String(value.value);
+    case "BooleanValue":
+      return String(value.value);
+    case "NullValue":
+      return "null";
+    case "EnumValue":
+      return enumMemberToTs(value.value);
+    case "ArrayValue":
+      return `[${value.values.map((item) => valueToTs(ctx, item)).join(", ")}]`;
+    case "ObjectValue":
+      return `{ ${[...value.properties.values()]
+        .map((prop) => tsPropertyDeclaration(prop.name, valueToTs(ctx, prop.value)))
+        .join("; ")} }`;
+    default:
+      return "unknown";
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isEntityLike(value: unknown): value is Entity {
+  return isObject(value) && "entityKind" in value;
+}
+
+function enumMemberToTs(type: { name: string; value?: string | number }): string {
+  return typeof type.value === "string"
+    ? JSON.stringify(type.value)
+    : type.value != null
+      ? String(type.value)
+      : JSON.stringify(type.name);
 }
 
 function isFileModel(model: Model): boolean {
@@ -147,7 +252,7 @@ function isFileModel(model: Model): boolean {
 }
 
 function emitInlineModel(ctx: EmitterCtx, model: Model): string {
-  const props = [...model.properties.values()].map((prop) => {
+  const props = [...walkPropertiesInherited(model)].map((prop) => {
     return tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
       optional: prop.optional,
     });
