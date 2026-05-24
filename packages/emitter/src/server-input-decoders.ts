@@ -20,9 +20,10 @@ import {
   getPatternData,
   isArrayModelType,
   isRecordModelType,
+  walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
-import { buildInputType } from "./emit-server-common.js";
+import { buildInputType, shouldFlattenBodyType } from "./emit-server-common.js";
 import { scalarToTs } from "./scalar-map.js";
 import { typeToTs } from "./type-reference.js";
 import { isTsIdentifier, tsIdentifier, tsObjectKey, tsPropertyAccess, tsPropertyDeclaration } from "./typescript-names.js";
@@ -178,7 +179,7 @@ export function emitDecoder(
   return {
     inputEntries: [
       emitRequestDecoderEntry(`${opName}Request`, requestEntries),
-      emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op),
+      emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op, { wrapNonFlattenedBody: true }),
     ],
     decodeExpression: `${combinedDecodeFn}<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams)`,
     needsPathParams: true,
@@ -259,6 +260,7 @@ function emitBodyDecoderEntry(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
   op: HttpOperation,
+  options: { readonly wrapNonFlattenedBody?: boolean } = {},
 ): InputDecoderEntry {
   const lines: string[] = [];
   const body = op.parameters.body!;
@@ -271,10 +273,10 @@ function emitBodyDecoderEntry(
   const bodyType = body.type;
 
   // Multi-line for object types
-  if (bodyType.kind === "Model" && !isArrayModelType(ctx.program, bodyType) && !isRecordModelType(ctx.program, bodyType)) {
+  if (shouldFlattenBodyType(ctx, bodyType)) {
     const tsType = typeToTs(ctx, bodyType);
     lines.push(`  ${tsObjectKey(name)}: Decoders.object<${tsType}>({`);
-    for (const prop of bodyType.properties.values()) {
+    for (const prop of modelDecoderProperties(bodyType)) {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set(), prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
       lines.push(`    ${tsObjectKey(prop.name)}: ${expr},`);
@@ -282,7 +284,10 @@ function emitBodyDecoderEntry(
     lines.push(`  }),`);
   } else {
     const decoderExpr = emitDecoderExpression(ctx, dec, bodyType, "json");
-    lines.push(`  ${tsObjectKey(name)}: ${decoderExpr},`);
+    const expr = options.wrapNonFlattenedBody
+      ? `${decoderExpr}.map((body) => ({ body }))`
+      : decoderExpr;
+    lines.push(`  ${tsObjectKey(name)}: ${expr},`);
   }
   return { lines };
 }
@@ -333,7 +338,9 @@ function buildBodyInputType(ctx: EmitterCtx, op: HttpOperation): string {
     }
     return parts.length > 0 ? `{ ${parts.join("; ")} }` : "Record<string, never>";
   }
-  return typeToTs(ctx, body.type);
+  return shouldFlattenBodyType(ctx, body.type)
+    ? typeToTs(ctx, body.type)
+    : `{ body: ${typeToTs(ctx, body.type)} }`;
 }
 
 function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
@@ -471,7 +478,7 @@ function emitObjectDecoder(
 
   const nextSeen = modelName ? new Set([...seenModels, modelName]) : seenModels;
 
-  const fields = [...model.properties.values()]
+  const fields = modelDecoderProperties(model)
     .map((prop) => {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, mode, nextSeen, prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
@@ -513,7 +520,7 @@ function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[
     const model = findModelByName(ctx, modelName);
     if (!model) continue;
 
-    const fields = [...model.properties.values()]
+    const fields = modelDecoderProperties(model)
       .map((prop) => {
         const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set([modelName]), prop);
         const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
@@ -525,6 +532,10 @@ function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[
     lines.push(`const ${varName}: Decoder<${tsType}> = Decoders.lazy(() => Decoders.object<${tsType}>({ ${fields} }));`);
   }
   return lines;
+}
+
+function modelDecoderProperties(model: Model): ModelProperty[] {
+  return [...walkPropertiesInherited(model)];
 }
 
 function findModelByName(ctx: EmitterCtx, name: string): Model | undefined {

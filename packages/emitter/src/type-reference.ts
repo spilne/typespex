@@ -1,8 +1,32 @@
-import type { Type, Model } from "@typespec/compiler";
-import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
+import type {
+  EnumMember,
+  Model,
+  Scalar,
+  TemplateParameter,
+  TemplatedType,
+  Type,
+  Union,
+  Value,
+} from "@typespec/compiler";
+import {
+  isArrayModelType,
+  isRecordModelType,
+  isTemplateDeclaration,
+  isTemplateInstance,
+  isType,
+  isValue,
+  walkPropertiesInherited,
+} from "@typespec/compiler";
+import { SyntaxKind } from "@typespec/compiler/ast";
 import type { EmitterCtx } from "./ctx.js";
 import { scalarToTs } from "./scalar-map.js";
+import { isEntityLike } from "./type-guards.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+
+type TemplateParameterDeclaration = NonNullable<Extract<
+  TemplatedType["node"],
+  { templateParameters: readonly unknown[] }
+>["templateParameters"]>[number];
 
 /**
  * Convert a TypeSpec type to a TypeScript type string.
@@ -10,12 +34,25 @@ import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 export function typeToTs(ctx: EmitterCtx, type: Type): string {
   switch (type.kind) {
     case "Scalar":
+      if (shouldReferenceScalar(type)) {
+        return templatedNamedTypeToTs(ctx, type, "Scalar");
+      }
       return scalarToTs(type);
 
     case "Model": {
+      const templateArgs = type.templateMapper?.args ?? [];
+      const firstTemplateArg = templateArgs[0];
+      // Some compiler-created template instantiations do not expose an indexer,
+      // so handle nominal Array<T>/Record<T> before the structural helpers.
+      if (type.name === "Array" && templateArgs.length === 1 && isType(firstTemplateArg)) {
+        return arrayTypeToTs(typeToTs(ctx, firstTemplateArg));
+      }
+      if (type.name === "Record" && templateArgs.length === 1 && isType(firstTemplateArg)) {
+        return `Record<string, ${typeToTs(ctx, firstTemplateArg)}>`;
+      }
       if (isArrayModelType(ctx.program, type)) {
         const elementType = type.indexer!.value;
-        return `${typeToTs(ctx, elementType)}[]`;
+        return arrayTypeToTs(typeToTs(ctx, elementType));
       }
       if (isRecordModelType(ctx.program, type)) {
         const valueType = type.indexer!.value;
@@ -23,8 +60,8 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       }
       // Unwrap HttpPart<T> → T
       if (type.name === "HttpPart" && type.templateMapper?.args) {
-        const inner = [...type.templateMapper.args][0];
-        if (inner) return typeToTs(ctx, inner as Type);
+        const inner = type.templateMapper.args[0];
+        if (inner && isType(inner)) return typeToTs(ctx, inner);
       }
       // Map File and subtypes → Web standard File
       if (isFileModel(type)) {
@@ -33,10 +70,16 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       if (type.name === "" || type.name === undefined) {
         return emitInlineModel(ctx, type);
       }
-      return tsIdentifier(type.name, "Model");
+      if (isTypeSpecNamespaceModel(type)) {
+        return emitInlineModel(ctx, type);
+      }
+      return modelToTs(ctx, type);
     }
 
     case "Union": {
+      if (shouldReferenceUnion(type)) {
+        return templatedNamedTypeToTs(ctx, type, "Union");
+      }
       const variants = [...type.variants.values()];
       const parts = variants.map((v) => typeToTs(ctx, v.type));
       return parts.join(" | ");
@@ -54,6 +97,9 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
         )
         .join(" | ");
     }
+
+    case "EnumMember":
+      return enumMemberToTs(type);
 
     case "String":
       return JSON.stringify(type.value);
@@ -87,9 +133,156 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     case "ModelProperty":
       return typeToTs(ctx, type.type);
 
+    case "TemplateParameter":
+      return templateParameterToTs(type);
+
     default:
       return "unknown";
   }
+}
+
+function arrayTypeToTs(elementTs: string): string {
+  const trimmed = elementTs.trim();
+  return /[|&?]/.test(trimmed) ? `(${trimmed})[]` : `${trimmed}[]`;
+}
+
+export function templateParametersToTs(ctx: EmitterCtx, type: TemplatedType): string {
+  if (!isTemplateDeclaration(type)) return "";
+  const params = getTemplateParameters(type)
+    .map((param) => templateParameterDeclarationToTs(ctx, param));
+  return params.length > 0 ? `<${params.join(", ")}>` : "";
+}
+
+export function isTypeSpecNamespaceModel(model: Model): boolean {
+  // Built-in TypeSpec helper models are inlined; HTTP library models with their
+  // own namespaces are handled by explicit cases such as HttpPart and File.
+  return model.namespace?.name === "TypeSpec";
+}
+
+export function isTemplatedScalarReference(scalar: Scalar): boolean {
+  return shouldReferenceScalar(scalar);
+}
+
+export function isTemplatedUnionReference(union: Union): boolean {
+  return shouldReferenceUnion(union);
+}
+
+function modelToTs(ctx: EmitterCtx, model: Model): string {
+  return templatedNamedTypeToTs(ctx, model, "Model");
+}
+
+function templatedNamedTypeToTs(
+  ctx: EmitterCtx,
+  type: TemplatedType & { name?: string },
+  fallback: string,
+): string {
+  const name = tsIdentifier(type.name, fallback);
+  if (!isTemplateInstance(type)) return name;
+  const args = type.templateMapper.args.map((arg) => templateArgumentToTs(ctx, arg));
+  return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
+}
+
+function shouldReferenceScalar(scalar: Scalar): boolean {
+  return Boolean(
+    scalar.name &&
+      scalar.namespace?.name !== "TypeSpec" &&
+      (isTemplateDeclaration(scalar) || isTemplateInstance(scalar)),
+  );
+}
+
+function shouldReferenceUnion(union: Union): boolean {
+  return Boolean(
+    union.name &&
+      (isTemplateDeclaration(union) || isTemplateInstance(union)),
+  );
+}
+
+function getTemplateParameters(type: TemplatedType): readonly TemplateParameterDeclaration[] {
+  const node = type.node;
+  if (!node || !("templateParameters" in node)) return [];
+  return node.templateParameters;
+}
+
+function templateParameterDeclarationToTs(
+  ctx: EmitterCtx,
+  param: TemplateParameterDeclaration,
+): string {
+  const name = tsIdentifier(param.id.sv, "T");
+  const constraint = param.constraint
+    ? templateParameterConstraintToTs(ctx, param.constraint)
+    : "";
+  const defaultType = param.default
+    ? ` = ${typeToTs(ctx, ctx.program.checker.getTypeForNode(param.default))}`
+    : "";
+  return `${name}${constraint}${defaultType}`;
+}
+
+function templateParameterConstraintToTs(
+  ctx: EmitterCtx,
+  constraint: TemplateParameterDeclaration["constraint"],
+): string {
+  const constraintTarget = constraint?.kind === SyntaxKind.ValueOfExpression
+    ? constraint.target
+    : constraint;
+  if (!constraintTarget) return "";
+  // `valueof string` is a value constraint in TypeSpec. TypeScript has no
+  // equivalent type-parameter value space, so the closest emitted constraint is
+  // the underlying type.
+  const tsType = typeToTs(ctx, ctx.program.checker.getTypeForNode(constraintTarget));
+  return tsType === "unknown" ? "" : ` extends ${tsType}`;
+}
+
+function templateArgumentToTs(
+  ctx: EmitterCtx,
+  arg: unknown,
+): string {
+  if (!isEntityLike(arg)) return "unknown";
+  if (isType(arg)) return typeToTs(ctx, arg);
+  if (isValue(arg)) return valueToTs(ctx, arg);
+  if ("type" in arg && isEntityLike(arg.type) && isType(arg.type)) {
+    return typeToTs(ctx, arg.type);
+  }
+  return "unknown";
+}
+
+function templateParameterToTs(type: TemplateParameter): string {
+  const node = type.node;
+  const name = node && "id" in node ? node.id?.sv : undefined;
+  return tsIdentifier(name, "T");
+}
+
+function valueToTs(ctx: EmitterCtx, value: Value): string {
+  const exactType = ctx.program.checker.getValueExactType(value);
+  if (exactType) return typeToTs(ctx, exactType);
+
+  switch (value.valueKind) {
+    case "StringValue":
+      return JSON.stringify(value.value);
+    case "NumericValue":
+      return String(value.value);
+    case "BooleanValue":
+      return String(value.value);
+    case "NullValue":
+      return "null";
+    case "EnumValue":
+      return enumMemberToTs(value.value);
+    case "ArrayValue":
+      return `[${value.values.map((item) => valueToTs(ctx, item)).join(", ")}]`;
+    case "ObjectValue":
+      return `{ ${[...value.properties.values()]
+        .map((prop) => tsPropertyDeclaration(prop.name, valueToTs(ctx, prop.value)))
+        .join("; ")} }`;
+    default:
+      return "unknown";
+  }
+}
+
+function enumMemberToTs(type: EnumMember): string {
+  return typeof type.value === "string"
+    ? JSON.stringify(type.value)
+    : type.value != null
+      ? String(type.value)
+      : JSON.stringify(type.name);
 }
 
 function isFileModel(model: Model): boolean {
@@ -102,7 +295,7 @@ function isFileModel(model: Model): boolean {
 }
 
 function emitInlineModel(ctx: EmitterCtx, model: Model): string {
-  const props = [...model.properties.values()].map((prop) => {
+  const props = [...walkPropertiesInherited(model)].map((prop) => {
     return tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
       optional: prop.optional,
     });

@@ -3,8 +3,13 @@ import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
+const runtimeDeclarationPaths = [
+  resolve(repoRoot, "packages/runtime/dist/index.d.ts"),
+  resolve(repoRoot, "packages/runtime/dist/server.d.ts"),
+];
 
 const tempDirs: string[] = [];
+let runtimeDeclarationsReady = false;
 
 export function cleanupFixtures(): void {
   for (const dir of tempDirs) {
@@ -29,6 +34,7 @@ export interface CompileResult {
   outputDir: string;
   readFile(serviceDirOrFile: string, fileName?: string): string;
   fileExists(serviceDirOrFile: string, fileName?: string): boolean;
+  typecheck(serviceDir: string, extraFiles?: Record<string, string>): void;
 }
 
 export function compileFixture(
@@ -81,5 +87,83 @@ export function compileFixture(
         : join(outputDir, serviceDirOrFile);
       return existsSync(path);
     },
+    typecheck(serviceDir: string, extraFiles?: Record<string, string>): void {
+      ensureRuntimeDeclarationsExist();
+
+      if (extraFiles) {
+        for (const [name, content] of Object.entries(extraFiles)) {
+          writeFileSync(join(outputDir, serviceDir, name), content);
+        }
+      }
+
+      const generatedTsconfig = join(fixtureDir, "tsconfig.generated.json");
+      writeFileSync(
+        generatedTsconfig,
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: "ES2022",
+              module: "NodeNext",
+              moduleResolution: "NodeNext",
+              strict: true,
+              skipLibCheck: true,
+              noEmit: true,
+              esModuleInterop: true,
+              isolatedModules: true,
+              lib: ["ES2022", "DOM"],
+              baseUrl: repoRoot,
+              paths: {
+                "@typespex/runtime": ["packages/runtime/dist/index.d.ts"],
+                "@typespex/runtime/server": ["packages/runtime/dist/server.d.ts"],
+              },
+            },
+            include: [`generated/${serviceDir}/*.ts`],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const proc = Bun.spawnSync(
+        ["bun", "run", "tsc", "--project", generatedTsconfig],
+        { cwd: join(repoRoot, "packages/emitter"), stdout: "pipe", stderr: "pipe" },
+      );
+
+      if (proc.exitCode !== 0) {
+        throw new Error(
+          `Generated TypeScript typecheck failed\nstdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+        );
+      }
+    },
   };
+}
+
+function ensureRuntimeDeclarationsExist(): void {
+  if (runtimeDeclarationsReady && runtimeDeclarationPaths.every((path) => existsSync(path))) {
+    return;
+  }
+
+  if (runtimeDeclarationPaths.some((path) => !existsSync(path))) {
+    const proc = Bun.spawnSync(
+      ["bun", "run", "--filter", "@typespex/runtime", "build"],
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
+    );
+
+    if (proc.exitCode !== 0) {
+      throw new Error(
+        `Runtime build failed before generated TypeScript typecheck\n` +
+          `stdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+      );
+    }
+  }
+
+  const missing = runtimeDeclarationPaths.filter((path) => !existsSync(path));
+  if (missing.length > 0) {
+    throw new Error(
+      `Runtime build did not produce declarations required for generated TypeScript typecheck.\n` +
+        `Missing:\n${missing.map((path) => `- ${path}`).join("\n")}`,
+    );
+  }
+
+  runtimeDeclarationsReady = true;
 }

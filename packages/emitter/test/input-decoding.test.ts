@@ -147,6 +147,35 @@ interface Uploads {
 }
 `;
 
+const inheritedBodyImportSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "InheritedBodyImportApi" })
+namespace InheritedBodyImportApi;
+
+model Payload {
+  code: string;
+}
+
+model Base {
+  payload: Payload;
+}
+
+model CreateRequest extends Base {
+  name: string;
+}
+
+model CreateResponse {
+  id: string;
+}
+
+@route("/items")
+interface Items {
+  @post create(@body body: CreateRequest): CreateResponse;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -189,5 +218,11 @@ describe("input decoding", () => {
 
     expect(r.readFile("upload-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("upload-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("inherited body properties pull in imported model types", () => {
+    const r = compileFixture("inherited-body-import", inheritedBodyImportSpec);
+
+    r.typecheck("inherited-body-import-api");
   });
 });
