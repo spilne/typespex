@@ -1,6 +1,7 @@
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { buildServerEmission, collectReferencedModelImports } from "./server-emission.js";
+import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 export function emitServer(
   ctx: EmitterCtx,
@@ -24,26 +25,29 @@ export function emitServer(
   for (const group of emission.groups) {
     if (!group.interfaceName) continue;
 
-    lines.push(`export interface ${group.interfaceName}Server<Ctx = MatchedRequestContext> {`);
+    const interfaceName = tsIdentifier(group.interfaceName, "Interface");
+    lines.push(`export interface ${interfaceName}Server<Ctx = MatchedRequestContext> {`);
     for (const operation of group.operations) {
       lines.push(
-        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>;`,
+        `  ${tsPropertyDeclaration(operation.name, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
       );
     }
     lines.push("}");
     lines.push("");
   }
 
-  lines.push(`export interface ${emission.serviceName}Server<Ctx = MatchedRequestContext> {`);
+  const serviceName = tsIdentifier(emission.serviceName, "Service");
+  lines.push(`export interface ${serviceName}Server<Ctx = MatchedRequestContext> {`);
   for (const group of emission.groups) {
     if (group.interfaceName) {
-      lines.push(`  readonly ${group.propertyName}: ${group.interfaceName}Server<Ctx>;`);
+      const interfaceName = tsIdentifier(group.interfaceName, "Interface");
+      lines.push(`  ${tsPropertyDeclaration(group.propertyName, `${interfaceName}Server<Ctx>`, { readonly: true })};`);
       continue;
     }
 
     for (const operation of group.operations) {
       lines.push(
-        `  readonly ${operation.name}: OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>;`,
+        `  ${tsPropertyDeclaration(operation.name, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
       );
     }
   }

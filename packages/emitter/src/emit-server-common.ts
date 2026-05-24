@@ -10,6 +10,7 @@ import { getHeaderFieldName, isHeader, isStatusCode } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
 import { typeToTs } from "./type-reference.js";
+import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 export interface OperationGroup {
   interfaceName?: string;
@@ -77,7 +78,7 @@ function addModelName(
       return;
     }
     if (BUILTIN_TYPE_NAMES.has(type.name)) return;
-    names.add(type.name);
+    names.add(tsIdentifier(type.name, "Model"));
 
     for (const prop of type.properties.values()) {
       addModelName(ctx, prop.type, names, seen);
@@ -138,8 +139,9 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
 
   for (const param of op.parameters.parameters) {
-    const optional = param.param.optional ? "?" : "";
-    parts.push(`${param.param.name}${optional}: ${typeToTs(ctx, param.param.type)}`);
+    parts.push(tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
+      optional: param.param.optional,
+    }));
   }
 
   if (op.parameters.body) {
@@ -150,21 +152,21 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
       const multiParts = (body as any).parts as ReadonlyArray<{ name?: string; body: { type: Type }; optional: boolean; multi: boolean }>;
       for (const part of multiParts) {
         if (!part.name) continue;
-        const optional = part.optional ? "?" : "";
         let tsType = typeToTs(ctx, part.body.type);
         if (part.multi) tsType = `${tsType}[]`;
-        parts.push(`${part.name}${optional}: ${tsType}`);
+        parts.push(tsPropertyDeclaration(part.name, tsType, { optional: part.optional }));
       }
     } else {
       const bodyType = body.type;
       if (parts.length === 0 && bodyType.kind === "Model" && bodyType.name) {
-        return bodyType.name;
+        return typeToTs(ctx, bodyType);
       }
 
       if (bodyType.kind === "Model") {
         for (const [, prop] of bodyType.properties) {
-          const optional = prop.optional ? "?" : "";
-          parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
+          parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
+            optional: prop.optional,
+          }));
         }
       }
     }
@@ -205,8 +207,9 @@ function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string 
   const parts: string[] = [];
   for (const prop of resp.type.properties.values()) {
     if (hiddenProperties.has(prop.name)) continue;
-    const optional = prop.optional ? "?" : "";
-    parts.push(`${prop.name}${optional}: ${typeToTs(ctx, prop.type)}`);
+    parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
+      optional: prop.optional,
+    }));
   }
   return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
 }

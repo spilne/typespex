@@ -13,6 +13,7 @@ import {
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
+import { tsIdentifier } from "./typescript-names.js";
 
 export interface ServerEmission {
   readonly serviceName: string;
@@ -53,7 +54,7 @@ export function buildServerEmission(
   const groups = groupOperations(httpOperations).map((group) => ({
     interfaceName: group.interfaceName,
     propertyName: group.propertyName,
-    exportName: group.interfaceName ?? ctx.serviceName,
+    exportName: tsIdentifier(group.interfaceName ?? ctx.serviceName, "Group"),
     operations: group.operations.map((operation) => buildOperationEmission(ctx, operation, group.interfaceName)),
   }));
 

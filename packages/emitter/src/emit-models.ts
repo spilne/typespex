@@ -3,6 +3,7 @@ import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
 import { isMetadata } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { typeToTs } from "./type-reference.js";
+import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 /**
  * Emit TypeScript interfaces for all models used by the service.
@@ -69,13 +70,13 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   const baseModel = model.baseModel && shouldEmitBaseModel(ctx, model.baseModel)
     ? model.baseModel
     : undefined;
-  const extendsClause = baseModel ? ` extends ${baseModel.name}` : "";
-  lines.push(`export interface ${model.name}${extendsClause} {`);
+  const modelName = tsIdentifier(model.name, "Model");
+  const extendsClause = baseModel ? ` extends ${tsIdentifier(baseModel.name, "Model")}` : "";
+  lines.push(`export interface ${modelName}${extendsClause} {`);
   for (const prop of props) {
     if (isMetadata(ctx.program, prop)) continue;
-    const optional = prop.optional ? "?" : "";
     const tsType = typeToTs(ctx, prop.type);
-    lines.push(`  ${prop.name}${optional}: ${tsType};`);
+    lines.push(`  ${tsPropertyDeclaration(prop.name, tsType, { optional: prop.optional })};`);
   }
   lines.push("}");
   lines.push("");
@@ -107,7 +108,7 @@ function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {
     )
     .join(" | ");
 
-  lines.push(`export type ${enumType.name} = ${memberTypes};`);
+  lines.push(`export type ${tsIdentifier(enumType.name, "Enum")} = ${memberTypes};`);
   lines.push("");
 }
 
@@ -119,6 +120,6 @@ function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
   const variants = [...union.variants.values()];
   const variantTypes = variants.map((v) => typeToTs(ctx, v.type)).join(" | ");
 
-  lines.push(`export type ${union.name} = ${variantTypes};`);
+  lines.push(`export type ${tsIdentifier(union.name, "Union")} = ${variantTypes};`);
   lines.push("");
 }

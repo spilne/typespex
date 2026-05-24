@@ -25,6 +25,7 @@ import type { EmitterCtx } from "./ctx.js";
 import { buildInputType } from "./emit-server-common.js";
 import { scalarToTs } from "./scalar-map.js";
 import { typeToTs } from "./type-reference.js";
+import { isTsIdentifier, tsIdentifier, tsObjectKey, tsPropertyAccess, tsPropertyDeclaration } from "./typescript-names.js";
 
 type DecoderMode = "json" | "text";
 
@@ -143,7 +144,7 @@ export function emitDecoder(
 
   // Case 2: request input only — sync Either
   if (hasRequestInput && !hasBody) {
-    const ref = `${inputsRef}.${opName}`;
+    const ref = tsPropertyAccess(inputsRef, opName);
     return {
       inputEntries: [emitRequestDecoderEntry(opName, requestEntries)],
       decodeExpression: `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
@@ -155,7 +156,7 @@ export function emitDecoder(
 
   // Case 3: body only — async Either
   if (!hasRequestInput && hasBody) {
-    const ref = `${inputsRef}.${opName}`;
+    const ref = tsPropertyAccess(inputsRef, opName);
     const bodyDecodeFn = pickBodyDecodeFn(op);
     return {
       inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op)],
@@ -167,8 +168,8 @@ export function emitDecoder(
   }
 
   // Case 4: request input + body — async Either with error accumulation
-  const requestRef = `${inputsRef}.${opName}Request`;
-  const bodyRef = `${inputsRef}.${opName}Body`;
+  const requestRef = tsPropertyAccess(inputsRef, `${opName}Request`);
+  const bodyRef = tsPropertyAccess(inputsRef, `${opName}Body`);
   const bodyInputType = buildBodyInputType(ctx, op);
   const requestType = buildRequestOnlyType(ctx, op);
   const combinedDecodeFn = pickBodyDecodeFn(op) === "decodeMultipartBody"
@@ -211,18 +212,46 @@ function emitRequestDecoderEntry(
   entries: ReadonlyArray<{ name: string; expr: string }>,
 ): InputDecoderEntry {
   const lines: string[] = [];
+  const localNames = requestDecoderLocalNames(entries);
   if (entries.length === 1) {
     const [e] = entries;
-    lines.push(`  ${name}: ${e.expr}.map((${e.name}) => ({ ${e.name} })),`);
+    lines.push(
+      `  ${tsObjectKey(name)}: ${e.expr}.map((${localNames[0]}) => ({ ${emitObjectAssignment(e.name, localNames[0])} })),`,
+    );
   } else {
     const decoders = entries.map((e) => e.expr).join(", ");
-    const args = entries.map((e) => e.name).join(", ");
-    lines.push(`  ${name}: RequestDecoders.combine(`);
+    const args = localNames.join(", ");
+    const resultProperties = entries
+      .map((e, i) => emitObjectAssignment(e.name, localNames[i]))
+      .join(", ");
+    lines.push(`  ${tsObjectKey(name)}: RequestDecoders.combine(`);
     lines.push(`    [${decoders}],`);
-    lines.push(`    (${args}) => ({ ${args} }),`);
+    lines.push(`    (${args}) => ({ ${resultProperties} }),`);
     lines.push(`  ),`);
   }
   return { lines };
+}
+
+function requestDecoderLocalNames(
+  entries: ReadonlyArray<{ name: string; expr: string }>,
+): string[] {
+  const used = new Set<string>();
+  return entries.map((entry, index) => {
+    const candidate = isTsIdentifier(entry.name) ? entry.name : `v${index}`;
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+
+    const fallback = `v${index}`;
+    used.add(fallback);
+    return fallback;
+  });
+}
+
+function emitObjectAssignment(propertyName: string, localName: string): string {
+  const key = tsObjectKey(propertyName);
+  return key === localName ? localName : `${key}: ${localName}`;
 }
 
 function emitBodyDecoderEntry(
@@ -244,16 +273,16 @@ function emitBodyDecoderEntry(
   // Multi-line for object types
   if (bodyType.kind === "Model" && !isArrayModelType(ctx.program, bodyType) && !isRecordModelType(ctx.program, bodyType)) {
     const tsType = typeToTs(ctx, bodyType);
-    lines.push(`  ${name}: Decoders.object<${tsType}>({`);
+    lines.push(`  ${tsObjectKey(name)}: Decoders.object<${tsType}>({`);
     for (const prop of bodyType.properties.values()) {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set(), prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
-      lines.push(`    ${JSON.stringify(prop.name)}: ${expr},`);
+      lines.push(`    ${tsObjectKey(prop.name)}: ${expr},`);
     }
     lines.push(`  }),`);
   } else {
     const decoderExpr = emitDecoderExpression(ctx, dec, bodyType, "json");
-    lines.push(`  ${name}: ${decoderExpr},`);
+    lines.push(`  ${tsObjectKey(name)}: ${decoderExpr},`);
   }
   return { lines };
 }
@@ -279,10 +308,10 @@ function emitMultipartDecoderEntry(
     if (part.optional) {
       partDecoder = `Decoders.optional(${partDecoder})`;
     }
-    fields.push(`${JSON.stringify(part.name)}: ${partDecoder}`);
+    fields.push(`${tsObjectKey(part.name)}: ${partDecoder}`);
   }
 
-  lines.push(`  ${name}: Decoders.object({ ${fields.join(", ")} }),`);
+  lines.push(`  ${tsObjectKey(name)}: Decoders.object({ ${fields.join(", ")} }),`);
   return { lines };
 }
 
@@ -298,10 +327,9 @@ function buildBodyInputType(ctx: EmitterCtx, op: HttpOperation): string {
     const multiParts = (body as any).parts as ReadonlyArray<{ name?: string; body: { type: Type }; optional: boolean; multi: boolean }>;
     for (const part of multiParts) {
       if (!part.name) continue;
-      const optional = part.optional ? "?" : "";
       let tsType = typeToTs(ctx, part.body.type);
       if (part.multi) tsType = `${tsType}[]`;
-      parts.push(`${part.name}${optional}: ${tsType}`);
+      parts.push(tsPropertyDeclaration(part.name, tsType, { optional: part.optional }));
     }
     return parts.length > 0 ? `{ ${parts.join("; ")} }` : "Record<string, never>";
   }
@@ -311,8 +339,9 @@ function buildBodyInputType(ctx: EmitterCtx, op: HttpOperation): string {
 function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
   for (const param of op.parameters.parameters) {
-    const optional = param.param.optional ? "?" : "";
-    parts.push(`${param.param.name}${optional}: ${typeToTs(ctx, param.param.type)}`);
+    parts.push(tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
+      optional: param.param.optional,
+    }));
   }
   if (parts.length === 0) return "Record<string, never>";
   return `{ ${parts.join("; ")} }`;
@@ -435,7 +464,7 @@ function emitObjectDecoder(
   if (modelName && seenModels.has(modelName)) {
     // Cycle detected — register a hoisted lazy decoder and return reference
     if (!dec.lazyDecoders.has(modelName)) {
-      dec.lazyDecoders.set(modelName, `_lazy${modelName}`);
+      dec.lazyDecoders.set(modelName, `_lazy${tsIdentifier(modelName, "Model")}`);
     }
     return dec.lazyDecoders.get(modelName)!;
   }
@@ -446,7 +475,7 @@ function emitObjectDecoder(
     .map((prop) => {
       const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, mode, nextSeen, prop);
       const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
-      return `${JSON.stringify(prop.name)}: ${expr}`;
+      return `${tsObjectKey(prop.name)}: ${expr}`;
     })
     .join(", ");
 
@@ -488,11 +517,12 @@ function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[
       .map((prop) => {
         const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, "json", new Set([modelName]), prop);
         const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
-        return `${JSON.stringify(prop.name)}: ${expr}`;
+        return `${tsObjectKey(prop.name)}: ${expr}`;
       })
       .join(", ");
 
-    lines.push(`const ${varName}: Decoder<${modelName}> = Decoders.lazy(() => Decoders.object<${modelName}>({ ${fields} }));`);
+    const tsType = typeToTs(ctx, model);
+    lines.push(`const ${varName}: Decoder<${tsType}> = Decoders.lazy(() => Decoders.object<${tsType}>({ ${fields} }));`);
   }
   return lines;
 }

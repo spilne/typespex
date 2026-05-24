@@ -53,6 +53,31 @@ namespace SecureApi {
 }
 `;
 
+const escapingSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "EscapingApi" })
+namespace EscapingApi;
+
+model EscapedModel {
+  "default": string;
+  "x-request-id": string;
+  "readonly"?: string;
+  "__proto__"?: string;
+}
+
+@route("/escaped")
+interface Items {
+  @get delete(): EscapedModel;
+
+  @post create(
+    @query("default") defaultValue?: string,
+    @body body: EscapedModel,
+  ): EscapedModel;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -79,5 +104,14 @@ describe("operation structures", () => {
 
     expect(r.readFile("secure-api", "server-hints.ts")).toMatchSnapshot();
     expect(r.readFile("secure-api", "server-operations.ts")).toMatchSnapshot();
+  });
+
+  test("escapes TypeScript identifiers and property names", () => {
+    const r = compileFixture("escaping", escapingSpec);
+
+    expect(r.readFile("escaping-api", "models.ts")).toMatchSnapshot();
+    expect(r.readFile("escaping-api", "server.ts")).toMatchSnapshot();
+    expect(r.readFile("escaping-api", "server-operations.ts")).toMatchSnapshot();
+    expect(r.readFile("escaping-api", "server-router.ts")).toMatchSnapshot();
   });
 });
