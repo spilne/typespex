@@ -1,5 +1,12 @@
 import { Either, isLeft, type Either as EitherT } from "../core/either.js";
-import { type ValidationIssue, type Validator, ValidationError, Validators } from "./validation.js";
+import { isContentTypeAccepted } from "./media-type.js";
+import {
+  type ValidationIssue,
+  type Validator,
+  UnsupportedMediaTypeError,
+  ValidationError,
+  Validators,
+} from "./validation.js";
 
 /** Internal decoder result — lightweight issue array, no Error allocation. */
 export type DecoderResult<A> = EitherT<readonly ValidationIssue[], A>;
@@ -496,12 +503,30 @@ export function decodeOptional<A>(
   return decoder.decode(input);
 }
 
-/** Parses and validates the request JSON body. Returns Either<ValidationError, A>. */
+/**
+ * Optional shared body decode options.
+ * - `contentTypes`: when non-empty, the request `Content-Type` is validated;
+ *   requests whose header does not match any entry are rejected with a
+ *   415 `UnsupportedMediaTypeError` before body parsing.
+ * - `root`: path prefix used in validation issue paths (default `"$body"`).
+ */
+export interface BodyDecodeOptions {
+  readonly contentTypes?: readonly string[];
+  readonly root?: string;
+}
+
+export type BodyDecodeError = ValidationError | UnsupportedMediaTypeError;
+
+/** Parses and validates the request JSON body. */
 export async function decodeJsonBody<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  const root = options.root ?? "$body";
+  const ctError = checkContentType(request, options.contentTypes);
+  if (ctError) return Either.left(ctError);
+
   let value: unknown;
   try {
     value = await request.json();
@@ -511,12 +536,16 @@ export async function decodeJsonBody<A>(
   return toValidationResult(decoder.decode(value), root);
 }
 
-/** Parses and validates a URL-encoded form body. Returns Either<ValidationError, A>. */
+/** Parses and validates a URL-encoded form body. */
 export async function decodeFormBody<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  const root = options.root ?? "$body";
+  const ctError = checkContentType(request, options.contentTypes);
+  if (ctError) return Either.left(ctError);
+
   let value: Record<string, unknown>;
   try {
     const text = await request.text();
@@ -531,12 +560,16 @@ export async function decodeFormBody<A>(
   return toValidationResult(decoder.decode(value), root);
 }
 
-/** Parses and validates a multipart/form-data body. Returns Either<ValidationError, A>. */
+/** Parses and validates a multipart/form-data body. */
 export async function decodeMultipartBody<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
-): Promise<EitherT<ValidationError, A>> {
+  options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A>> {
+  const root = options.root ?? "$body";
+  const ctError = checkContentType(request, options.contentTypes);
+  if (ctError) return Either.left(ctError);
+
   let value: Record<string, unknown>;
   try {
     const formData = await request.formData();
@@ -548,6 +581,16 @@ export async function decodeMultipartBody<A>(
     return Either.left(new ValidationError([{ path: root, message: "Body must contain valid multipart form data." }]));
   }
   return toValidationResult(decoder.decode(value), root);
+}
+
+function checkContentType(
+  request: Request,
+  declared: readonly string[] | undefined,
+): UnsupportedMediaTypeError | undefined {
+  if (!declared || declared.length === 0) return undefined;
+  const received = request.headers.get("content-type");
+  if (isContentTypeAccepted(received, declared)) return undefined;
+  return new UnsupportedMediaTypeError(received ?? undefined, declared);
 }
 
 /** Decodes one value and throws `ValidationError` on failure. */
@@ -581,9 +624,9 @@ export function decodeOptionalOrThrow<A>(
 export async function decodeJsonBodyOrThrow<A>(
   request: Request,
   decoder: Decoder<A>,
-  root = "$body",
+  options: BodyDecodeOptions = {},
 ): Promise<A> {
-  return Either.getOrElseThrow(await decodeJsonBody(request, decoder, root));
+  return Either.getOrElseThrow(await decodeJsonBody(request, decoder, options));
 }
 
 // ---------------------------------------------------------------------------

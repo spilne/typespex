@@ -155,13 +155,15 @@ export function emitDecoder(
     };
   }
 
+  const bodyOptionsArg = hasBody ? emitBodyOptionsArg(op) : "";
+
   // Case 3: body only — async Either
   if (!hasRequestInput && hasBody) {
     const ref = tsPropertyAccess(inputsRef, opName);
     const bodyDecodeFn = pickBodyDecodeFn(op);
     return {
       inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op)],
-      decodeExpression: `${bodyDecodeFn}<${inputType}>(request, ${ref})`,
+      decodeExpression: `${bodyDecodeFn}<${inputType}>(request, ${ref}${bodyOptionsArg})`,
       needsPathParams: false,
       isAsync: true,
       hoistedDecoders: buildHoistedDecoders(ctx, dec),
@@ -181,11 +183,33 @@ export function emitDecoder(
       emitRequestDecoderEntry(`${opName}Request`, requestEntries),
       emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op, { wrapNonFlattenedBody: true }),
     ],
-    decodeExpression: `${combinedDecodeFn}<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams)`,
+    decodeExpression: `${combinedDecodeFn}<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams${bodyOptionsArg})`,
     needsPathParams: true,
     isAsync: true,
     hoistedDecoders: buildHoistedDecoders(ctx, dec),
   };
+}
+
+/** Emits the trailing `, { contentTypes: [...] }` options arg, or an empty string. */
+function emitBodyOptionsArg(op: HttpOperation): string {
+  const contentTypes = declaredBodyContentTypes(op);
+  if (contentTypes.length === 0) return "";
+  const literal = contentTypes.map((ct) => JSON.stringify(ct)).join(", ");
+  return `, { contentTypes: [${literal}] }`;
+}
+
+/** Resolves declared body content types, defaulting multipart bodies when absent. */
+function declaredBodyContentTypes(op: HttpOperation): readonly string[] {
+  const body = op.parameters.body;
+  if (!body) return [];
+  const declared = "contentTypes" in body && Array.isArray(body.contentTypes)
+    ? body.contentTypes.filter((ct): ct is string => typeof ct === "string" && ct.length > 0)
+    : [];
+  if (declared.length > 0) return declared;
+  if ("bodyKind" in body && body.bodyKind === "multipart") {
+    return ["multipart/form-data"];
+  }
+  return [];
 }
 
 /** Picks the right body decode function based on content type and body kind. */

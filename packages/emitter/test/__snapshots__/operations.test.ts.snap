@@ -295,6 +295,7 @@ export const ItemsOperations = {
         ItemsInput.createBody,
         request,
         pathParams,
+        { contentTypes: ["application/json"] },
       ),
     encodeResult: (result: EscapedModel) => ItemsOutput.create.encode(result),
   } satisfies ServerOperation<

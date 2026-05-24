@@ -167,7 +167,10 @@ export const PetsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) => decodeJsonBody<CreatePetInput>(request, PetsInput.create),
+    decodeInput: async (request) =>
+      decodeJsonBody<CreatePetInput>(request, PetsInput.create, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: Pet) => PetsOutput.create.encode(result),
   } satisfies ServerOperation<CreatePetInput, Pet>,
 

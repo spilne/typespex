@@ -147,6 +147,45 @@ interface Uploads {
 }
 `;
 
+const contentTypeSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ContentTypeApi" })
+namespace ContentTypeApi;
+
+model JsonItem { id: string; }
+model FormItem { name: string; }
+model UploadResult { id: string; }
+
+@route("/items")
+interface Items {
+  @route("/json") @post createJson(@body body: JsonItem): JsonItem;
+
+  @route("/form") @post createForm(
+    @header contentType: "application/x-www-form-urlencoded",
+    @body body: FormItem,
+  ): FormItem;
+
+  @route("/text") @post createText(
+    @header contentType: "text/plain",
+    @body body: string,
+  ): string;
+
+  @route("/bytes") @post createBytes(
+    @header contentType: "application/octet-stream",
+    @body body: bytes,
+  ): bytes;
+
+  @route("/upload") @post upload(
+    @multipartBody body: {
+      name: HttpPart<string>;
+      file: HttpPart<File>;
+    },
+  ): UploadResult;
+}
+`;
+
 const inheritedBodyImportSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -224,5 +263,19 @@ describe("input decoding", () => {
     const r = compileFixture("inherited-body-import", inheritedBodyImportSpec);
 
     r.typecheck("inherited-body-import-api");
+  });
+
+  test("emits declared body content types for each operation", () => {
+    const r = compileFixture("content-types", contentTypeSpec);
+    const operations = r.readFile("content-type-api", "server-operations.ts");
+
+    // Every body-bearing operation carries its declared media types so the
+    // runtime can reject mismatched Content-Type with a 415 before parsing.
+    expect(operations).toContain(`contentTypes: ["application/json"]`);
+    expect(operations).toContain(`contentTypes: ["application/x-www-form-urlencoded"]`);
+    expect(operations).toContain(`contentTypes: ["text/plain"]`);
+    expect(operations).toContain(`contentTypes: ["application/octet-stream"]`);
+    expect(operations).toContain(`contentTypes: ["multipart/form-data"]`);
+    r.typecheck("content-type-api");
   });
 });

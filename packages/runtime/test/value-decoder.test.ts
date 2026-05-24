@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   Decoders,
   Either,
+  UnsupportedMediaTypeError,
   Validators,
   ValidationError,
   decode,
@@ -537,7 +538,6 @@ describe("http decoder - throw adapters", () => {
     const value = await decodeJsonBodyOrThrow(
       okRequest,
       Decoders.object<{ id: string }>({ id: Decoders.string }),
-      "$body",
     );
     expect(value).toEqual({ id: "42" });
 
@@ -547,7 +547,7 @@ describe("http decoder - throw adapters", () => {
       headers: { "content-type": "application/json" },
     });
     await expect(
-      decodeJsonBodyOrThrow(invalidJsonRequest, Decoders.object({}), "$body"),
+      decodeJsonBodyOrThrow(invalidJsonRequest, Decoders.object({})),
     ).rejects.toBeInstanceOf(ValidationError);
 
     const invalidShapeRequest = new Request("http://localhost/test", {
@@ -559,7 +559,6 @@ describe("http decoder - throw adapters", () => {
       decodeJsonBodyOrThrow(
         invalidShapeRequest,
         Decoders.object<{ id: string }>({ id: Decoders.string }),
-        "$body",
       ),
     ).rejects.toBeInstanceOf(ValidationError);
   });
@@ -574,7 +573,6 @@ describe("http decoder - throw adapters", () => {
       await decodeJsonBody(
         okRequest,
         Decoders.object<{ id: string }>({ id: Decoders.string }),
-        "$body",
       ),
     ).toEqual(Either.right({ id: "42" }));
 
@@ -583,10 +581,10 @@ describe("http decoder - throw adapters", () => {
       body: "{not-json",
       headers: { "content-type": "application/json" },
     });
-    const decoded = await decodeJsonBody(invalidJsonRequest, Decoders.object({}), "$body");
+    const decoded = await decodeJsonBody(invalidJsonRequest, Decoders.object({}));
     expect(decoded._tag).toBe("Left");
     if (decoded._tag === "Left") {
-      expect(decoded.left.issues).toEqual([
+      expect((decoded.left as ValidationError).issues).toEqual([
         { path: "$body", message: "Body must contain valid JSON." },
       ]);
     }
@@ -736,6 +734,134 @@ describe("http decoder - throw adapters", () => {
     if (result._tag === "Left") {
       expect(result.left.issues.some((i) => i.path.includes("name"))).toBe(true);
     }
+  });
+});
+
+describe("body decoder content-type validation", () => {
+  test("decodeJsonBody returns 415 when Content-Type does not match declared", async () => {
+    const request = new Request("http://localhost/items", {
+      method: "POST",
+      body: "name=Alice",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+
+    const result = await decodeJsonBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(UnsupportedMediaTypeError);
+      const err = result.left as UnsupportedMediaTypeError;
+      expect(err.statusCode).toBe(415);
+      expect(err.received).toBe("application/x-www-form-urlencoded");
+      expect(err.supported).toEqual(["application/json"]);
+    }
+  });
+
+  test("decodeJsonBody returns 415 when Content-Type is missing", async () => {
+    const request = new Request("http://localhost/items", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice" }),
+    });
+    // Force-strip the header so node/bun's auto-injected text/plain doesn't fool the test.
+    request.headers.delete("content-type");
+
+    const result = await decodeJsonBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(UnsupportedMediaTypeError);
+      const err = result.left as UnsupportedMediaTypeError;
+      expect(err.statusCode).toBe(415);
+      expect(err.received).toBeUndefined();
+    }
+  });
+
+  test("decodeJsonBody accepts matching Content-Type with parameters", async () => {
+    const request = new Request("http://localhost/items", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice" }),
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+
+    const result = await decodeJsonBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(result).toEqual(Either.right({ name: "Alice" }));
+  });
+
+  test("decodeFormBody returns 415 for wrong Content-Type", async () => {
+    const request = new Request("http://localhost/items", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const result = await decodeFormBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["application/x-www-form-urlencoded"] },
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(UnsupportedMediaTypeError);
+    }
+  });
+
+  test("decodeMultipartBody returns 415 when Content-Type does not start with multipart", async () => {
+    const request = new Request("http://localhost/upload", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const result = await decodeMultipartBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["multipart/form-data"] },
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(UnsupportedMediaTypeError);
+    }
+  });
+
+  test("decodeMultipartBody accepts multipart/form-data with boundary", async () => {
+    const formData = new FormData();
+    formData.append("name", "Alice");
+
+    const request = new Request("http://localhost/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const result = await decodeMultipartBody(
+      request,
+      Decoders.object<{ name: string }>({ name: Decoders.string }),
+      { contentTypes: ["multipart/form-data"] },
+    );
+
+    expect(result).toEqual(Either.right({ name: "Alice" }));
+  });
+
+  test("UnsupportedMediaTypeError serializes to a structured 415 response", () => {
+    const err = new UnsupportedMediaTypeError("application/xml", ["application/json", "text/plain"]);
+    const response = err.toResponse();
+
+    expect(response.status).toBe(415);
+    expect(response.headers.get("content-type")).toBe("application/json");
   });
 });
 

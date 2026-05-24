@@ -428,6 +428,7 @@ export const ItemsOperations = {
         ItemsInput.updateBody,
         request,
         pathParams,
+        { contentTypes: ["application/json"] },
       ),
     encodeResult: (result: Item | NotFoundError | ConflictError) =>
       ItemsOutput.update.encode(result),
