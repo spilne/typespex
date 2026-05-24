@@ -107,7 +107,7 @@ function addModelName(
     if (BUILTIN_TYPE_NAMES.has(type.name)) return;
     names.add(tsIdentifier(type.name, "Model"));
 
-    for (const prop of type.properties.values()) {
+    for (const prop of walkPropertiesInherited(type)) {
       addModelName(ctx, prop.type, names, seen);
     }
   }
