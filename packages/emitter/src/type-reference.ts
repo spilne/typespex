@@ -1,5 +1,11 @@
-import type { Type, Model } from "@typespec/compiler";
-import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
+import type { Model, TemplateParameter, Type } from "@typespec/compiler";
+import {
+  isArrayModelType,
+  isRecordModelType,
+  isTemplateDeclaration,
+  isTemplateInstance,
+  isType,
+} from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
 import { scalarToTs } from "./scalar-map.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
@@ -13,6 +19,14 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       return scalarToTs(type);
 
     case "Model": {
+      const templateArgs = type.templateMapper?.args ?? [];
+      const firstTemplateArg = templateArgs[0];
+      if (type.name === "Array" && templateArgs.length === 1 && isType(firstTemplateArg)) {
+        return `${typeToTs(ctx, firstTemplateArg)}[]`;
+      }
+      if (type.name === "Record" && templateArgs.length === 1 && isType(firstTemplateArg)) {
+        return `Record<string, ${typeToTs(ctx, firstTemplateArg)}>`;
+      }
       if (isArrayModelType(ctx.program, type)) {
         const elementType = type.indexer!.value;
         return `${typeToTs(ctx, elementType)}[]`;
@@ -23,8 +37,8 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       }
       // Unwrap HttpPart<T> → T
       if (type.name === "HttpPart" && type.templateMapper?.args) {
-        const inner = [...type.templateMapper.args][0];
-        if (inner) return typeToTs(ctx, inner as Type);
+        const inner = type.templateMapper.args[0];
+        if (inner && isType(inner)) return typeToTs(ctx, inner);
       }
       // Map File and subtypes → Web standard File
       if (isFileModel(type)) {
@@ -33,7 +47,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       if (type.name === "" || type.name === undefined) {
         return emitInlineModel(ctx, type);
       }
-      return tsIdentifier(type.name, "Model");
+      return modelToTs(ctx, type);
     }
 
     case "Union": {
@@ -87,9 +101,40 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     case "ModelProperty":
       return typeToTs(ctx, type.type);
 
+    case "TemplateParameter":
+      return templateParameterToTs(type);
+
     default:
       return "unknown";
   }
+}
+
+export function templateParametersToTs(type: Model): string {
+  if (!isTemplateDeclaration(type)) return "";
+  const params = getTemplateParameterNames(type);
+  return params.length > 0 ? `<${params.join(", ")}>` : "";
+}
+
+function modelToTs(ctx: EmitterCtx, model: Model): string {
+  const name = tsIdentifier(model.name, "Model");
+  if (isTemplateInstance(model)) {
+    const args = model.templateMapper.args
+      .map((arg) => isType(arg) ? typeToTs(ctx, arg) : "unknown");
+    return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
+  }
+  return `${name}${templateParametersToTs(model)}`;
+}
+
+function getTemplateParameterNames(type: Model): string[] {
+  const node = type.node;
+  if (!node || !("templateParameters" in node)) return [];
+  return node.templateParameters.map((param) => tsIdentifier(param.id.sv, "T"));
+}
+
+function templateParameterToTs(type: TemplateParameter): string {
+  const node = type.node;
+  const name = node && "id" in node ? node.id?.sv : undefined;
+  return tsIdentifier(name, "T");
 }
 
 function isFileModel(model: Model): boolean {

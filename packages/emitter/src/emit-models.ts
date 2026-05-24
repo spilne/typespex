@@ -2,7 +2,7 @@ import type { Model, Enum, Union, Type } from "@typespec/compiler";
 import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
 import { isMetadata } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
-import { typeToTs } from "./type-reference.js";
+import { templateParametersToTs, typeToTs } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 /**
@@ -71,8 +71,9 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
     ? model.baseModel
     : undefined;
   const modelName = tsIdentifier(model.name, "Model");
-  const extendsClause = baseModel ? ` extends ${tsIdentifier(baseModel.name, "Model")}` : "";
-  lines.push(`export interface ${modelName}${extendsClause} {`);
+  const typeParams = templateParametersToTs(model);
+  const extendsClause = baseModel ? ` extends ${typeToTs(ctx, baseModel)}` : "";
+  lines.push(`export interface ${modelName}${typeParams}${extendsClause} {`);
   for (const prop of props) {
     if (isMetadata(ctx.program, prop)) continue;
     const tsType = typeToTs(ctx, prop.type);

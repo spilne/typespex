@@ -3,6 +3,7 @@ import {
   getDiscriminator,
   isArrayModelType,
   isRecordModelType,
+  isType,
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
@@ -77,6 +78,16 @@ function addModelName(
       }
       return;
     }
+
+    const mapper = type.templateMapper;
+    if (mapper) {
+      for (const arg of mapper.args) {
+        if (isType(arg)) {
+          addModelName(ctx, arg, names, seen);
+        }
+      }
+    }
+
     if (BUILTIN_TYPE_NAMES.has(type.name)) return;
     names.add(tsIdentifier(type.name, "Model"));
 
