@@ -371,12 +371,16 @@ export function emitResultResponseEncoder(
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
 
+  const kind = classifyResponseContentType(ctx, op, response.contentType);
+  if (kind === "unsupported") {
+    return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
+  }
+
   if (shouldUseVariantEncoder(response)) {
-    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(ctx, op, response)})`;
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response)})`;
   }
 
   const headers = response.headers;
-  const kind = classifyResponseContentType(ctx, op, response.contentType);
   const encoder = encoderForKind(kind, resultType, response.statusCode);
 
   if (headers.length > 0 && kind === "json") {
@@ -737,9 +741,15 @@ function emitResponseDecisionEncoder(
   const lines: string[] = [];
   lines.push(`ResponseEncoders.matchVariant<${resultType}>([`);
   branches.forEach((branch) => {
+    const kind = branch.response.isVoid
+      ? "empty"
+      : classifyResponseContentType(ctx, op, branch.response.contentType);
+    const branchEncoder = kind === "unsupported"
+      ? emitUnsupportedEncoder(branch.response.tsType, op.operation.name, branch.response.contentType)
+      : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(kind, branch.response)})`;
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
-    lines.push(`encoder: ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(ctx, op, branch.response)}),`);
+    lines.push(`encoder: ${branchEncoder},`);
     lines.push("},");
   });
   // TODO: Benchmark matchVariant against generated direct if/switch dispatch for hot response paths.
@@ -747,9 +757,11 @@ function emitResponseDecisionEncoder(
   return lines.join("\n");
 }
 
-function emitResponseVariant(ctx: EmitterCtx, op: HttpOperation, response: SuccessResponseVariant): string {
+function emitResponseVariant(
+  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  response: SuccessResponseVariant,
+): string {
   const fields = [`status: ${response.statusCode}`];
-  const kind = pickVariantKind(ctx, op, response);
   if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
   if (response.contentType) fields.push(`contentType: ${JSON.stringify(response.contentType)}`);
   if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
@@ -765,19 +777,15 @@ function emitResponseVariant(ctx: EmitterCtx, op: HttpOperation, response: Succe
   return `{ ${fields.join(", ")} }`;
 }
 
-type ResponseEncoderKind = "json" | "text" | "bytes" | "empty";
-
-function pickVariantKind(ctx: EmitterCtx, op: HttpOperation, response: SuccessResponseVariant): ResponseEncoderKind {
-  if (response.isVoid) return "empty";
-  return classifyResponseContentType(ctx, op, response.contentType);
-}
+type ResponseEncoderKind = "json" | "text" | "bytes" | "empty" | "unsupported";
 
 /**
  * Maps an HTTP response content type to the matching `ResponseEncoders` kind.
- * Unsupported types (e.g. `application/xml`, `multipart/*`) report a diagnostic
- * and fall back to JSON so downstream emission still produces compilable code.
- * Missing content types default to JSON without warning — TypeSpec doesn't
- * require operations to declare one.
+ * Unrecognized types (e.g. `application/xml`, `multipart/*`) report a hard
+ * diagnostic and return `"unsupported"`; callers emit a placeholder encoder
+ * that throws at runtime so we never silently coerce a non-conforming
+ * response to JSON. Missing content types default to JSON without warning
+ * — TypeSpec doesn't require operations to declare one.
  */
 function classifyResponseContentType(
   ctx: EmitterCtx,
@@ -794,10 +802,14 @@ function classifyResponseContentType(
     format: { contentType, operationName: op.operation.name },
     target: op.operation,
   });
-  return "json";
+  return "unsupported";
 }
 
-function encoderForKind(kind: ResponseEncoderKind, tsType: string, status: number): string {
+function encoderForKind(
+  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  tsType: string,
+  status: number,
+): string {
   switch (kind) {
     case "empty":
       return `ResponseEncoders.empty(${status})`;
@@ -808,6 +820,18 @@ function encoderForKind(kind: ResponseEncoderKind, tsType: string, status: numbe
     case "json":
       return `ResponseEncoders.json<${tsType}>(${status})`;
   }
+}
+
+function emitUnsupportedEncoder(
+  resultType: string,
+  operationName: string,
+  contentType: string | undefined,
+): string {
+  const reason = JSON.stringify(
+    `Operation "${operationName}" declares unsupported response content type "${contentType ?? ""}". ` +
+      `@typespex/emitter cannot serialize this; regenerate after addressing the diagnostic.`,
+  );
+  return `ResponseEncoders.unsupported<${resultType}>(${reason})`;
 }
 
 interface ResponseHeader {

@@ -252,16 +252,23 @@ describe("response encoding", () => {
     expect(operations).not.toContain("ResponseEncoders.json<{ body: Uint8Array }>");
   });
 
-  test("unsupported response content type produces a diagnostic", () => {
-    const diagnostics = compileFixtureExpectingDiagnostics(
+  test("unsupported response content type produces a diagnostic and a poisoned encoder", () => {
+    const r = compileFixtureExpectingDiagnostics(
       "unsupported-response-ct",
       unsupportedContentTypeSpec,
     );
 
-    const combined = `${diagnostics.stdout}\n${diagnostics.stderr}`;
+    const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
     expect(combined).toContain("unsupported-response-content-type");
     expect(combined).toContain("application/xml");
     expect(combined).toContain("list");
+
+    // TypeSpec writes generated files even on error-severity diagnostics.
+    // The emitted encoder must throw at runtime, not silently fall back to JSON.
+    const operations = r.readFile("unsupported-api", "server-operations.ts");
+    expect(operations).toContain(`ResponseEncoders.unsupported<`);
+    expect(operations).toContain("application/xml");
+    expect(operations).not.toContain("ResponseEncoders.json<");
   });
 
   test("multiple error types generate matchVariant result encoders", () => {

@@ -242,6 +242,18 @@ function unreachableResponse(value: unknown): never {
   );
 }
 
+/**
+ * Encoder placeholder for response variants whose declared content type the
+ * emitter cannot serialize. Construction is free; calling `encode` throws
+ * so that any code path that bypassed the emitter diagnostic fails loudly
+ * instead of returning a misleading response.
+ */
+function unsupportedResponseEncoder<A>(reason: string): ResponseEncoder<A> {
+  return ResponseEncoder.of(() => {
+    throw new TypeError(reason);
+  });
+}
+
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
@@ -253,4 +265,5 @@ export const ResponseEncoders = {
   variant: variantResponseEncoder,
   matchVariant: matchVariantResponseEncoder,
   unreachable: unreachableResponse,
+  unsupported: unsupportedResponseEncoder,
 } as const;

@@ -186,6 +186,13 @@ describe("ResponseEncoders", () => {
     expect(bytes.headers.get("content-type")).toBe("application/octet-stream");
   });
 
+  test("unsupported encoder throws with the configured reason when invoked", () => {
+    const encoder = ResponseEncoders.unsupported<{ id: string }>(
+      `Operation "list" declares unsupported response content type "application/xml".`,
+    );
+    expect(() => encoder.encode({ id: "p-1" })).toThrow("application/xml");
+  });
+
   test("variant encoder sets Content-Type from declared kind when not overridden", () => {
     const text = ResponseEncoders.variant<{ body: string }>({
       status: 200,

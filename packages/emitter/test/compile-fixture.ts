@@ -42,6 +42,10 @@ export interface CompileDiagnostics {
   readonly stderr: string;
 }
 
+export interface FailedCompileResult extends CompileResult {
+  readonly diagnostics: CompileDiagnostics;
+}
+
 export function compileFixture(
   name: string,
   source: string,
@@ -54,16 +58,19 @@ export function compileFixture(
 
 /**
  * Runs the compiler expecting it to surface diagnostics (non-zero exit).
- * Returns the captured stdout/stderr so tests can assert on emitted codes.
+ * Returns the captured stdout/stderr alongside the same file-reading surface
+ * as a normal compile so tests can inspect what was still written.
  */
 export function compileFixtureExpectingDiagnostics(
   name: string,
   source: string,
   configExtra = "",
   extraFiles?: Record<string, string>,
-): CompileDiagnostics {
-  const { diagnostics } = runCompiler(name, source, configExtra, extraFiles, { expectFailure: true });
-  return diagnostics;
+): FailedCompileResult {
+  const { result, diagnostics } = runCompiler(name, source, configExtra, extraFiles, {
+    expectFailure: true,
+  });
+  return { ...result, diagnostics };
 }
 
 function runCompiler(
