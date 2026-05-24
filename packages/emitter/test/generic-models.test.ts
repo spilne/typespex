@@ -141,6 +141,34 @@ interface Pets {
 }
 `;
 
+const templatedOperationSurfaceSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "TemplateSurfaceApi" })
+namespace TemplateSurfaceApi;
+
+model Page<T> {
+  items: T[];
+}
+
+model Pet {
+  id: string;
+}
+
+interface ReadOps<T> {
+  @get read(): Page<T>;
+}
+
+op readTemplate<T>(): Page<T>;
+
+@route("/pets")
+interface Pets extends ReadOps<Pet> {
+  @route("/template")
+  @get readFromTemplate is readTemplate<Pet>;
+}
+`;
+
 describe("generic models", () => {
   test("emits generic model declarations and instantiated operation types", () => {
     const r = compileFixture("generic-response", genericResponseSpec);
@@ -232,5 +260,21 @@ describe("generic models", () => {
     expect(operations).not.toContain("OmitProperties");
     expect(operations).toContain("owner: Decoders.optional(Decoders.object<Owner>({ id: Decoders.string }))");
     r.typecheck("standard-template-api");
+  });
+
+  test("preserves generic model references through templated interfaces and operations", () => {
+    const r = compileFixture("generic-template-surfaces", templatedOperationSurfaceSpec);
+    const server = r.readFile("template-surface-api", "server.ts");
+    const operations = r.readFile("template-surface-api", "server-operations.ts");
+
+    expect(server).toContain(
+      "readonly read: OperationHandler<Record<string, never>, Page<Pet>, Ctx>",
+    );
+    expect(server).toContain(
+      "readonly readFromTemplate: OperationHandler<Record<string, never>, Page<Pet>, Ctx>",
+    );
+    expect(operations).toContain("read: ResponseEncoders.json<Page<Pet>>(200)");
+    expect(operations).toContain("readFromTemplate: ResponseEncoders.json<Page<Pet>>(200)");
+    r.typecheck("template-surface-api");
   });
 });
