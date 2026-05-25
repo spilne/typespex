@@ -373,6 +373,16 @@ export function emitResultResponseEncoder(
       code: "undifferentiable-response-union",
       target: op.operation,
     });
+    // Don't silently fall back to responses[0] — that would ship a server
+    // that handles only the first declared variant. Emit a placeholder that
+    // throws if anyone bypasses the diagnostic, matching the unsupported-CT
+    // pattern from PR #26.
+    return emitUnsupportedEncoderReason(
+      resultType,
+      `Operation "${op.operation.name}" declares ${responses.length} response variants the emitter cannot ` +
+        `distinguish at the result-value level. @typespex/emitter cannot serialize this; regenerate after ` +
+        `addressing the diagnostic.`,
+    );
   }
 
   const response = responses[0];
@@ -454,13 +464,15 @@ function collectResponseVariants(
       continue;
     }
 
-    // One variant per declared content type. TypeSpec collapses same-status
-    // responses into a single HttpOperationResponse with multiple `responses`
-    // entries; without this expansion, only the first content type would be
-    // serialized.
+    // One variant per (content entry × declared content type). TypeSpec
+    // collapses same-status responses into a single HttpOperationResponse
+    // with multiple `responses` entries, AND a single content entry can
+    // declare multiple media types (e.g. via `@header contentType: "json" | "csv"`).
+    // Without this expansion the emitter would silently drop everything but
+    // the first.
     for (const content of resp.responses) {
       const body = content.body;
-      const contentType = body?.contentTypes[0];
+      const declaredContentTypes = body?.contentTypes.length ? body.contentTypes : [undefined];
       const headers = collectResponseHeadersFromContent(ctx, content);
       const metadataProperties = content.properties.filter((prop) =>
         prop.kind === "header" ||
@@ -474,18 +486,20 @@ function collectResponseVariants(
       // collapsing to a single shared model.
       const variantModel = body?.type.kind === "Model" ? body.type : undefined;
 
-      variants.push({
-        statusCode,
-        isVoid: false,
-        contentType,
-        headers,
-        bodyProperty: body?.property?.name,
-        omitProperties: metadataProperties.map((prop) => prop.property.name),
-        type: body?.type ?? resp.type,
-        model: variantModel,
-        tsType: responseContentToTs(ctx, resp, content),
-        hiddenProperties,
-      });
+      for (const contentType of declaredContentTypes) {
+        variants.push({
+          statusCode,
+          isVoid: false,
+          contentType,
+          headers,
+          bodyProperty: body?.property?.name,
+          omitProperties: metadataProperties.map((prop) => prop.property.name),
+          type: body?.type ?? resp.type,
+          model: variantModel,
+          tsType: responseContentToTs(ctx, resp, content),
+          hiddenProperties,
+        });
+      }
     }
   }
 
@@ -547,6 +561,23 @@ interface ResponseBranch {
 }
 
 function buildResponseBranches(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  responses: readonly SuccessResponseVariant[],
+): ResponseBranch[] {
+  const branches = collectBranches(ctx, op, responses);
+  // Branches that share a `when` predicate are not really distinguishable —
+  // the first match wins and later variants are dead code. Reject so the
+  // caller emits the undifferentiable diagnostic + unsupported placeholder.
+  const seen = new Set<string>();
+  for (const branch of branches) {
+    if (seen.has(branch.condition)) return [];
+    seen.add(branch.condition);
+  }
+  return branches;
+}
+
+function collectBranches(
   ctx: EmitterCtx,
   op: HttpOperation,
   responses: readonly SuccessResponseVariant[],
@@ -1021,11 +1052,15 @@ function emitUnsupportedEncoder(
   operationName: string,
   contentType: string | undefined,
 ): string {
-  const reason = JSON.stringify(
+  return emitUnsupportedEncoderReason(
+    resultType,
     `Operation "${operationName}" declares unsupported response content type "${contentType ?? ""}". ` +
       `@typespex/emitter cannot serialize this; regenerate after addressing the diagnostic.`,
   );
-  return `ResponseEncoders.unsupported<${resultType}>(${reason})`;
+}
+
+function emitUnsupportedEncoderReason(resultType: string, reason: string): string {
+  return `ResponseEncoders.unsupported<${resultType}>(${JSON.stringify(reason)})`;
 }
 
 interface ResponseHeader {

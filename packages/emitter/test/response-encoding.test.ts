@@ -140,6 +140,26 @@ model CsvFeed {
 @get op list(): JsonFeed | CsvFeed;
 `;
 
+const unionContentTypeOnOneResponseSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "UnionCtApi" })
+namespace UnionCtApi;
+
+// A single response model whose @header contentType is a union of literals.
+// TypeSpec produces ONE content entry with body.contentTypes = ["application/json", "text/csv"].
+// The emitter must surface BOTH media types — not silently pick the first.
+model EitherFeed {
+  @statusCode _: 200;
+  @header contentType: "application/json" | "text/csv";
+  @body body: string;
+}
+
+@route("/feed")
+@get op list(): EitherFeed;
+`;
+
 const envelopeObjectBodyDispatchSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -363,6 +383,27 @@ describe("response encoding", () => {
     // status alone (which would always pick the first variant).
     expect(operations).toMatch(/Array\.isArray\(.*?\["body"\]\)/);
     expect(operations).toMatch(/typeof .*?\["body"\] === "string"/);
+  });
+
+  test("union-typed contentType with the same body fires the undifferentiable diagnostic", () => {
+    const r = compileFixtureExpectingDiagnostics(
+      "union-ct",
+      unionContentTypeOnOneResponseSpec,
+    );
+    const operations = r.readFile("union-ct-api", "server-operations.ts");
+    const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
+
+    // The server can't pick between identical-shape variants at the
+    // result-value level — TypeSpec needs content negotiation for that.
+    // Fire the diagnostic and emit a placeholder instead of silently
+    // dropping the second media type (the previous behavior).
+    expect(combined).toContain("undifferentiable-response-union");
+    expect(operations).toContain("ResponseEncoders.unsupported<");
+
+    // Must NOT silently emit a single-encoder for application/json that
+    // ignores text/csv.
+    expect(operations).not.toMatch(/ResponseEncoders\.variant<[^>]*>\(\s*\{[^}]*"application\/json"/);
+    expect(operations).not.toContain(`status: 200,\n    contentType: "application/json"`);
   });
 
   test("envelope variants with object bodies dispatch on body fields, not envelope fields", () => {
