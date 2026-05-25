@@ -140,6 +140,32 @@ model CsvFeed {
 @get op list(): JsonFeed | CsvFeed;
 `;
 
+const envelopeObjectBodyDispatchSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "EnvelopeApi" })
+namespace EnvelopeApi;
+
+// Two envelopes sharing status + content type. Body shapes are both objects,
+// so resolveEnvelopeBodyShapeBranches can't separate them on \`Array.isArray\`
+// / typeof — dispatch must inspect properties INSIDE \`result.body\`.
+model JsonAlpha {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: { kind: "alpha"; alphaField: string };
+}
+
+model JsonBeta {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: { kind: "beta"; betaField: string };
+}
+
+@route("/items")
+@get op fetch(): JsonAlpha | JsonBeta;
+`;
+
 const multiErrorSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -337,6 +363,32 @@ describe("response encoding", () => {
     // status alone (which would always pick the first variant).
     expect(operations).toMatch(/Array\.isArray\(.*?\["body"\]\)/);
     expect(operations).toMatch(/typeof .*?\["body"\] === "string"/);
+  });
+
+  test("envelope variants with object bodies dispatch on body fields, not envelope fields", () => {
+    const r = compileFixture("envelope-object-dispatch", envelopeObjectBodyDispatchSpec);
+    const operations = r.readFile("envelope-api", "server-operations.ts");
+
+    // Handler signature shows both envelope shapes.
+    expect(operations).toContain(`{ body: { kind: "alpha"; alphaField: string } }`);
+    expect(operations).toContain(`{ body: { kind: "beta"; betaField: string } }`);
+
+    // Dispatch must target the body's properties, not the envelope's. The
+    // handler returns `{ body: {...} }` — checking `"kind" in result` would
+    // always be false because `kind` lives one level down.
+    expect(operations).toMatch(/\["body"\][^=]*===\s*"alpha"/);
+    expect(operations).toMatch(/\["body"\][^=]*===\s*"beta"/);
+
+    // Must NOT emit predicates that target the envelope (which has no `kind`
+    // or `alphaField` property).
+    expect(operations).not.toMatch(/"kind" in result\b/);
+    expect(operations).not.toMatch(/"alphaField" in result\b/);
+    expect(operations).not.toMatch(/"betaField" in result\b/);
+
+    // No silent fallback to unsupported.
+    expect(operations).not.toContain("ResponseEncoders.unsupported<");
+
+    r.typecheck("envelope-api");
   });
 
   test("discriminator response unions generate readable type guards", () => {

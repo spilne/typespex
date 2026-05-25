@@ -590,9 +590,10 @@ function buildResponseBranches(
   if (objectResponses.length !== pending.size) return [];
 
   if (objectResponses.length === 1) {
+    const [single] = objectResponses;
     branches.push({
-      response: objectResponses[0],
-      condition: `typeof result === "object" && result !== null && !Array.isArray(result)`,
+      response: single,
+      condition: emitObjectShapeCondition(single),
     });
     return branches;
   }
@@ -622,34 +623,63 @@ function emitDirectTypeCondition(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
 ): string | undefined {
+  const subject = subjectExpr(response);
   if (response.model && isArrayModelType(ctx.program, response.model)) {
-    return "Array.isArray(result)";
+    return wrapSubjectGuard(response, `Array.isArray(${subject})`);
   }
 
   if (response.type.kind === "Intrinsic" && response.type.name === "null") {
-    return "result === null";
+    return wrapSubjectGuard(response, `${subject} === null`);
   }
 
   if (response.type.kind !== "Scalar") return undefined;
 
   const scalarType = scalarToTs(response.type);
   if (scalarType === "string") {
-    return `typeof result === "string"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "string"`);
   }
   if (scalarType === "boolean") {
-    return `typeof result === "boolean"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "boolean"`);
   }
   if (scalarType === "Uint8Array") {
-    return "result instanceof Uint8Array";
+    return wrapSubjectGuard(response, `${subject} instanceof Uint8Array`);
   }
   if (scalarType === "number") {
-    return `typeof result === "number"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "number"`);
   }
   if (scalarType === "bigint") {
-    return `typeof result === "bigint"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "bigint"`);
   }
 
   return undefined;
+}
+
+/**
+ * Expression for the value a dispatcher should test against `result`. For
+ * envelope variants (where `@body body: T` wraps the handler-facing shape),
+ * predicates must target `result[bodyProperty]` rather than the envelope
+ * itself; otherwise property/type checks generated from the body's model
+ * would always miss against the envelope object.
+ */
+function subjectExpr(variant: SuccessResponseVariant): string {
+  if (variant.bodyProperty === undefined) return "result";
+  return `(result as Record<string, unknown>)[${JSON.stringify(variant.bodyProperty)}]`;
+}
+
+/**
+ * For envelope variants, predicates that inspect the body must also assert
+ * the envelope exists. Direct-result variants don't need the extra guard.
+ */
+function wrapSubjectGuard(variant: SuccessResponseVariant, condition: string): string {
+  if (variant.bodyProperty === undefined) return condition;
+  return `typeof result === "object" && result !== null && ${JSON.stringify(variant.bodyProperty)} in result && ${condition}`;
+}
+
+/** Common shape check that the variant's subject is a plain object. */
+function emitObjectShapeCondition(variant: SuccessResponseVariant): string {
+  const subject = subjectExpr(variant);
+  const base = `typeof ${subject} === "object" && ${subject} !== null && !Array.isArray(${subject})`;
+  return wrapSubjectGuard(variant, base);
 }
 
 function resolveExplicitDiscriminatorBranches(
@@ -709,10 +739,13 @@ function emitLiteralFieldBranches(
     const value = String(prop.type.value);
     if (values.has(value)) return undefined;
     values.add(value);
-    branches.push({
-      response,
-      condition: `typeof result === "object" && result !== null && ${JSON.stringify(field)} in result && result[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`,
-    });
+    const subject = subjectExpr(response);
+    const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+    const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`;
+    const guarded = response.bodyProperty === undefined
+      ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`
+      : `${emitObjectShapeCondition(response)} && ${base}`;
+    branches.push({ response, condition: guarded });
   }
 
   return branches;
@@ -752,7 +785,7 @@ function resolvePropertyBranches(
     const excludedProps = uniqueProperties.filter((_, j) => j !== i);
     branches.push({
       response: responses[i],
-      condition: emitExclusivePropertyCondition(uniqueProp, excludedProps),
+      condition: emitExclusivePropertyCondition(responses[i], uniqueProp, excludedProps),
     });
   }
 
@@ -760,16 +793,24 @@ function resolvePropertyBranches(
 }
 
 function emitExclusivePropertyCondition(
+  response: SuccessResponseVariant,
   requiredProperty: string,
   excludedProperties: readonly string[],
 ): string {
-  const checks = [
-    `typeof result === "object"`,
-    `result !== null`,
-    `${JSON.stringify(requiredProperty)} in result`,
-    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in result)`),
+  const subject = subjectExpr(response);
+  const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+  const propertyChecks = [
+    `${JSON.stringify(requiredProperty)} in ${cast}`,
+    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in ${cast})`),
   ];
-  return checks.join(" && ");
+  if (response.bodyProperty === undefined) {
+    return [
+      `typeof ${subject} === "object"`,
+      `${subject} !== null`,
+      ...propertyChecks,
+    ].join(" && ");
+  }
+  return [emitObjectShapeCondition(response), ...propertyChecks].join(" && ");
 }
 
 type BodyShape = "array" | "string" | "number" | "boolean" | "bytes" | "object";
