@@ -115,6 +115,77 @@ interface Feed {
 }
 `;
 
+const multiSuccessContentTypeSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "FeedApi" })
+namespace FeedApi;
+
+model Pet { id: string; }
+
+model JsonFeed {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: Pet[];
+}
+
+model CsvFeed {
+  @statusCode _: 200;
+  @header contentType: "text/csv";
+  @body body: string;
+}
+
+@route("/feed")
+@get op list(): JsonFeed | CsvFeed;
+`;
+
+const unionContentTypeOnOneResponseSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "UnionCtApi" })
+namespace UnionCtApi;
+
+// A single response model whose @header contentType is a union of literals.
+// TypeSpec produces ONE content entry with body.contentTypes = ["application/json", "text/csv"].
+// The emitter must surface BOTH media types — not silently pick the first.
+model EitherFeed {
+  @statusCode _: 200;
+  @header contentType: "application/json" | "text/csv";
+  @body body: string;
+}
+
+@route("/feed")
+@get op list(): EitherFeed;
+`;
+
+const envelopeObjectBodyDispatchSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "EnvelopeApi" })
+namespace EnvelopeApi;
+
+// Two envelopes sharing status + content type. Body shapes are both objects,
+// so resolveEnvelopeBodyShapeBranches can't separate them on \`Array.isArray\`
+// / typeof — dispatch must inspect properties INSIDE \`result.body\`.
+model JsonAlpha {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: { kind: "alpha"; alphaField: string };
+}
+
+model JsonBeta {
+  @statusCode _: 200;
+  @header contentType: "application/json";
+  @body body: { kind: "beta"; betaField: string };
+}
+
+@route("/items")
+@get op fetch(): JsonAlpha | JsonBeta;
+`;
+
 const multiErrorSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -283,6 +354,82 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("multiple success content types under one status emit per-variant encoders", () => {
+    const r = compileFixture("multi-success-ct", multiSuccessContentTypeSpec);
+    const operations = r.readFile("feed-api", "server-operations.ts");
+    const server = r.readFile("feed-api", "server.ts");
+
+    // Handler signature exposes BOTH variants. contentType is set by the
+    // runtime per-variant, so it stays out of the handler-facing shape.
+    expect(server).toContain(`{ body: Pet[] }`);
+    expect(server).toContain(`{ body: string }`);
+
+    // matchVariant dispatcher with one branch per declared content type.
+    expect(operations).toContain("ResponseEncoders.matchVariant<");
+    expect(operations).toContain(`contentType: "application/json"`);
+    expect(operations).toContain(`contentType: "text/csv"`);
+
+    // Each branch uses the encoder kind matching its declared CT.
+    // CSV must NOT serialize through the JSON path.
+    expect(operations).toContain(`kind: "text"`);
+    expect(operations).not.toContain(`ResponseEncoders.json<{ body: string }>`);
+
+    // No silent fallback / unsupported placeholder.
+    expect(operations).not.toContain("ResponseEncoders.unsupported<");
+
+    // Dispatch predicates discriminate on the body's runtime shape, not on
+    // status alone (which would always pick the first variant).
+    expect(operations).toMatch(/Array\.isArray\(.*?\["body"\]\)/);
+    expect(operations).toMatch(/typeof .*?\["body"\] === "string"/);
+  });
+
+  test("union-typed contentType with the same body fires the undifferentiable diagnostic", () => {
+    const r = compileFixtureExpectingDiagnostics(
+      "union-ct",
+      unionContentTypeOnOneResponseSpec,
+    );
+    const operations = r.readFile("union-ct-api", "server-operations.ts");
+    const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
+
+    // The server can't pick between identical-shape variants at the
+    // result-value level — TypeSpec needs content negotiation for that.
+    // Fire the diagnostic and emit a placeholder instead of silently
+    // dropping the second media type (the previous behavior).
+    expect(combined).toContain("undifferentiable-response-union");
+    expect(operations).toContain("ResponseEncoders.unsupported<");
+
+    // Must NOT silently emit a single-encoder for application/json that
+    // ignores text/csv.
+    expect(operations).not.toMatch(/ResponseEncoders\.variant<[^>]*>\(\s*\{[^}]*"application\/json"/);
+    expect(operations).not.toContain(`status: 200,\n    contentType: "application/json"`);
+  });
+
+  test("envelope variants with object bodies dispatch on body fields, not envelope fields", () => {
+    const r = compileFixture("envelope-object-dispatch", envelopeObjectBodyDispatchSpec);
+    const operations = r.readFile("envelope-api", "server-operations.ts");
+
+    // Handler signature shows both envelope shapes.
+    expect(operations).toContain(`{ body: { kind: "alpha"; alphaField: string } }`);
+    expect(operations).toContain(`{ body: { kind: "beta"; betaField: string } }`);
+
+    // Dispatch must target the body's properties, not the envelope's. The
+    // handler returns `{ body: {...} }` — checking `"kind" in result` would
+    // always be false because `kind` lives one level down.
+    expect(operations).toMatch(/\["body"\][^=]*===\s*"alpha"/);
+    expect(operations).toMatch(/\["body"\][^=]*===\s*"beta"/);
+
+    // Must NOT emit predicates that target the envelope (which has no `kind`
+    // or `alphaField` property).
+    expect(operations).not.toMatch(/"kind" in result\b/);
+    expect(operations).not.toMatch(/"alphaField" in result\b/);
+    expect(operations).not.toMatch(/"betaField" in result\b/);
+
+    // No silent fallback to unsupported.
+    expect(operations).not.toContain("ResponseEncoders.unsupported<");
+
+    r.typecheck("envelope-api");
   });
 
   test("discriminator response unions generate readable type guards", () => {

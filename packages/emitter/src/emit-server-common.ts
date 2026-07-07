@@ -254,12 +254,24 @@ export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
   const seen = new Set<string>();
 
   for (const resp of op.responses) {
-    const tsType = resp.type.kind === "Intrinsic" && resp.type.name === "void"
-      ? "void"
-      : responseTypeToTs(ctx, resp);
-    if (!seen.has(tsType)) {
-      types.push(tsType);
-      seen.add(tsType);
+    if (resp.type.kind === "Intrinsic" && resp.type.name === "void") {
+      if (!seen.has("void")) {
+        types.push("void");
+        seen.add("void");
+      }
+      continue;
+    }
+    // Expand same-status responses with multiple content types into one TS
+    // type per content entry — see collectResponseVariants for the same loop.
+    const contents = resp.responses.length > 0 ? resp.responses : [undefined];
+    for (const content of contents) {
+      const tsType = content
+        ? responseContentToTs(ctx, resp, content)
+        : responseTypeToTs(ctx, resp);
+      if (!seen.has(tsType)) {
+        types.push(tsType);
+        seen.add(tsType);
+      }
     }
   }
 
@@ -361,6 +373,16 @@ export function emitResultResponseEncoder(
       code: "undifferentiable-response-union",
       target: op.operation,
     });
+    // Don't silently fall back to responses[0] — that would ship a server
+    // that handles only the first declared variant. Emit a placeholder that
+    // throws if anyone bypasses the diagnostic, matching the unsupported-CT
+    // pattern from PR #26.
+    return emitUnsupportedEncoderReason(
+      resultType,
+      `Operation "${op.operation.name}" declares ${responses.length} response variants the emitter cannot ` +
+        `distinguish at the result-value level. @typespex/emitter cannot serialize this; regenerate after ` +
+        `addressing the diagnostic.`,
+    );
   }
 
   const response = responses[0];
@@ -418,7 +440,6 @@ function collectResponseVariants(
   const variants: SuccessResponseVariant[] = [];
 
   for (const resp of op.responses) {
-    const content = resp.responses[0];
     const rawStatus = resp.statusCodes;
     const statusCode = typeof rawStatus === "number"
       ? rawStatus
@@ -426,35 +447,99 @@ function collectResponseVariants(
         ? resolveStatusCodeFromModel(ctx, resp.type) ?? 200
         : 200;
     const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
-    const body = content?.body;
-    const contentType = body?.contentTypes[0];
-    const headers = collectResponseHeadersFromContent(ctx, content);
     const hiddenProperties = getHiddenResponsePropertyNames(resp);
-    const metadataProperties = content?.properties
-      .filter((prop) =>
+
+    if (isVoid || resp.responses.length === 0) {
+      variants.push({
+        statusCode: isVoid && statusCode === 200 ? 204 : statusCode,
+        isVoid,
+        contentType: undefined,
+        headers: [],
+        omitProperties: [],
+        type: resp.type,
+        model: resp.type.kind === "Model" ? resp.type : undefined,
+        tsType: isVoid ? "void" : responseTypeToTs(ctx, resp),
+        hiddenProperties,
+      });
+      continue;
+    }
+
+    // One variant per (content entry × declared content type). TypeSpec
+    // collapses same-status responses into a single HttpOperationResponse
+    // with multiple `responses` entries, AND a single content entry can
+    // declare multiple media types (e.g. via `@header contentType: "json" | "csv"`).
+    // Without this expansion the emitter would silently drop everything but
+    // the first.
+    for (const content of resp.responses) {
+      const body = content.body;
+      const declaredContentTypes = body?.contentTypes.length ? body.contentTypes : [undefined];
+      const headers = collectResponseHeadersFromContent(ctx, content);
+      const metadataProperties = content.properties.filter((prop) =>
         prop.kind === "header" ||
         prop.kind === "statusCode" ||
         prop.kind === "contentType" ||
         prop.kind === "body"
-      ) ?? [];
+      );
+      // Per-content variant gets the body's own model when available, so the
+      // property-based dispatcher can find fields unique to this variant.
+      // Same-status, same-CT shapes with different bodies need this to avoid
+      // collapsing to a single shared model.
+      const variantModel = body?.type.kind === "Model" ? body.type : undefined;
 
-    variants.push({
-      statusCode: isVoid && statusCode === 200 ? 204 : statusCode,
-      isVoid,
-      contentType,
-      headers,
-      bodyProperty: body?.property?.name,
-      omitProperties: metadataProperties.map((prop) => prop.property.name),
-      type: resp.type,
-      model: resp.type.kind === "Model" ? resp.type : undefined,
-      tsType: resp.type.kind === "Intrinsic" && resp.type.name === "void"
-        ? "void"
-        : responseTypeToTs(ctx, resp),
-      hiddenProperties,
-    });
+      for (const contentType of declaredContentTypes) {
+        variants.push({
+          statusCode,
+          isVoid: false,
+          contentType,
+          headers,
+          bodyProperty: body?.property?.name,
+          omitProperties: metadataProperties.map((prop) => prop.property.name),
+          type: body?.type ?? resp.type,
+          model: variantModel,
+          tsType: responseContentToTs(ctx, resp, content),
+          hiddenProperties,
+        });
+      }
+    }
   }
 
   return variants;
+}
+
+/**
+ * Handler-facing TypeScript type for a single content variant of a response.
+ * For a single-content response with no envelope metadata, this is just the
+ * underlying body type. Otherwise it's an envelope `{ body: T; ...headers }`
+ * synthesized from this content's body and the response model's headers, with
+ * statusCode/contentType always stripped (the runtime sets them).
+ */
+function responseContentToTs(
+  ctx: EmitterCtx,
+  resp: HttpOperationResponse,
+  content: HttpOperationResponse["responses"][number],
+): string {
+  if (resp.type.kind !== "Model" || !hasResponseEnvelopeMetadata(resp)) {
+    return typeToTs(ctx, resp.type);
+  }
+
+  // Named model with no handler-visible metadata AND only one content entry
+  // can keep referring to the model by name. Multi-content responses always
+  // synthesize per-content envelopes because the bodies differ.
+  if (resp.type.name && !hasHandlerVisibleMetadata(resp) && resp.responses.length === 1) {
+    return typeToTs(ctx, resp.type);
+  }
+
+  const parts: string[] = [];
+  for (const prop of content.properties) {
+    if (prop.kind === "statusCode" || prop.kind === "contentType") continue;
+    const tsType = prop.kind === "body" && content.body
+      ? typeToTs(ctx, content.body.type)
+      : typeToTs(ctx, prop.property.type);
+    parts.push(tsPropertyDeclaration(prop.property.name, tsType, {
+      optional: prop.property.optional,
+    }));
+  }
+  return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
 }
 
 function collectResponseHeadersFromContent(
@@ -480,6 +565,23 @@ function buildResponseBranches(
   op: HttpOperation,
   responses: readonly SuccessResponseVariant[],
 ): ResponseBranch[] {
+  const branches = collectBranches(ctx, op, responses);
+  // Branches that share a `when` predicate are not really distinguishable —
+  // the first match wins and later variants are dead code. Reject so the
+  // caller emits the undifferentiable diagnostic + unsupported placeholder.
+  const seen = new Set<string>();
+  for (const branch of branches) {
+    if (seen.has(branch.condition)) return [];
+    seen.add(branch.condition);
+  }
+  return branches;
+}
+
+function collectBranches(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  responses: readonly SuccessResponseVariant[],
+): ResponseBranch[] {
   const branches: ResponseBranch[] = [];
   const pending = new Set(responses);
 
@@ -489,6 +591,19 @@ function buildResponseBranches(
     const [response] = voidResponses;
     branches.push({ response, condition: "result === undefined" });
     pending.delete(response);
+  }
+
+  // Envelope body-shape discriminator: when the remaining variants are
+  // envelope shapes (a single `body` property) and their body runtime types
+  // are distinguishable (array vs string vs number vs bytes vs object),
+  // dispatch on `result.body`'s shape. Necessary for same-status,
+  // different-content-type operations whose bodies are scalars/arrays —
+  // the object-only path below wouldn't accept them.
+  const bodyShapeBranches = resolveEnvelopeBodyShapeBranches(ctx, [...pending]);
+  if (bodyShapeBranches) {
+    branches.push(...bodyShapeBranches);
+    for (const branch of bodyShapeBranches) pending.delete(branch.response);
+    if (pending.size === 0) return branches;
   }
 
   for (const response of [...pending]) {
@@ -506,9 +621,10 @@ function buildResponseBranches(
   if (objectResponses.length !== pending.size) return [];
 
   if (objectResponses.length === 1) {
+    const [single] = objectResponses;
     branches.push({
-      response: objectResponses[0],
-      condition: `typeof result === "object" && result !== null && !Array.isArray(result)`,
+      response: single,
+      condition: emitObjectShapeCondition(single),
     });
     return branches;
   }
@@ -538,34 +654,63 @@ function emitDirectTypeCondition(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
 ): string | undefined {
+  const subject = subjectExpr(response);
   if (response.model && isArrayModelType(ctx.program, response.model)) {
-    return "Array.isArray(result)";
+    return wrapSubjectGuard(response, `Array.isArray(${subject})`);
   }
 
   if (response.type.kind === "Intrinsic" && response.type.name === "null") {
-    return "result === null";
+    return wrapSubjectGuard(response, `${subject} === null`);
   }
 
   if (response.type.kind !== "Scalar") return undefined;
 
   const scalarType = scalarToTs(response.type);
   if (scalarType === "string") {
-    return `typeof result === "string"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "string"`);
   }
   if (scalarType === "boolean") {
-    return `typeof result === "boolean"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "boolean"`);
   }
   if (scalarType === "Uint8Array") {
-    return "result instanceof Uint8Array";
+    return wrapSubjectGuard(response, `${subject} instanceof Uint8Array`);
   }
   if (scalarType === "number") {
-    return `typeof result === "number"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "number"`);
   }
   if (scalarType === "bigint") {
-    return `typeof result === "bigint"`;
+    return wrapSubjectGuard(response, `typeof ${subject} === "bigint"`);
   }
 
   return undefined;
+}
+
+/**
+ * Expression for the value a dispatcher should test against `result`. For
+ * envelope variants (where `@body body: T` wraps the handler-facing shape),
+ * predicates must target `result[bodyProperty]` rather than the envelope
+ * itself; otherwise property/type checks generated from the body's model
+ * would always miss against the envelope object.
+ */
+function subjectExpr(variant: SuccessResponseVariant): string {
+  if (variant.bodyProperty === undefined) return "result";
+  return `(result as Record<string, unknown>)[${JSON.stringify(variant.bodyProperty)}]`;
+}
+
+/**
+ * For envelope variants, predicates that inspect the body must also assert
+ * the envelope exists. Direct-result variants don't need the extra guard.
+ */
+function wrapSubjectGuard(variant: SuccessResponseVariant, condition: string): string {
+  if (variant.bodyProperty === undefined) return condition;
+  return `typeof result === "object" && result !== null && ${JSON.stringify(variant.bodyProperty)} in result && ${condition}`;
+}
+
+/** Common shape check that the variant's subject is a plain object. */
+function emitObjectShapeCondition(variant: SuccessResponseVariant): string {
+  const subject = subjectExpr(variant);
+  const base = `typeof ${subject} === "object" && ${subject} !== null && !Array.isArray(${subject})`;
+  return wrapSubjectGuard(variant, base);
 }
 
 function resolveExplicitDiscriminatorBranches(
@@ -625,10 +770,13 @@ function emitLiteralFieldBranches(
     const value = String(prop.type.value);
     if (values.has(value)) return undefined;
     values.add(value);
-    branches.push({
-      response,
-      condition: `typeof result === "object" && result !== null && ${JSON.stringify(field)} in result && result[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`,
-    });
+    const subject = subjectExpr(response);
+    const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+    const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`;
+    const guarded = response.bodyProperty === undefined
+      ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`
+      : `${emitObjectShapeCondition(response)} && ${base}`;
+    branches.push({ response, condition: guarded });
   }
 
   return branches;
@@ -668,7 +816,7 @@ function resolvePropertyBranches(
     const excludedProps = uniqueProperties.filter((_, j) => j !== i);
     branches.push({
       response: responses[i],
-      condition: emitExclusivePropertyCondition(uniqueProp, excludedProps),
+      condition: emitExclusivePropertyCondition(responses[i], uniqueProp, excludedProps),
     });
   }
 
@@ -676,16 +824,93 @@ function resolvePropertyBranches(
 }
 
 function emitExclusivePropertyCondition(
+  response: SuccessResponseVariant,
   requiredProperty: string,
   excludedProperties: readonly string[],
 ): string {
-  const checks = [
-    `typeof result === "object"`,
-    `result !== null`,
-    `${JSON.stringify(requiredProperty)} in result`,
-    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in result)`),
+  const subject = subjectExpr(response);
+  const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+  const propertyChecks = [
+    `${JSON.stringify(requiredProperty)} in ${cast}`,
+    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in ${cast})`),
   ];
-  return checks.join(" && ");
+  if (response.bodyProperty === undefined) {
+    return [
+      `typeof ${subject} === "object"`,
+      `${subject} !== null`,
+      ...propertyChecks,
+    ].join(" && ");
+  }
+  return [emitObjectShapeCondition(response), ...propertyChecks].join(" && ");
+}
+
+type BodyShape = "array" | "string" | "number" | "boolean" | "bytes" | "object";
+
+/**
+ * Dispatch variants whose envelope is a single `body` property and whose
+ * body runtime shapes (array vs string vs number vs bytes vs object) are
+ * all distinct. Generates `Array.isArray(result.body)` /
+ * `typeof result.body === "..."` checks. Returns undefined when fewer than
+ * two variants qualify or when two variants share the same body shape.
+ */
+function resolveEnvelopeBodyShapeBranches(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): ResponseBranch[] | undefined {
+  if (responses.length < 2) return undefined;
+
+  const shapes: BodyShape[] = [];
+  for (const response of responses) {
+    if (response.isVoid) return undefined;
+    if (response.bodyProperty === undefined) return undefined;
+    const bodyType = response.type;
+    const shape = bodyShapeFor(ctx, bodyType);
+    if (!shape) return undefined;
+    if (shapes.includes(shape)) return undefined;
+    shapes.push(shape);
+  }
+
+  return responses.map((response, index) => ({
+    response,
+    condition: emitBodyShapeCondition(response.bodyProperty!, shapes[index]),
+  }));
+}
+
+function bodyShapeFor(ctx: EmitterCtx, type: Type): BodyShape | undefined {
+  if (type.kind === "Model") {
+    if (isArrayModelType(ctx.program, type)) return "array";
+    if (isRecordModelType(ctx.program, type)) return "object";
+    return "object";
+  }
+  if (type.kind === "Tuple") return "array";
+  if (type.kind === "Scalar") {
+    const tsType = scalarToTs(type);
+    if (tsType === "string") return "string";
+    if (tsType === "number") return "number";
+    if (tsType === "boolean") return "boolean";
+    if (tsType === "Uint8Array") return "bytes";
+    return undefined;
+  }
+  return undefined;
+}
+
+function emitBodyShapeCondition(bodyProperty: string, shape: BodyShape): string {
+  const body = `(result as Record<string, unknown>)[${JSON.stringify(bodyProperty)}]`;
+  const guard = `typeof result === "object" && result !== null && ${JSON.stringify(bodyProperty)} in result`;
+  switch (shape) {
+    case "array":
+      return `${guard} && Array.isArray(${body})`;
+    case "string":
+      return `${guard} && typeof ${body} === "string"`;
+    case "number":
+      return `${guard} && typeof ${body} === "number"`;
+    case "boolean":
+      return `${guard} && typeof ${body} === "boolean"`;
+    case "bytes":
+      return `${guard} && ${body} instanceof Uint8Array`;
+    case "object":
+      return `${guard} && typeof ${body} === "object" && ${body} !== null && !Array.isArray(${body})`;
+  }
 }
 
 function isResponseDispatchMetadata(
@@ -827,11 +1052,15 @@ function emitUnsupportedEncoder(
   operationName: string,
   contentType: string | undefined,
 ): string {
-  const reason = JSON.stringify(
+  return emitUnsupportedEncoderReason(
+    resultType,
     `Operation "${operationName}" declares unsupported response content type "${contentType ?? ""}". ` +
       `@typespex/emitter cannot serialize this; regenerate after addressing the diagnostic.`,
   );
-  return `ResponseEncoders.unsupported<${resultType}>(${reason})`;
+}
+
+function emitUnsupportedEncoderReason(resultType: string, reason: string): string {
+  return `ResponseEncoders.unsupported<${resultType}>(${JSON.stringify(reason)})`;
 }
 
 interface ResponseHeader {
