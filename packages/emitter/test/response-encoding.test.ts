@@ -247,6 +247,22 @@ interface Items {
 }
 `;
 
+const sameStatusUnionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "SameStatusApi" })
+namespace SameStatusApi;
+
+model Circle { kind: "circle"; radius: float64; }
+model Square { kind: "square"; size: float64; }
+
+@route("/shapes")
+interface Shapes {
+  @post create(@body body: Circle): Circle | Square;
+}
+`;
+
 const discriminatorSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -354,6 +370,21 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-success-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("same-status union responses keep each variant's own type", () => {
+    const r = compileFixture("same-status-union", sameStatusUnionSpec);
+    const operations = r.readFile("same-status-api", "server-operations.ts");
+
+    // TypeSpec collapses same-status variants into one response with a
+    // content entry per body; each variant must surface its own model, not
+    // the first variant's type repeated.
+    expect(operations).toContain("ResponseEncoders.matchVariant<Circle | Square>(");
+    expect(operations).toContain("result is Circle");
+    expect(operations).toContain("result is Square");
+    expect(operations).toContain("(result: Circle | Square)");
+    expect(operations).toMatchSnapshot();
+    r.typecheck("same-status-api");
   });
 
   test("multiple success content types under one status emit per-variant encoders", () => {
