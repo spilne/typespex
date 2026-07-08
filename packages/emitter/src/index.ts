@@ -9,6 +9,7 @@ import { emitServerHints } from "./emit-server-hints.js";
 import { emitServerOperations } from "./emit-server-operations.js";
 import { emitServer } from "./emit-server.js";
 import { emitServerRouter } from "./emit-server-router.js";
+import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
 
 async function formatTs(fileName: string, content: string): Promise<string> {
   try {
@@ -47,6 +48,8 @@ export async function $onEmit(
 
     // Gather all HTTP operations
     const httpOperations = service.operations;
+
+    reportIgnoredDecorators(ctx, httpOperations);
 
     const files: Array<[string, string]> = [
       [`${layout.fileNames.models}.ts`, emitModels(ctx)],

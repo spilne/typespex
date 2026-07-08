@@ -73,12 +73,29 @@ export function compileFixtureExpectingDiagnostics(
   return { ...result, diagnostics };
 }
 
+/**
+ * Runs the compiler without asserting the exit code and returns whatever
+ * diagnostics were printed — for testing warning-severity diagnostics, which
+ * leave the exit code at zero.
+ */
+export function compileFixtureCollectingDiagnostics(
+  name: string,
+  source: string,
+  configExtra = "",
+  extraFiles?: Record<string, string>,
+): FailedCompileResult {
+  const { result, diagnostics } = runCompiler(name, source, configExtra, extraFiles, {
+    expectFailure: "allow",
+  });
+  return { ...result, diagnostics };
+}
+
 function runCompiler(
   name: string,
   source: string,
   configExtra: string,
   extraFiles: Record<string, string> | undefined,
-  options: { expectFailure: boolean },
+  options: { expectFailure: boolean | "allow" },
 ): { result: CompileResult; diagnostics: CompileDiagnostics } {
   const fixtureDir = mkdtempSync(join(repoRoot, `example/tmp-typespex-${name}-`));
   tempDirs.push(fixtureDir);
@@ -109,13 +126,13 @@ function runCompiler(
     stderr: proc.stderr.toString(),
   };
 
-  if (options.expectFailure && proc.exitCode === 0) {
+  if (options.expectFailure === true && proc.exitCode === 0) {
     throw new Error(
       `TypeSpec compile succeeded but diagnostics were expected\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
     );
   }
 
-  if (!options.expectFailure && proc.exitCode !== 0) {
+  if (options.expectFailure === false && proc.exitCode !== 0) {
     throw new Error(
       `TypeSpec compile failed\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
     );
