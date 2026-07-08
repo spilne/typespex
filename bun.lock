@@ -37,7 +37,7 @@
     },
     "packages/emitter": {
       "name": "@typespex/emitter",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@typespex/runtime": "workspace:*",
         "oxfmt": "^0.50.0",
@@ -54,14 +54,14 @@
     },
     "packages/runtime": {
       "name": "@typespex/runtime",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "typescript": "^5.7.0",
       },
     },
     "packages/shim-bun": {
       "name": "@typespex/shim-bun",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@typespex/runtime": "workspace:*",
       },
@@ -71,7 +71,7 @@
     },
     "packages/shim-hono": {
       "name": "@typespex/shim-hono",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@typespex/runtime": "workspace:*",
       },
@@ -85,7 +85,7 @@
     },
     "packages/shim-node": {
       "name": "@typespex/shim-node",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@typespex/runtime": "workspace:*",
       },

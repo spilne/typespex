@@ -1,6 +1,6 @@
 {
   "name": "@typespex/shim-hono",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Hono adapter for @typespex/runtime HTTP router",
   "license": "MIT",
   "author": "spilne",

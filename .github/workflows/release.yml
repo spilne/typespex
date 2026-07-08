@@ -35,9 +35,6 @@ jobs:
         run: bun test
 
       - name: Publish to npm
-        run: |
-          for pkg in runtime emitter shim-bun shim-hono shim-node; do
-            (cd "packages/$pkg" && npm publish --provenance --access public)
-          done
+        run: ./scripts/publish-packages.sh --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
