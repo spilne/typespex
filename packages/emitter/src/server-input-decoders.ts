@@ -101,9 +101,12 @@ export function emitDecoder(
   // Build request input decoder entries.
   const requestEntries: Array<{ name: string; expr: string }> = [];
   for (const param of pathParams) {
+    // Look up by wire name — @path("wire-name") makes it differ from the TS
+    // property name, and the route template (and thus the matcher's param
+    // map) uses the wire name.
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.path(${JSON.stringify(param.param.name)}, ${emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param)})`,
+      expr: `RequestDecoders.path(${JSON.stringify(param.name)}, ${emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param)})`,
     });
   }
   for (const param of queryParams) {

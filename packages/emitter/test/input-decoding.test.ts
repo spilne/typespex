@@ -80,6 +80,22 @@ interface Items {
 }
 `;
 
+const renamedPathParamSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "RenamedPathApi" })
+namespace RenamedPathApi;
+
+model Item { id: string; }
+
+@route("/items")
+interface Items {
+  @route("/{item-id}")
+  @get read(@path("item-id") itemId: string): Item;
+}
+`;
+
 const cookieSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -265,6 +281,19 @@ describe("input decoding", () => {
     const r = compileFixture("combined", combinedSpec);
 
     expect(r.readFile("combined-api", "server-operations.ts")).toMatchSnapshot();
+  });
+
+  test("renamed @path params decode by wire name and bind to the TS name", () => {
+    const r = compileFixture("renamed-path", renamedPathParamSpec);
+    const operations = r.readFile("renamed-path-api", "server-operations.ts");
+
+    // The matcher keys path params by the route segment name, so the decoder
+    // must look up "item-id" — not the TS property "itemId" — while the
+    // handler input still binds to itemId.
+    expect(operations).toContain(`path: "/items/:item-id"`);
+    expect(operations).toContain(`RequestDecoders.path("item-id"`);
+    expect(operations).toContain("({ itemId })");
+    r.typecheck("renamed-path-api");
   });
 
   test("cookie parameters", () => {
