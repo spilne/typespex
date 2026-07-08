@@ -9,6 +9,7 @@ import type {
   Union,
 } from "@typespec/compiler";
 import {
+  getDiscriminator,
   getMaxItems,
   getMaxLength,
   getMaxValueAsNumeric,
@@ -522,10 +523,94 @@ function emitUnionDecoder(
   mode: DecoderMode,
   seenModels: ReadonlySet<string>,
 ): string {
+  if (mode === "json") {
+    const discriminated = emitDiscriminatedUnionDecoder(ctx, dec, union, seenModels);
+    if (discriminated) return discriminated;
+  }
   const variants = [...union.variants.values()]
     .map((variant) => emitDecoderExpression(ctx, dec, variant.type, mode, seenModels))
     .join(", ");
   return `Decoders.union<${typeToTs(ctx, union)}>([${variants}])`;
+}
+
+/**
+ * Emits `Decoders.discriminated(...)` for tagged unions — O(1) dispatch on the
+ * tag field instead of the linear scan `Decoders.union(...)` does. Applies when
+ * every variant is a plain model carrying the same required literal-typed
+ * property with a distinct value. The field comes from `@discriminator` when
+ * present (only older compilers allow it on unions; kept for symmetry with
+ * response dispatch) and is otherwise inferred as a common literal field
+ * across the variants. Returns undefined when no such field exists so the
+ * caller falls back.
+ */
+function emitDiscriminatedUnionDecoder(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  union: Union,
+  seenModels: ReadonlySet<string>,
+): string | undefined {
+  const models = discriminatableModels(ctx, union);
+  if (!models) return undefined;
+
+  const field = getDiscriminator(ctx.program, union)?.propertyName
+    ?? inferCommonLiteralField(models);
+  if (!field) return undefined;
+
+  const entries: string[] = [];
+  const tags = new Set<string>();
+  for (const model of models) {
+    const tag = literalTagValue(model, field);
+    if (tag === undefined || tags.has(tag)) return undefined;
+    tags.add(tag);
+    entries.push(`${JSON.stringify(tag)}: ${emitDecoderExpression(ctx, dec, model, "json", seenModels)}`);
+  }
+
+  return `Decoders.discriminated<${typeToTs(ctx, union)}>(${JSON.stringify(field)}, { ${entries.join(", ")} })`;
+}
+
+/** All variants as plain (non-array, non-record) models, or undefined. */
+function discriminatableModels(ctx: EmitterCtx, union: Union): Model[] | undefined {
+  const types = [...union.variants.values()].map((variant) => variant.type);
+  if (types.length < 2) return undefined;
+  const models = types.filter(
+    (type): type is Model =>
+      type.kind === "Model" &&
+      !isArrayModelType(ctx.program, type) &&
+      !isRecordModelType(ctx.program, type),
+  );
+  return models.length === types.length ? models : undefined;
+}
+
+/**
+ * First property of the first variant that is a required literal in every
+ * variant with values distinct across them.
+ */
+function inferCommonLiteralField(models: readonly Model[]): string | undefined {
+  const [first, ...rest] = models;
+  for (const prop of walkPropertiesInherited(first!)) {
+    const value = literalTagValue(first!, prop.name);
+    if (value === undefined) continue;
+    const values = new Set([value]);
+    const viable = rest.every((model) => {
+      const tag = literalTagValue(model, prop.name);
+      if (tag === undefined || values.has(tag)) return false;
+      values.add(tag);
+      return true;
+    });
+    if (viable) return prop.name;
+  }
+  return undefined;
+}
+
+/** The model's required literal value for `field`, stringified for tag lookup. */
+function literalTagValue(model: Model, field: string): string | undefined {
+  for (const prop of walkPropertiesInherited(model)) {
+    if (prop.name !== field) continue;
+    if (prop.optional) return undefined;
+    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
+    return String(prop.type.value);
+  }
+  return undefined;
 }
 
 /**
