@@ -186,6 +186,34 @@ interface Items {
 }
 `;
 
+const discriminatedUnionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ShapesApi" })
+namespace ShapesApi;
+
+model Circle { kind: "circle"; radius: float64; }
+model Square { kind: "square"; size: float64; }
+
+union Shape { circle: Circle, square: Square }
+
+model Cat { species: "cat"; meows: boolean; }
+model Dog { species: "dog"; barks: boolean; }
+union Pet { cat: Cat, dog: Dog }
+
+model Left { value: string; }
+model Right { count: int32; }
+union Mixed { left: Left, right: Right }
+
+@route("/shapes")
+interface Shapes {
+  @post create(@body body: Shape): Circle;
+  @route("/pets") @post adopt(@body body: Pet): Cat;
+  @route("/mixed") @post mix(@body body: Mixed): Left;
+}
+`;
+
 const inheritedBodyImportSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -257,6 +285,22 @@ describe("input decoding", () => {
 
     expect(r.readFile("upload-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("upload-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("tagged unions dispatch via Decoders.discriminated", () => {
+    const r = compileFixture("discriminated-union", discriminatedUnionSpec);
+    const operations = r.readFile("shapes-api", "server-operations.ts");
+
+    // Dispatch field is inferred from a common required literal field
+    // present in every variant with distinct values.
+    expect(operations).toContain(`Decoders.discriminated<Circle | Square>("kind"`);
+    expect(operations).toContain(`Decoders.discriminated<Cat | Dog>("species"`);
+    // No shared literal field — falls back to the linear-scan union decoder.
+    expect(operations).toContain("Decoders.union<Left | Right>(");
+    expect(operations).not.toContain("Decoders.union<Circle | Square>(");
+    expect(operations).not.toContain("Decoders.union<Cat | Dog>(");
+    expect(operations).toMatchSnapshot();
+    r.typecheck("shapes-api");
   });
 
   test("inherited body properties pull in imported model types", () => {
