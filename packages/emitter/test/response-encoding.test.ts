@@ -224,6 +224,23 @@ interface Items {
 }
 `;
 
+const implicitErrorStatusSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ImplicitErrorApi" })
+namespace ImplicitErrorApi;
+
+model Item { id: string; }
+
+@error model Oops { code: "OOPS"; message: string; }
+
+@route("/items")
+interface Items {
+  @get read(@path itemId: string): Item | Oops;
+}
+`;
+
 const multiSuccessSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -347,6 +364,14 @@ describe("response encoding", () => {
 
     expect(r.readFile("multi-error-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("@error models without @statusCode encode as 500, not 200", () => {
+    const r = compileFixture("implicit-error-status", implicitErrorStatusSpec);
+    const operations = r.readFile("implicit-error-api", "server-operations.ts");
+
+    expect(operations).toContain("ResponseEncoders.variant<Item>({ status: 200");
+    expect(operations).toContain("ResponseEncoders.variant<Oops>({ status: 500");
   });
 
   test("multiple success types generate matchVariant result encoders", () => {

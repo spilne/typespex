@@ -2,6 +2,7 @@ import type { Model, ModelProperty, Type } from "@typespec/compiler";
 import {
   getDiscriminator,
   isArrayModelType,
+  isErrorModel,
   isRecordModelType,
   isType,
   walkPropertiesInherited,
@@ -440,12 +441,7 @@ function collectResponseVariants(
   const variants: SuccessResponseVariant[] = [];
 
   for (const resp of op.responses) {
-    const rawStatus = resp.statusCodes;
-    const statusCode = typeof rawStatus === "number"
-      ? rawStatus
-      : resp.type.kind === "Model"
-        ? resolveStatusCodeFromModel(ctx, resp.type) ?? 200
-        : 200;
+    const statusCode = resolveResponseStatusCode(ctx, resp);
     const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
     const hiddenProperties = getHiddenResponsePropertyNames(resp);
 
@@ -1066,6 +1062,21 @@ function emitUnsupportedEncoderReason(resultType: string, reason: string): strin
 interface ResponseHeader {
   readonly property: string;
   readonly header: string;
+}
+
+/**
+ * Concrete status code for a response variant. Numeric statusCodes win, then
+ * a literal @statusCode property on the model. Wildcard responses — what
+ * TypeSpec assigns an @error model with no explicit status — fall back to
+ * 500 rather than 200: an error encoded as success is worse than a generic
+ * server error.
+ */
+function resolveResponseStatusCode(ctx: EmitterCtx, resp: HttpOperationResponse): number {
+  if (typeof resp.statusCodes === "number") return resp.statusCodes;
+  if (resp.type.kind !== "Model") return 200;
+  const declared = resolveStatusCodeFromModel(ctx, resp.type);
+  if (declared !== undefined) return declared;
+  return isErrorModel(ctx.program, resp.type) ? 500 : 200;
 }
 
 /** Resolves status code from a @statusCode property on the model. */
