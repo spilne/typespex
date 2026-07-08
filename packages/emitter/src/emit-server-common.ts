@@ -519,7 +519,10 @@ function responseContentToTs(
   content: HttpOperationResponse["responses"][number],
 ): string {
   if (resp.type.kind !== "Model" || !hasResponseEnvelopeMetadata(resp)) {
-    return typeToTs(ctx, resp.type);
+    // resp.type reflects only one variant when TypeSpec collapses a
+    // same-status union into a single response with one content entry per
+    // variant body — the content's own body type is the accurate one.
+    return typeToTs(ctx, content.body?.type ?? resp.type);
   }
 
   // Named model with no handler-visible metadata AND only one content entry
