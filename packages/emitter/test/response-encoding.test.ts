@@ -382,7 +382,7 @@ describe("response encoding", () => {
     expect(operations).not.toContain("ResponseEncoders.json<{ body: Uint8Array }>");
   });
 
-  test("unsupported response content type produces a diagnostic and a poisoned encoder", () => {
+  test("unsupported response content type produces a diagnostic without output", () => {
     const r = compileFixtureExpectingDiagnostics(
       "unsupported-response-ct",
       unsupportedContentTypeSpec,
@@ -393,12 +393,7 @@ describe("response encoding", () => {
     expect(combined).toContain("application/xml");
     expect(combined).toContain("list");
 
-    // TypeSpec writes generated files even on error-severity diagnostics.
-    // The emitted encoder must throw at runtime, not silently fall back to JSON.
-    const operations = r.readFile("unsupported-api", "server-operations.ts");
-    expect(operations).toContain(`ResponseEncoders.unsupported<`);
-    expect(operations).toContain("application/xml");
-    expect(operations).not.toContain("ResponseEncoders.json<");
+    expect(r.listFiles("unsupported-api")).toEqual([]);
   });
 
   test("multiple error types generate matchVariant result encoders", () => {
@@ -472,20 +467,13 @@ describe("response encoding", () => {
       "union-ct",
       unionContentTypeOnOneResponseSpec,
     );
-    const operations = r.readFile("union-ct-api", "server-operations.ts");
     const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
 
     // The server can't pick between identical-shape variants at the
     // result-value level — TypeSpec needs content negotiation for that.
-    // Fire the diagnostic and emit a placeholder instead of silently
-    // dropping the second media type (the previous behavior).
+    // Fire the diagnostic without leaving a partially generated service.
     expect(combined).toContain("undifferentiable-response-union");
-    expect(operations).toContain("ResponseEncoders.unsupported<");
-
-    // Must NOT silently emit a single-encoder for application/json that
-    // ignores text/csv.
-    expect(operations).not.toMatch(/ResponseEncoders\.variant<[^>]*>\(\s*\{[^}]*"application\/json"/);
-    expect(operations).not.toContain(`status: 200,\n    contentType: "application/json"`);
+    expect(r.listFiles("union-ct-api")).toEqual([]);
   });
 
   test("envelope variants with object bodies dispatch on body fields, not envelope fields", () => {
