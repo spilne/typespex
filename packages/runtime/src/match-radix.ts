@@ -4,37 +4,47 @@
  */
 
 import type { RouteMatch, RouteMatcher } from "./matcher.js";
+import { routeSegments, routeStructure } from "./match-common.js";
+
+const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
 // ── Build (uncompressed trie) ──
 
-interface BuildNode {
-  children: Map<string, BuildNode>;
-  param?: { name: string; child: BuildNode };
-  route?: unknown;
+interface StoredRoute<R> {
+  value: R;
+  paramNames: string[];
+}
+
+interface BuildNode<R> {
+  children: Map<string, BuildNode<R>>;
+  param?: BuildNode<R>;
+  route?: StoredRoute<R>;
 }
 
 // ── Runtime (compressed, multi-segment static edges) ──
 
-interface RadixNode {
-  children: Map<string, { tail: string[]; child: RadixNode }>;
-  param?: { name: string; child: RadixNode };
-  route?: unknown;
+interface RadixNode<R> {
+  children: Map<string, { tail: string[]; child: RadixNode<R> }>;
+  param?: RadixNode<R>;
+  route?: StoredRoute<R>;
 }
 
-function createBuildNode(): BuildNode {
+function createBuildNode<R>(): BuildNode<R> {
   return { children: new Map() };
 }
 
-function trieInsert<R>(root: BuildNode, pattern: string, route: R): void {
-  const segments = pattern.split("/").filter(Boolean);
+function trieInsert<R>(root: BuildNode<R>, pattern: string, route: R): void {
+  const segments = routeSegments(pattern);
+  const paramNames: string[] = [];
   let node = root;
 
   for (const seg of segments) {
     if (seg.startsWith(":")) {
+      paramNames.push(seg.slice(1));
       if (!node.param) {
-        node.param = { name: seg.slice(1), child: createBuildNode() };
+        node.param = createBuildNode();
       }
-      node = node.param.child;
+      node = node.param;
     } else {
       let child = node.children.get(seg);
       if (!child) {
@@ -45,27 +55,23 @@ function trieInsert<R>(root: BuildNode, pattern: string, route: R): void {
     }
   }
 
-  node.route = route;
+  node.route = { value: route, paramNames };
 }
 
-function compress(build: BuildNode): RadixNode {
-  const node: RadixNode = {
+function compress<R>(build: BuildNode<R>): RadixNode<R> {
+  const node: RadixNode<R> = {
     children: new Map(),
     route: build.route,
   };
 
   if (build.param) {
-    node.param = { name: build.param.name, child: compress(build.param.child) };
+    node.param = compress(build.param);
   }
 
   for (const [seg, child] of build.children) {
     const tail: string[] = [];
     let cur = child;
-    while (
-      cur.route === undefined &&
-      cur.param === undefined &&
-      cur.children.size === 1
-    ) {
+    while (cur.route === undefined && cur.param === undefined && cur.children.size === 1) {
       const entry = cur.children.entries().next().value;
       if (!entry) break;
       const [nextSeg, nextChild] = entry;
@@ -84,62 +90,95 @@ function nextSegment(path: string, i: number, len: number): number {
   return j;
 }
 
-function radixLookup<R>(
-  root: RadixNode,
+function radixSearch<R>(
+  node: RadixNode<R>,
   pathname: string,
+  i: number,
+  len: number,
+  captured?: string[],
 ): RouteMatch<R> | null {
-  // Reject trailing slash for consistent matching with regex matcher
-  if (pathname.length > 1 && pathname.charCodeAt(pathname.length - 1) === 0x2f) return null;
+  if (i === len) {
+    if (!node.route) return null;
 
-  let node = root;
-  let params: Record<string, string> | undefined;
-  let i = 0;
-  const len = pathname.length;
-
-  if (i < len && pathname.charCodeAt(i) === 0x2f) i++;
-
-  while (i < len) {
-    const j = nextSegment(pathname, i, len);
-    const seg = pathname.substring(i, j);
-
-    const edge = node.children.get(seg);
-    if (edge) {
-      let pos = j + 1;
-      let matched = true;
-      for (let t = 0; t < edge.tail.length; t++) {
-        if (pos >= len) { matched = false; break; }
-        const end = nextSegment(pathname, pos, len);
-        if (pathname.substring(pos, end) !== edge.tail[t]) { matched = false; break; }
-        pos = end + 1;
-      }
-      if (matched) {
-        node = edge.child;
-        i = pos;
-        continue;
-      }
+    const { value, paramNames } = node.route;
+    if (paramNames.length === 0) {
+      return { route: value, pathParams: EMPTY_PARAMS };
     }
 
-    if (node.param) {
-      if (!params) params = Object.create(null) as Record<string, string>;
-      params[node.param.name] = seg;
-      node = node.param.child;
-      i = j + 1;
-      continue;
+    const pathParams: Record<string, string> = Object.create(null);
+    for (let p = 0; p < paramNames.length; p++) {
+      pathParams[paramNames[p]] = captured![p];
     }
-
-    return null;
+    return { route: value, pathParams };
   }
 
-  if (node.route === undefined) return null;
-  return { route: node.route as R, pathParams: params ?? Object.create(null) };
+  const j = nextSegment(pathname, i, len);
+  if (j === i) return null;
+
+  const seg = pathname.substring(i, j);
+  const edge = node.children.get(seg);
+  if (edge) {
+    let pos = j < len ? j + 1 : len;
+    let matched = true;
+
+    for (const tailSegment of edge.tail) {
+      if (pos >= len) {
+        matched = false;
+        break;
+      }
+
+      const end = nextSegment(pathname, pos, len);
+      if (end === pos || pathname.substring(pos, end) !== tailSegment) {
+        matched = false;
+        break;
+      }
+      pos = end < len ? end + 1 : len;
+    }
+
+    if (matched) {
+      const match = radixSearch(edge.child, pathname, pos, len, captured);
+      if (match) return match;
+    }
+  }
+
+  if (node.param) {
+    const values = captured ?? [];
+    values.push(seg);
+    const match = radixSearch(node.param, pathname, j < len ? j + 1 : len, len, values);
+    if (match) return match;
+    values.pop();
+  }
+
+  return null;
+}
+
+function radixLookup<R>(root: RadixNode<R>, pathname: string): RouteMatch<R> | null {
+  const len = pathname.length;
+  if (len === 0 || pathname.charCodeAt(0) !== 0x2f) return null;
+  if (len > 1 && pathname.charCodeAt(len - 1) === 0x2f) return null;
+
+  return radixSearch(root, pathname, 1, len);
 }
 
 export function createRadixMatcher<R>(
   routes: Array<{ method: string; path: string; route: R }>,
 ): RouteMatcher<R> {
-  const buildTrees = new Map<string, BuildNode>();
+  const buildTrees = new Map<string, BuildNode<R>>();
+  const seenByMethod = new Map<string, Set<string>>();
 
   for (const { method, path, route } of routes) {
+    let seen = seenByMethod.get(method);
+    if (!seen) {
+      seen = new Set();
+      seenByMethod.set(method, seen);
+    }
+
+    const structure = routeStructure(path);
+    if (seen.has(structure)) {
+      throw new Error(`Duplicate route: ${method} ${path}`);
+    }
+    seen.add(structure);
+
     let root = buildTrees.get(method);
     if (!root) {
       root = createBuildNode();
@@ -148,7 +187,7 @@ export function createRadixMatcher<R>(
     trieInsert(root, path, route);
   }
 
-  const trees = new Map<string, RadixNode>();
+  const trees = new Map<string, RadixNode<R>>();
   for (const [method, build] of buildTrees) {
     trees.set(method, compress(build));
   }

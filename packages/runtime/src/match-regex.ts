@@ -4,6 +4,7 @@
  */
 
 import type { RouteMatch, RouteMatcher } from "./matcher.js";
+import { routeSegments, routeStructure } from "./match-common.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
@@ -17,6 +18,26 @@ interface CompiledMethodRouter<R> {
   regex: RegExp;
   /** Sparse: groupIndex → RouteGroupInfo (set only at each route's firstGroup) */
   groupToRoute: Array<RouteGroupInfo<R> | undefined>;
+}
+
+function compareSpecificity(left: { path: string }, right: { path: string }): number {
+  const leftSegments = routeSegments(left.path);
+  const rightSegments = routeSegments(right.path);
+  const length = Math.min(leftSegments.length, rightSegments.length);
+
+  for (let i = 0; i < length; i++) {
+    const leftSegment = leftSegments[i];
+    const rightSegment = rightSegments[i];
+    const leftIsParam = leftSegment.startsWith(":");
+    const rightIsParam = rightSegment.startsWith(":");
+
+    if (leftIsParam !== rightIsParam) return leftIsParam ? 1 : -1;
+    if (!leftIsParam && leftSegment !== rightSegment) {
+      return leftSegment < rightSegment ? -1 : 1;
+    }
+  }
+
+  return leftSegments.length - rightSegments.length;
 }
 
 function escapeRegex(str: string): string {
@@ -34,7 +55,7 @@ function compileMethodRoutes<R>(
     const paramNames: string[] = [];
     const firstGroup = nextGroup;
 
-    const segments = path.split("/").filter(Boolean);
+    const segments = routeSegments(path);
     let pattern = segments.length === 0 ? "\\/" : "";
     for (const seg of segments) {
       pattern += "\\/";
@@ -61,10 +82,7 @@ function compileMethodRoutes<R>(
   return { regex, groupToRoute };
 }
 
-function regexLookup<R>(
-  compiled: CompiledMethodRouter<R>,
-  pathname: string,
-): RouteMatch<R> | null {
+function regexLookup<R>(compiled: CompiledMethodRouter<R>, pathname: string): RouteMatch<R> | null {
   const match = compiled.regex.exec(pathname);
   if (!match) return null;
 
@@ -91,14 +109,20 @@ export function createRegexMatcher<R>(
   routes: Array<{ method: string; path: string; route: R }>,
 ): RouteMatcher<R> {
   const perMethod = new Map<string, Array<{ path: string; route: R }>>();
-  const seen = new Set<string>();
+  const seenByMethod = new Map<string, Set<string>>();
 
   for (const { method, path, route } of routes) {
-    const key = `${method} ${path}`;
-    if (seen.has(key)) {
-      throw new Error(`Duplicate route: ${key}`);
+    let seen = seenByMethod.get(method);
+    if (!seen) {
+      seen = new Set();
+      seenByMethod.set(method, seen);
     }
-    seen.add(key);
+
+    const structure = routeStructure(path);
+    if (seen.has(structure)) {
+      throw new Error(`Duplicate route: ${method} ${path}`);
+    }
+    seen.add(structure);
 
     let group = perMethod.get(method);
     if (!group) {
@@ -110,7 +134,7 @@ export function createRegexMatcher<R>(
 
   const compiled = new Map<string, CompiledMethodRouter<R>>();
   for (const [method, group] of perMethod) {
-    compiled.set(method, compileMethodRoutes(group));
+    compiled.set(method, compileMethodRoutes(group.sort(compareSpecificity)));
   }
 
   return {

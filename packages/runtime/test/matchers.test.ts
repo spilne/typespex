@@ -6,10 +6,7 @@ import { createRadixMatcher } from "../src/match-radix.js";
  * Shared suite — both matchers must produce identical results.
  * Each test covers a distinct edge case. No repeating assertions.
  */
-function matcherSuite(
-  name: string,
-  create: typeof createRegexMatcher,
-) {
+function matcherSuite(name: string, create: typeof createRegexMatcher) {
   describe(name, () => {
     const routes = [
       { method: "GET", path: "/health", route: "health" },
@@ -92,6 +89,47 @@ function matcherSuite(
       expect(matcher.match("GET", "/pets")!.route).toBe("listPets");
     });
 
+    test("static segment wins regardless of registration order", () => {
+      const m = create([
+        { method: "GET", path: "/pets/:petId", route: "readPet" },
+        { method: "GET", path: "/pets/new", route: "newPet" },
+      ]);
+
+      expect(m.match("GET", "/pets/new")!.route).toBe("newPet");
+      expect(m.match("GET", "/pets/other")!.route).toBe("readPet");
+    });
+
+    test("static priority is applied at the first differing segment", () => {
+      const m = create([
+        { method: "GET", path: "/:resource/new", route: "resourceAction" },
+        { method: "GET", path: "/pets/:petId", route: "readPet" },
+      ]);
+
+      expect(m.match("GET", "/pets/new")!.route).toBe("readPet");
+    });
+
+    test("falls back to a param branch when a static branch dead-ends", () => {
+      const m = create([
+        { method: "GET", path: "/foo/qux/end", route: "staticBranch" },
+        { method: "GET", path: "/foo/:value/end", route: "nestedParamBranch" },
+        { method: "GET", path: "/:id/bar", route: "fallback" },
+      ]);
+
+      const match = m.match("GET", "/foo/bar");
+      expect(match!.route).toBe("fallback");
+      expect(match!.pathParams).toEqual({ id: "foo" });
+    });
+
+    test("uses parameter names from the matched route", () => {
+      const m = create([
+        { method: "GET", path: "/:id/a", route: "a" },
+        { method: "GET", path: "/:name/b", route: "b" },
+      ]);
+
+      expect(m.match("GET", "/first/a")!.pathParams).toEqual({ id: "first" });
+      expect(m.match("GET", "/second/b")!.pathParams).toEqual({ name: "second" });
+    });
+
     // --- Param values with special characters ---
 
     test("param with dots, hyphens", () => {
@@ -99,7 +137,9 @@ function matcherSuite(
     });
 
     test("param with percent-encoding (opaque, not decoded)", () => {
-      expect(matcher.match("GET", "/pets/hello%20world")!.pathParams).toEqual({ petId: "hello%20world" });
+      expect(matcher.match("GET", "/pets/hello%20world")!.pathParams).toEqual({
+        petId: "hello%20world",
+      });
     });
 
     test("encoded slash %2F stays inside param (not a separator)", () => {
@@ -143,20 +183,70 @@ function matcherSuite(
       expect(matcher.match("GET", "/pets//p-1")).toBeNull();
     });
 
+    test("empty segment does not match a path parameter", () => {
+      const m = create([{ method: "GET", path: "/pets/:petId/details", route: "details" }]);
+
+      expect(m.match("GET", "/pets//details")).toBeNull();
+    });
+
+    test("pathname must start with a slash", () => {
+      expect(matcher.match("GET", "pets")).toBeNull();
+      expect(create([{ method: "GET", path: "/", route: "root" }]).match("GET", "")).toBeNull();
+    });
+
+    // --- Duplicate routes ---
+
+    test("rejects exact duplicate routes", () => {
+      expect(() =>
+        create([
+          { method: "GET", path: "/pets", route: "first" },
+          { method: "GET", path: "/pets", route: "second" },
+        ]),
+      ).toThrow("Duplicate route: GET /pets");
+    });
+
+    test("rejects structurally duplicate routes with renamed params", () => {
+      expect(() =>
+        create([
+          { method: "GET", path: "/pets/:petId", route: "first" },
+          { method: "GET", path: "/pets/:id", route: "second" },
+        ]),
+      ).toThrow("Duplicate route: GET /pets/:id");
+    });
+
+    test("allows the same route structure for different methods", () => {
+      expect(() =>
+        create([
+          { method: "GET", path: "/pets/:petId", route: "read" },
+          { method: "DELETE", path: "/pets/:id", route: "remove" },
+        ]),
+      ).not.toThrow();
+    });
+
+    test("rejects malformed route patterns at registration", () => {
+      for (const path of ["pets", "/pets/", "/pets//:id", "/pets/:", "/pets?view=all"]) {
+        expect(() => create([{ method: "GET", path, route: "invalid" }])).toThrow(
+          "Invalid route path",
+        );
+      }
+    });
+
+    test("rejects duplicate parameter names in one route", () => {
+      expect(() =>
+        create([{ method: "GET", path: "/teams/:id/members/:id", route: "invalid" }])
+      ).toThrow('Duplicate path parameter "id"');
+    });
+
     // --- Prototype-safe params ---
 
     test("param named constructor does not shadow Object.prototype", () => {
-      const m = create([
-        { method: "GET", path: "/:constructor", route: "test" },
-      ]);
+      const m = create([{ method: "GET", path: "/:constructor", route: "test" }]);
       const result = m.match("GET", "/value");
       expect(result!.pathParams.constructor).toBe("value");
     });
 
     test("param named __proto__ is a regular string value", () => {
-      const m = create([
-        { method: "GET", path: "/:__proto__", route: "test" },
-      ]);
+      const m = create([{ method: "GET", path: "/:__proto__", route: "test" }]);
       const result = m.match("GET", "/value");
       expect(result!.pathParams.__proto__).toBe("value");
     });
