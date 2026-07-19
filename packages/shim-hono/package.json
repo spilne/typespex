@@ -23,7 +23,7 @@
       "default": "./dist/index.js"
     }
   },
-  "engines": { "node": ">=18" },
+  "engines": { "node": "^20.19.0 || >=22.12.0" },
   "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "hono": ">=4.0.0"
+    "hono": ">=4.0.0 <5.0.0"
   },
   "dependencies": {
     "@typespex/runtime": "workspace:*"

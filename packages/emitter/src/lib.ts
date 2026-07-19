@@ -1,7 +1,6 @@
 import { createTypeSpecLibrary, paramMessage, type JSONSchemaType } from "@typespec/compiler";
 
 export interface TypespexEmitterOptions {
-  "output-dir"?: string;
   "service-output"?: "auto" | "flat" | "prefix" | "directory";
   "service-folder-pattern"?: string;
   "file-name-pattern"?: string;
@@ -11,7 +10,6 @@ const EmitterOptionsSchema: JSONSchemaType<TypespexEmitterOptions> = {
   type: "object",
   additionalProperties: false,
   properties: {
-    "output-dir": { type: "string", nullable: true },
     "service-output": {
       type: "string",
       enum: ["auto", "flat", "prefix", "directory"],
