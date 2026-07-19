@@ -8,6 +8,7 @@ import {
 } from "@typespec/compiler";
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
+import { getNamespaceFullName } from "./namespace-names.js";
 import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
 
 interface HintDefinition {
@@ -188,16 +189,6 @@ function getDecoratorId(decorator: DecoratorApplication): string | undefined {
   const namespace = getNamespaceFullName(definition.namespace);
   const name = definition.name.replace(/^@/, "");
   return namespace ? `${namespace}.${name}` : name;
-}
-
-export function getNamespaceFullName(namespace: Namespace | undefined): string {
-  const parts: string[] = [];
-  let current = namespace;
-  while (current && current.name !== "") {
-    parts.push(current.name);
-    current = current.namespace;
-  }
-  return parts.reverse().join(".");
 }
 
 function isBuiltinDecorator(id: string): boolean {
