@@ -1,4 +1,4 @@
-import type { Model, ModelProperty, Type } from "@typespec/compiler";
+import type { Interface, Model, ModelProperty, Type } from "@typespec/compiler";
 import {
   getDiscriminator,
   isArrayModelType,
@@ -9,7 +9,15 @@ import {
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
 import { getHeaderFieldName, isHeader, isMetadata, isStatusCode } from "@typespec/http";
-import type { EmitterCtx } from "./ctx.js";
+import {
+  allocateGeneratedNames,
+  getGeneratedTypeName,
+  getNamespaceFullName,
+  getRelativeNamespaceSegments,
+  hasGeneratedTypeNameCollision,
+  type EmitterCtx,
+} from "./ctx.js";
+import { getHttpPartType, isHttpFileModel } from "./http-models.js";
 import { $lib } from "./lib.js";
 import { scalarToTs } from "./scalar-map.js";
 import { isEntityLike } from "./type-guards.js";
@@ -24,34 +32,19 @@ import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 export interface OperationGroup {
   interfaceName?: string;
   propertyName: string;
+  exportName: string;
   operations: HttpOperation[];
 }
 
-const BUILTIN_TYPE_NAMES = new Set([
-  "Array", "Record", "string", "int32", "int64", "float32", "float64",
-  "boolean", "bytes", "plainDate", "utcDateTime", "offsetDateTime",
-  "duration", "url", "numeric", "integer", "float", "decimal",
-  "void", "null", "never", "unknown",
-]);
-
-export function collectModelImports(
-  ctx: EmitterCtx,
-  operations: HttpOperation[],
-): string[] {
+export function collectModelImports(ctx: EmitterCtx, operations: HttpOperation[]): string[] {
   const names = new Set<string>();
   for (const op of operations) {
     collectTypeNames(ctx, op, names);
   }
-  return [...names]
-    .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-    .sort();
+  return [...names].filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).sort();
 }
 
-function collectTypeNames(
-  ctx: EmitterCtx,
-  op: HttpOperation,
-  names: Set<string>,
-): void {
+function collectTypeNames(ctx: EmitterCtx, op: HttpOperation, names: Set<string>): void {
   for (const param of op.parameters.parameters) {
     addModelName(ctx, param.param.type, names, new Set());
   }
@@ -72,12 +65,7 @@ function collectTypeNames(
   }
 }
 
-function addModelName(
-  ctx: EmitterCtx,
-  type: Type,
-  names: Set<string>,
-  seen: Set<Type>,
-): void {
+function addModelName(ctx: EmitterCtx, type: Type, names: Set<string>, seen: Set<Type>): void {
   if (seen.has(type)) return;
   seen.add(type);
 
@@ -88,6 +76,13 @@ function addModelName(
       }
       return;
     }
+
+    const httpPartType = getHttpPartType(ctx.program, type);
+    if (httpPartType) {
+      addModelName(ctx, httpPartType, names, seen);
+      return;
+    }
+    if (isHttpFileModel(ctx.program, type)) return;
 
     if (isTypeSpecNamespaceModel(type)) {
       for (const prop of walkPropertiesInherited(type)) {
@@ -105,8 +100,7 @@ function addModelName(
       }
     }
 
-    if (BUILTIN_TYPE_NAMES.has(type.name)) return;
-    names.add(tsIdentifier(type.name, "Model"));
+    names.add(getGeneratedTypeName(ctx, type, "Model"));
 
     for (const prop of walkPropertiesInherited(type)) {
       addModelName(ctx, prop.type, names, seen);
@@ -114,14 +108,18 @@ function addModelName(
   }
 
   if (type.kind === "Union") {
-    addTemplatedUnionName(ctx, type, names, seen);
+    addReferencedUnionName(ctx, type, names, seen);
     for (const v of type.variants.values()) {
       addModelName(ctx, v.type, names, seen);
     }
   }
 
   if (type.kind === "Scalar") {
-    addTemplatedScalarName(ctx, type, names, seen);
+    addReferencedScalarName(ctx, type, names, seen);
+  }
+
+  if (type.kind === "Enum" && hasGeneratedTypeNameCollision(ctx, type)) {
+    names.add(getGeneratedTypeName(ctx, type, "Enum"));
   }
 
   if (type.kind === "Tuple") {
@@ -135,25 +133,26 @@ function addModelName(
   }
 }
 
-function addTemplatedUnionName(
+function addReferencedUnionName(
   ctx: EmitterCtx,
   type: Extract<Type, { kind: "Union" }>,
   names: Set<string>,
   seen: Set<Type>,
 ): void {
-  if (!type.name || !isTemplatedUnionReference(type)) return;
-  names.add(tsIdentifier(type.name, "Union"));
+  if (!type.name || (!isTemplatedUnionReference(type) && !hasGeneratedTypeNameCollision(ctx, type)))
+    return;
+  names.add(getGeneratedTypeName(ctx, type, "Union"));
   addTemplateArgumentModelNames(ctx, type.templateMapper?.args ?? [], names, seen);
 }
 
-function addTemplatedScalarName(
+function addReferencedScalarName(
   ctx: EmitterCtx,
   type: Extract<Type, { kind: "Scalar" }>,
   names: Set<string>,
   seen: Set<Type>,
 ): void {
-  if (!isTemplatedScalarReference(type)) return;
-  names.add(tsIdentifier(type.name, "Scalar"));
+  if (!isTemplatedScalarReference(type) && !hasGeneratedTypeNameCollision(ctx, type)) return;
+  names.add(getGeneratedTypeName(ctx, type, "Scalar"));
   addTemplateArgumentModelNames(ctx, type.templateMapper?.args ?? [], names, seen);
 }
 
@@ -170,9 +169,9 @@ function addTemplateArgumentModelNames(
   }
 }
 
-export function groupOperations(operations: HttpOperation[]): OperationGroup[] {
+export function groupOperations(ctx: EmitterCtx, operations: HttpOperation[]): OperationGroup[] {
   const standalone: HttpOperation[] = [];
-  const groups = new Map<string, OperationGroup>();
+  const grouped = new Map<Interface, HttpOperation[]>();
 
   for (const op of operations) {
     const iface = op.operation.interface;
@@ -181,21 +180,45 @@ export function groupOperations(operations: HttpOperation[]): OperationGroup[] {
       continue;
     }
 
-    if (!groups.has(iface.name)) {
-      groups.set(iface.name, {
-        interfaceName: iface.name,
-        propertyName: iface.name,
-        operations: [],
-      });
-    }
-
-    groups.get(iface.name)!.operations.push(op);
+    const interfaceOperations = grouped.get(iface) ?? [];
+    interfaceOperations.push(op);
+    grouped.set(iface, interfaceOperations);
   }
 
-  const ordered: OperationGroup[] = [...groups.values()];
+  const interfaceCandidates = [...grouped.keys()].map((iface) => {
+    const relativeNamespace = getRelativeNamespaceSegments(ctx.service.namespace, iface.namespace);
+    const qualifiedSegments =
+      relativeNamespace.length > 0 ? [...relativeNamespace, iface.name] : [iface.name, "Interface"];
+    return {
+      value: iface,
+      stableKey: `${getNamespaceFullName(iface.namespace)}.${iface.name}`,
+      baseName: iface.name,
+      qualifiedName: qualifiedSegments.join("_"),
+      fallbackName: [ctx.serviceName, ...qualifiedSegments, "Interface"].join("_"),
+    };
+  });
+  const standaloneExportName = tsIdentifier(ctx.serviceName, "Group");
+  const interfaceExportNames = allocateGeneratedNames(
+    interfaceCandidates,
+    new Set([
+      tsIdentifier(ctx.serviceName, "Service"),
+      ...(standalone.length > 0 ? [standaloneExportName] : []),
+    ]),
+  );
+  const interfacePropertyNames = allocateGeneratedNames(
+    interfaceCandidates.map((candidate) => ({ ...candidate, preserveBaseName: true })),
+  );
+
+  const ordered: OperationGroup[] = [...grouped.entries()].map(([iface, interfaceOperations]) => ({
+    interfaceName: iface.name,
+    propertyName: interfacePropertyNames.get(iface)!,
+    exportName: interfaceExportNames.get(iface)!,
+    operations: interfaceOperations,
+  }));
   if (standalone.length > 0) {
     ordered.push({
       propertyName: "__standalone__",
+      exportName: standaloneExportName,
       operations: standalone,
     });
   }

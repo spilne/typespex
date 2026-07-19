@@ -49,7 +49,7 @@ export function emitServerOperations(
 
     const allHoisted: string[] = [];
     for (const operation of group.operations) {
-      const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.name);
+      const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.propertyName);
       allEntries.push(...decoder.inputEntries);
       allHoisted.push(...decoder.hoistedDecoders);
       decodersByOpId.set(operation.operationId, decoder);
@@ -76,7 +76,7 @@ export function emitServerOperations(
     // Emit grouped output encoders object
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
-      lines.push(`  ${tsObjectKey(operation.name)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
+      lines.push(`  ${tsObjectKey(operation.propertyName)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
     }
     lines.push("};");
     lines.push("");
@@ -87,7 +87,7 @@ export function emitServerOperations(
     for (const operation of group.operations) {
       const decoder = decodersByOpId.get(operation.operationId)!;
 
-      lines.push(`  ${tsObjectKey(operation.name)}: {`);
+      lines.push(`  ${tsObjectKey(operation.propertyName)}: {`);
       emitEndpoint(lines, emission.serviceName, operation);
 
       // decodeInput — expression-body arrow, async only when body is involved
@@ -166,10 +166,14 @@ function emitEndpoint(
 
 function emitResultEncoderLine(
   lines: string[],
-  operation: { name: string; resultType: string; httpOperation: HttpOperation },
+  operation: {
+    propertyName: string;
+    resultType: string;
+    httpOperation: HttpOperation;
+  },
   outputsName: string,
 ): void {
-  const encoderAccess = tsPropertyAccess(outputsName, operation.name);
+  const encoderAccess = tsPropertyAccess(outputsName, operation.propertyName);
   if (operation.resultType === "void") {
     lines.push(`    encodeResult: () => ${encoderAccess}.encode(undefined),`);
   } else {

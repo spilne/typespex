@@ -35,7 +35,7 @@ export function emitServerRouter(
     const operationsConst = `${group.exportName}Operations`;
     for (const operation of group.operations) {
       lines.push(
-        `    bindRoute(${tsPropertyAccess(operationsConst, operation.name)}, ${tsPropertyAccess(groupAccess, operation.name)}),`,
+        `    bindRoute(${tsPropertyAccess(operationsConst, operation.propertyName)}, ${tsPropertyAccess(groupAccess, operation.propertyName)}),`,
       );
     }
   }
