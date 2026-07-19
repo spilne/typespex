@@ -1,3 +1,5 @@
+import { stringifyJson } from "./http/json.js";
+
 /**
  * Base class for HTTP errors that handlers or middleware can throw.
  * The router's onError handler catches these and converts them
@@ -18,7 +20,7 @@ export class HttpError extends Error {
     const responseHeaders = new Headers(this.headers);
     if (this.body != null) {
       responseHeaders.set("content-type", "application/json");
-      return new Response(JSON.stringify(this.body), {
+      return new Response(stringifyJson(this.body), {
         status: this.statusCode,
         headers: responseHeaders,
       });

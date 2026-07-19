@@ -1,6 +1,7 @@
 export * from "./metadata.js";
 export * from "./context.js";
 export * from "./media-type.js";
+export * from "./json.js";
 export * from "./validation.js";
 export * from "./decoder.js";
 export * from "./request-decoder.js";

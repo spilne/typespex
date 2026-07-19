@@ -14,6 +14,51 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ id: "p-1" });
   });
 
+  test("json preserves bigint values as JSON integer tokens", async () => {
+    const response = ResponseEncoders.json<{ value: bigint }>(200).encode({
+      value: 9_223_372_036_854_775_807n,
+    });
+
+    expect(await response.text()).toBe('{"value":9223372036854775807}');
+  });
+
+  test("json encodes nested bytes as base64 strings", async () => {
+    const response = ResponseEncoders.json<{ value: Uint8Array }>(200).encode({
+      value: new Uint8Array([1, 2, 255]),
+    });
+
+    expect(await response.json()).toEqual({ value: "AQL/" });
+  });
+
+  test("json rejects circular values", () => {
+    const value: Record<string, unknown> = {};
+    value.self = value;
+
+    expect(() => ResponseEncoders.json(200).encode(value)).toThrow("circular");
+  });
+
+  test("json serializes sparse arrays as null entries", async () => {
+    const value = new Array<unknown>(2);
+    value[1] = "present";
+
+    const response = ResponseEncoders.json<unknown[]>(200).encode(value);
+
+    expect(await response.text()).toBe('[null,"present"]');
+  });
+
+  test("json handles toJSON methods that return their receiver", async () => {
+    const value = {
+      value: 42,
+      toJSON() {
+        return this;
+      },
+    };
+
+    const response = ResponseEncoders.json(200).encode(value);
+
+    expect(await response.json()).toEqual({ value: 42 });
+  });
+
   test("empty encodes no body", async () => {
     const response = ResponseEncoders.empty(204).encode(undefined);
 
@@ -41,9 +86,9 @@ describe("ResponseEncoders", () => {
   });
 
   test("mapInput adapts value before encoding", async () => {
-    const encoder = ResponseEncoders
-      .json<{ name: string }>(200)
-      .mapInput((v: { petName: string }) => ({ name: v.petName }));
+    const encoder = ResponseEncoders.json<{ name: string }>(200).mapInput(
+      (v: { petName: string }) => ({ name: v.petName }),
+    );
 
     const response = encoder.encode({ petName: "Milo" });
 
@@ -112,6 +157,83 @@ describe("ResponseEncoders", () => {
     expect(response.headers.get("x-tag")).toBe("null");
   });
 
+  test("jsonWithHeaders serializes array and object header values", () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      tags: string[];
+      filter: { role: string; active: boolean };
+      data: string;
+    }>(200, [
+      ["tags", "x-tags"],
+      ["filter", "x-filter", true],
+    ]);
+
+    const response = encoder.encode({
+      tags: ["one", "two"],
+      filter: { role: "admin", active: true },
+      data: "ok",
+    });
+
+    expect(response.headers.get("x-tags")).toBe("one,two");
+    expect(response.headers.get("x-filter")).toBe("role=admin,active=true");
+  });
+
+  test("jsonWithHeaders rejects non-plain structured header values", () => {
+    class HeaderValue {
+      readonly role = "admin";
+    }
+
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      filter: unknown;
+      data: string;
+    }>(200, [["filter", "x-filter"]]);
+
+    for (const filter of [new Date(0), new Map([["role", "admin"]]), new HeaderValue()]) {
+      expect(() => encoder.encode({ filter, data: "ok" })).toThrow(
+        "HTTP structured header values must be plain objects.",
+      );
+    }
+  });
+
+  test("jsonWithHeaders accepts null-prototype structured header records", () => {
+    const filter = Object.assign(Object.create(null), { role: "admin", active: true });
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      filter: Record<string, unknown>;
+      data: string;
+    }>(200, [["filter", "x-filter", true]]);
+
+    const response = encoder.encode({ filter, data: "ok" });
+
+    expect(response.headers.get("x-filter")).toBe("role=admin,active=true");
+  });
+
+  test("jsonWithHeaders preserves multiple Set-Cookie values", () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      cookies: string[];
+      data: string;
+    }>(200, [["cookies", "set-cookie"]]);
+
+    const response = encoder.encode({
+      cookies: ["session=abc; Path=/", "theme=dark; Path=/"],
+      data: "ok",
+    });
+
+    expect(response.headers.getSetCookie()).toEqual(["session=abc; Path=/", "theme=dark; Path=/"]);
+  });
+
+  test("jsonWithHeaders encodes bytes as base64", () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      digest: Uint8Array;
+      data: string;
+    }>(200, [["digest", "x-digest"]]);
+
+    const response = encoder.encode({
+      digest: new Uint8Array([1, 2, 255]),
+      data: "ok",
+    });
+
+    expect(response.headers.get("x-digest")).toBe("AQL/");
+  });
+
   test("variant extracts body and headers from response envelopes", async () => {
     const encoder = ResponseEncoders.variant<{
       requestId: string;
@@ -133,6 +255,38 @@ describe("ResponseEncoders", () => {
     expect(await response.text()).toBe("created");
   });
 
+  test("JSON variant emits an empty body when an optional body is omitted", async () => {
+    const response = ResponseEncoders.variant<{ body?: { value: bigint } }>({
+      status: 200,
+      kind: "json",
+      body: "body",
+      omit: ["body"],
+    }).encode({});
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe("");
+  });
+
+  test("empty variants preserve declared response headers", async () => {
+    const response = ResponseEncoders.variant<{ etag: string; cookies: string[] }>({
+      status: 204,
+      kind: "empty",
+      headers: [
+        ["etag", "etag"],
+        ["cookies", "set-cookie"],
+      ],
+    }).encode({
+      etag: '"revision-1"',
+      cookies: ["session=abc; Path=/", "theme=dark; Path=/"],
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("etag")).toBe('"revision-1"');
+    expect(response.headers.getSetCookie()).toEqual(["session=abc; Path=/", "theme=dark; Path=/"]);
+    expect(await response.text()).toBe("");
+  });
+
   test("variant omits metadata properties that are not in the handler type", async () => {
     const encoder = ResponseEncoders.variant<{ code: "NOT_FOUND"; message: string }>({
       status: 404,
@@ -146,9 +300,7 @@ describe("ResponseEncoders", () => {
   });
 
   test("matchVariant dispatches to the first matching response encoder", async () => {
-    type Result =
-      | { id: string; name: string }
-      | { code: "NOT_FOUND"; message: string };
+    type Result = { id: string; name: string } | { code: "NOT_FOUND"; message: string };
 
     const encoder = ResponseEncoders.matchVariant<Result>([
       {
@@ -170,9 +322,7 @@ describe("ResponseEncoders", () => {
   });
 
   test("unreachable throws for unmatched generated branches", () => {
-    expect(() => ResponseEncoders.unreachable({ code: "UNKNOWN" })).toThrow(
-      "did not match",
-    );
+    expect(() => ResponseEncoders.unreachable({ code: "UNKNOWN" })).toThrow("did not match");
   });
 
   test("Content-Type headers match the selected encoder kind", () => {
@@ -245,5 +395,20 @@ describe("ResponseEncoders", () => {
       body: "body",
     }).encode({ body: new Uint8Array([42]) });
     expect(bytes.headers.get("content-type")).toBe("application/octet-stream");
+  });
+
+  test("variant encoder preserves an explicit Content-Type and defaults when absent", () => {
+    const encoder = ResponseEncoders.variant<{ contentType?: string; body: string }>({
+      status: 200,
+      kind: "text",
+      headers: [["contentType", "content-type"]],
+      body: "body",
+    });
+
+    const explicit = encoder.encode({ contentType: "text/csv", body: "id\np-1\n" });
+    expect(explicit.headers.get("content-type")).toBe("text/csv");
+
+    const defaulted = encoder.encode({ body: "plain text" });
+    expect(defaulted.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 });

@@ -8,7 +8,13 @@ import {
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
-import { getHeaderFieldName, isHeader, isMetadata, isStatusCode } from "@typespec/http";
+import {
+  getHeaderFieldName,
+  getHeaderFieldOptions,
+  isHeader,
+  isMetadata,
+  isStatusCode,
+} from "@typespec/http";
 import {
   allocateGeneratedNames,
   getGeneratedTypeName,
@@ -368,30 +374,30 @@ function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string 
   const parts: string[] = [];
   for (const prop of resp.type.properties.values()) {
     if (hiddenProperties.has(prop.name)) continue;
-    parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
-      optional: prop.optional,
-    }));
+    parts.push(
+      tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
+        optional: prop.optional,
+      }),
+    );
   }
   return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
 }
 
 function hasResponseEnvelopeMetadata(resp: HttpOperationResponse): boolean {
   return resp.responses.some((content) =>
-    content.properties.some((prop) =>
-      prop.kind === "header" ||
-      prop.kind === "statusCode" ||
-      prop.kind === "contentType" ||
-      prop.kind === "body"
-    )
+    content.properties.some(
+      (prop) =>
+        prop.kind === "header" ||
+        prop.kind === "statusCode" ||
+        prop.kind === "contentType" ||
+        prop.kind === "body",
+    ),
   );
 }
 
 function hasHandlerVisibleMetadata(resp: HttpOperationResponse): boolean {
   return resp.responses.some((content) =>
-    content.properties.some((prop) =>
-      prop.kind === "header" ||
-      prop.kind === "body"
-    )
+    content.properties.some((prop) => prop.kind === "header" || prop.kind === "body"),
   );
 }
 
@@ -461,7 +467,10 @@ export function emitResultResponseEncoder(
 
   if (headers.length > 0 && kind === "json") {
     const entries = headers
-      .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+      .map(
+        (h) =>
+          `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}${h.explode ? ", true" : ""}]`,
+      )
       .join(", ");
     return `ResponseEncoders.jsonWithHeaders<${resultType}>(${response.statusCode}, [${entries}])`;
   }
@@ -470,8 +479,7 @@ export function emitResultResponseEncoder(
 }
 
 function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
-  return response.bodyProperty !== undefined ||
-    response.omitProperties.length > 0;
+  return response.bodyProperty !== undefined || response.omitProperties.length > 0;
 }
 
 interface SuccessResponseVariant {
@@ -487,10 +495,7 @@ interface SuccessResponseVariant {
   readonly hiddenProperties: ReadonlySet<string>;
 }
 
-function collectResponseVariants(
-  ctx: EmitterCtx,
-  op: HttpOperation,
-): SuccessResponseVariant[] {
+function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessResponseVariant[] {
   const variants: SuccessResponseVariant[] = [];
 
   for (const resp of op.responses) {
@@ -523,11 +528,12 @@ function collectResponseVariants(
       const body = content.body;
       const declaredContentTypes = body?.contentTypes.length ? body.contentTypes : [undefined];
       const headers = collectResponseHeadersFromContent(ctx, content);
-      const metadataProperties = content.properties.filter((prop) =>
-        prop.kind === "header" ||
-        prop.kind === "statusCode" ||
-        prop.kind === "contentType" ||
-        prop.kind === "body"
+      const metadataProperties = content.properties.filter(
+        (prop) =>
+          prop.kind === "header" ||
+          prop.kind === "statusCode" ||
+          prop.kind === "contentType" ||
+          prop.kind === "body",
       );
       // Per-content variant gets the body's own model when available, so the
       // property-based dispatcher can find fields unique to this variant.
@@ -584,12 +590,15 @@ function responseContentToTs(
   const parts: string[] = [];
   for (const prop of content.properties) {
     if (prop.kind === "statusCode" || prop.kind === "contentType") continue;
-    const tsType = prop.kind === "body" && content.body
-      ? typeToTs(ctx, content.body.type)
-      : typeToTs(ctx, prop.property.type);
-    parts.push(tsPropertyDeclaration(prop.property.name, tsType, {
-      optional: prop.property.optional,
-    }));
+    const tsType =
+      prop.kind === "body" && content.body
+        ? typeToTs(ctx, content.body.type)
+        : typeToTs(ctx, prop.property.type);
+    parts.push(
+      tsPropertyDeclaration(prop.property.name, tsType, {
+        optional: prop.property.optional,
+      }),
+    );
   }
   return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
 }
@@ -604,6 +613,7 @@ function collectResponseHeadersFromContent(
     .map((prop) => ({
       property: prop.name,
       header: getHeaderFieldName(ctx.program, prop).toLowerCase(),
+      explode: getHeaderFieldOptions(ctx.program, prop).explode === true,
     }));
 }
 
@@ -667,8 +677,8 @@ function collectBranches(
 
   if (pending.size === 0) return branches;
 
-  const objectResponses = [...pending].filter((response) =>
-    response.model && !isArrayModelType(ctx.program, response.model)
+  const objectResponses = [...pending].filter(
+    (response) => response.model && !isArrayModelType(ctx.program, response.model),
   );
   if (objectResponses.length !== pending.size) return [];
 
@@ -771,9 +781,10 @@ function resolveExplicitDiscriminatorBranches(
   responses: readonly SuccessResponseVariant[],
 ): ResponseBranch[] | undefined {
   const returnType = op.operation.returnType;
-  const discriminator = returnType.kind === "Union"
-    ? getDiscriminator(ctx.program, returnType)?.propertyName
-    : undefined;
+  const discriminator =
+    returnType.kind === "Union"
+      ? getDiscriminator(ctx.program, returnType)?.propertyName
+      : undefined;
   return emitLiteralFieldBranches(
     ctx,
     discriminator ?? findCommonModelDiscriminator(ctx, responses),
@@ -823,11 +834,13 @@ function emitLiteralFieldBranches(
     if (values.has(value)) return undefined;
     values.add(value);
     const subject = subjectExpr(response);
-    const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+    const cast =
+      response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
     const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`;
-    const guarded = response.bodyProperty === undefined
-      ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`
-      : `${emitObjectShapeCondition(response)} && ${base}`;
+    const guarded =
+      response.bodyProperty === undefined
+        ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`
+        : `${emitObjectShapeCondition(response)} && ${base}`;
     branches.push({ response, condition: guarded });
   }
 
@@ -881,17 +894,16 @@ function emitExclusivePropertyCondition(
   excludedProperties: readonly string[],
 ): string {
   const subject = subjectExpr(response);
-  const cast = response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
+  const cast =
+    response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
   const propertyChecks = [
     `${JSON.stringify(requiredProperty)} in ${cast}`,
     ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in ${cast})`),
   ];
   if (response.bodyProperty === undefined) {
-    return [
-      `typeof ${subject} === "object"`,
-      `${subject} !== null`,
-      ...propertyChecks,
-    ].join(" && ");
+    return [`typeof ${subject} === "object"`, `${subject} !== null`, ...propertyChecks].join(
+      " && ",
+    );
   }
   return [emitObjectShapeCondition(response), ...propertyChecks].join(" && ");
 }
@@ -985,10 +997,7 @@ function findCommonModelDiscriminator(
   return fields.every((field) => field === first) ? first : undefined;
 }
 
-function findModelDiscriminator(
-  ctx: EmitterCtx,
-  model: Model | undefined,
-): string | undefined {
+function findModelDiscriminator(ctx: EmitterCtx, model: Model | undefined): string | undefined {
   let current = model;
   while (current) {
     const discriminator = getDiscriminator(ctx.program, current);
@@ -1021,9 +1030,14 @@ function emitResponseDecisionEncoder(
     const kind = branch.response.isVoid
       ? "empty"
       : classifyResponseContentType(ctx, op, branch.response.contentType);
-    const branchEncoder = kind === "unsupported"
-      ? emitUnsupportedEncoder(branch.response.tsType, op.operation.name, branch.response.contentType)
-      : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(kind, branch.response)})`;
+    const branchEncoder =
+      kind === "unsupported"
+        ? emitUnsupportedEncoder(
+            branch.response.tsType,
+            op.operation.name,
+            branch.response.contentType,
+          )
+        : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(kind, branch.response)})`;
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
     lines.push(`encoder: ${branchEncoder},`);
@@ -1044,12 +1058,17 @@ function emitResponseVariant(
   if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
   if (response.headers.length > 0) {
     const headers = response.headers
-      .map((h) => `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}]`)
+      .map(
+        (h) =>
+          `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}${h.explode ? ", true" : ""}]`,
+      )
       .join(", ");
     fields.push(`headers: [${headers}]`);
   }
   if (response.omitProperties.length > 0) {
-    fields.push(`omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`);
+    fields.push(
+      `omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`,
+    );
   }
   return `{ ${fields.join(", ")} }`;
 }
@@ -1118,6 +1137,7 @@ function emitUnsupportedEncoderReason(resultType: string, reason: string): strin
 interface ResponseHeader {
   readonly property: string;
   readonly header: string;
+  readonly explode: boolean;
 }
 
 /**

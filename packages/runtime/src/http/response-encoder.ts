@@ -1,3 +1,5 @@
+import { bytesToBase64, stringifyJson } from "./json.js";
+
 /** Runtime response encoder that turns one typed output value into an HTTP response. */
 export abstract class ResponseEncoder<A> {
   abstract encode(value: A): Response;
@@ -25,42 +27,34 @@ function responseInit(status: number, init?: ResponseInit): ResponseInit {
   return { ...init, status };
 }
 
-function jsonResponseEncoder<A>(
-  status = 200,
-  init?: ResponseInit,
-): ResponseEncoder<A> {
-  return ResponseEncoder.of((value) =>
-    Response.json(value, responseInit(status, init)),
+function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEncoder<A> {
+  return ResponseEncoder.of(
+    (value) =>
+      new Response(
+        stringifyJson(value),
+        withContentType(responseInit(status, init), "application/json"),
+      ),
   );
 }
 
-function emptyResponseEncoder(
-  status = 204,
-  init?: ResponseInit,
-): ResponseEncoder<void> {
-  return ResponseEncoder.of(() =>
-    new Response(null, responseInit(status, init)),
+function emptyResponseEncoder(status = 204, init?: ResponseInit): ResponseEncoder<void> {
+  return ResponseEncoder.of(() => new Response(null, responseInit(status, init)));
+}
+
+function textResponseEncoder(status = 200, init?: ResponseInit): ResponseEncoder<string> {
+  return ResponseEncoder.of(
+    (value) =>
+      new Response(value, withContentType(responseInit(status, init), "text/plain; charset=utf-8")),
   );
 }
 
-function textResponseEncoder(
-  status = 200,
-  init?: ResponseInit,
-): ResponseEncoder<string> {
-  return ResponseEncoder.of((value) =>
-    new Response(value, withContentType(responseInit(status, init), "text/plain; charset=utf-8")),
-  );
-}
-
-function bytesResponseEncoder(
-  status = 200,
-  init?: ResponseInit,
-): ResponseEncoder<Uint8Array> {
-  return ResponseEncoder.of((value) =>
-    new Response(
-      new Uint8Array(value).buffer,
-      withContentType(responseInit(status, init), "application/octet-stream"),
-    ),
+function bytesResponseEncoder(status = 200, init?: ResponseInit): ResponseEncoder<Uint8Array> {
+  return ResponseEncoder.of(
+    (value) =>
+      new Response(
+        new Uint8Array(value).buffer,
+        withContentType(responseInit(status, init), "application/octet-stream"),
+      ),
   );
 }
 
@@ -78,8 +72,9 @@ function streamResponseEncoder(
   status = 200,
   contentType = "application/octet-stream",
 ): ResponseEncoder<ReadableStream> {
-  return ResponseEncoder.of((stream) =>
-    new Response(stream, responseInit(status, { headers: { "content-type": contentType } })),
+  return ResponseEncoder.of(
+    (stream) =>
+      new Response(stream, responseInit(status, { headers: { "content-type": contentType } })),
   );
 }
 
@@ -90,32 +85,32 @@ function streamResponseEncoder(
  */
 function jsonWithHeadersResponseEncoder<A>(
   status: number,
-  headers: ReadonlyArray<readonly [property: string, header: string]>,
+  headers: ReadonlyArray<readonly [property: string, header: string, explode?: boolean]>,
 ): ResponseEncoder<A> {
-  const headerMap = new Map(headers);
+  const headerMap = new Map(
+    headers.map(([property, header, explode]) => [property, { header, explode }] as const),
+  );
   return ResponseEncoder.of((value) => {
     const src = value as Record<string, unknown>;
-    const responseHeaders: Record<string, string> = { "content-type": "application/json" };
-    const body: Record<string, unknown> = {};
+    const responseHeaders = new Headers({ "content-type": "application/json" });
+    const body: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(src)) {
-      const headerName = headerMap.get(key);
-      if (headerName !== undefined) {
+      const header = headerMap.get(key);
+      if (header !== undefined) {
         const v = src[key];
-        if (v !== undefined && (typeof v !== "object" || v === null)) {
-          responseHeaders[headerName] = String(v);
-        }
+        if (v !== undefined) setResponseHeader(responseHeaders, header.header, v, header.explode);
       } else {
         body[key] = src[key];
       }
     }
-    return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+    return new Response(stringifyJson(body), { status, headers: responseHeaders });
   });
 }
 
 export interface ResponseVariant {
   readonly status: number;
   readonly kind?: "json" | "text" | "bytes" | "empty";
-  readonly headers?: ReadonlyArray<readonly [property: string, header: string]>;
+  readonly headers?: ReadonlyArray<readonly [property: string, header: string, explode?: boolean]>;
   readonly body?: string;
   readonly omit?: readonly string[];
   readonly contentType?: string;
@@ -126,27 +121,24 @@ export interface ResponseVariantMatch<A, B extends A = A> {
   readonly encoder: ResponseEncoder<B>;
 }
 
-function encodeVariantResponse<A>(
-  value: A,
-  variant: ResponseVariant,
-): Response {
-  if (variant.kind === "empty") {
-    return new Response(null, { status: variant.status });
-  }
-
+function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response {
   const src = value as Record<string, unknown>;
   const isObject = typeof value === "object" && value !== null;
-  const responseHeaders: Record<string, string> = {};
-  const contentType = variant.contentType ?? defaultContentTypeForKind(variant.kind);
-  if (contentType) responseHeaders["content-type"] = contentType;
-
+  const responseHeaders = new Headers();
   if (isObject) {
-    for (const [property, header] of variant.headers ?? []) {
+    for (const [property, header, explode] of variant.headers ?? []) {
       const v = src[property];
-      if (v !== undefined && (typeof v !== "object" || v === null)) {
-        responseHeaders[header] = String(v);
-      }
+      if (v !== undefined) setResponseHeader(responseHeaders, header, v, explode);
     }
+  }
+
+  if (variant.kind === "empty") {
+    return new Response(null, { status: variant.status, headers: responseHeaders });
+  }
+
+  const contentType = variant.contentType ?? defaultContentTypeForKind(variant.kind);
+  if (contentType && !responseHeaders.has("content-type")) {
+    responseHeaders.set("content-type", contentType);
   }
 
   const body = resolveVariantBody(value, src, isObject, variant);
@@ -166,10 +158,60 @@ function encodeVariantResponse<A>(
     });
   }
 
-  return new Response(JSON.stringify(body), {
+  return new Response(body === undefined ? null : stringifyJson(body), {
     status: variant.status,
     headers: responseHeaders,
   });
+}
+
+function setResponseHeader(headers: Headers, name: string, value: unknown, explode = false): void {
+  if (name.toLowerCase() === "set-cookie" && Array.isArray(value)) {
+    for (const item of value) headers.append(name, headerScalar(item));
+    return;
+  }
+  headers.set(name, serializeHeaderValue(value, explode));
+}
+
+function serializeHeaderValue(value: unknown, explode: boolean): string {
+  if (value instanceof Uint8Array) {
+    return headerScalar(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(headerScalar).join(",");
+  }
+
+  if (typeof value === "object" && value !== null) {
+    if (!isPlainObject(value)) {
+      throw new TypeError("HTTP structured header values must be plain objects.");
+    }
+    const fields = Object.entries(value).filter(([, item]) => item !== undefined);
+    return fields
+      .flatMap(([key, item]) =>
+        explode ? [`${key}=${headerScalar(item)}`] : [key, headerScalar(item)],
+      )
+      .join(",");
+  }
+
+  return headerScalar(value);
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function headerScalar(value: unknown): string {
+  if (value instanceof Uint8Array) return bytesToBase64(value);
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "bigint" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  throw new TypeError("HTTP header values must contain only scalar values.");
 }
 
 function resolveVariantBody<A>(
@@ -184,10 +226,7 @@ function resolveVariantBody<A>(
   return isObject ? src[variant.body] : undefined;
 }
 
-function omitVariantProperties(
-  src: Record<string, unknown>,
-  variant: ResponseVariant,
-): unknown {
+function omitVariantProperties(src: Record<string, unknown>, variant: ResponseVariant): unknown {
   const omit = new Set<string>(variant.omit ?? []);
   for (const [property] of variant.headers ?? []) {
     omit.add(property);
@@ -195,7 +234,7 @@ function omitVariantProperties(
 
   if (omit.size === 0) return src;
 
-  const body: Record<string, unknown> = {};
+  const body: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(src)) {
     if (!omit.has(key)) body[key] = src[key];
   }
@@ -216,9 +255,7 @@ function defaultContentTypeForKind(kind: ResponseVariant["kind"]): string | unde
   }
 }
 
-function variantResponseEncoder<A>(
-  variant: ResponseVariant,
-): ResponseEncoder<A> {
+function variantResponseEncoder<A>(variant: ResponseVariant): ResponseEncoder<A> {
   return ResponseEncoder.of((value) => encodeVariantResponse(value, variant));
 }
 

@@ -84,6 +84,23 @@ interface Data {
 }
 `;
 
+const structuredResponseHeadersSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "StructuredHeadersApi" })
+namespace StructuredHeadersApi;
+
+model SearchResponse {
+  @header(#{ name: "x-tags" }) tags: string[];
+  @header(#{ name: "x-filter", explode: true }) filter: { role: string; active: boolean };
+  data: string;
+}
+
+@route("/search")
+@get op search(): SearchResponse;
+`;
+
 const contentTypeSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -340,6 +357,15 @@ describe("response encoding", () => {
 
     expect(r.readFile("headers-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("headers-api", "models.ts")).toMatchSnapshot();
+  });
+
+  test("structured response headers preserve their explode setting", () => {
+    const r = compileFixture("structured-response-headers", structuredResponseHeadersSpec);
+    const operations = r.readFile("structured-headers-api", "server-operations.ts");
+
+    expect(operations).toContain('["tags", "x-tags"]');
+    expect(operations).toContain('["filter", "x-filter", true]');
+    r.typecheck("structured-headers-api");
   });
 
   test("text and binary content types use correct encoders", () => {
