@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   Decoders,
   Either,
+  bindRoute,
   createContextKey,
   createContextMap,
   createHttpRouter,
@@ -280,7 +281,7 @@ describe("createHttpRouter", () => {
         },
       ],
       {
-        async createContext(request, match) {
+        createContext(request, match) {
           const state = createContextMap();
           state.set(UserIdKey, "custom-user");
           return { request, match, state } as RequestContext;
@@ -291,6 +292,67 @@ describe("createHttpRouter", () => {
     const response = await router.handle(new Request("http://localhost/pets"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ userId: "custom-user" });
+  });
+
+  test("tryHandle returns undefined without running unmatched middleware or notFound", async () => {
+    const calls: string[] = [];
+    const router = createHttpRouter([], {
+      middleware: [
+        (app) => async (ctx) => {
+          calls.push("middleware");
+          return app(ctx);
+        },
+      ],
+      createContext(request, match) {
+        calls.push("context");
+        return { request, match, state: createContextMap() };
+      },
+      notFound() {
+        calls.push("notFound");
+        return new Response("runtime not found", { status: 404 });
+      },
+    });
+
+    const response = await router.tryHandle(new Request("http://localhost/unknown"));
+
+    expect(response).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  test("tryHandle preserves a matched operation's 404 response", async () => {
+    const operation = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "readPet",
+          operationId: "Pets.read",
+          method: "GET",
+          path: "/pets/:petId",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput(_request, pathParams) {
+        return Either.right({ petId: pathParams.petId });
+      },
+      encodeResult(result: { code: "NOT_FOUND"; petId: string }) {
+        return Response.json(result, { status: 404 });
+      },
+    });
+    const router = createHttpRouter([
+      bindRoute(operation, async ({ petId }) => ({
+        code: "NOT_FOUND" as const,
+        petId,
+      })),
+    ]);
+
+    const response = await router.tryHandle(new Request("http://localhost/pets/missing"));
+
+    expect(response?.status).toBe(404);
+    expect(await response?.json()).toEqual({
+      code: "NOT_FOUND",
+      petId: "missing",
+    });
   });
 
   test("onUnhandledError handler receives context and returns custom response", async () => {

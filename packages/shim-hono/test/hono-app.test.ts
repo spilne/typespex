@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { toHonoApp } from "../src/index.js";
-import type { HttpRouter } from "@typespex/runtime/server";
+import { Hono } from "hono";
+import { toHonoApp, toHonoMiddleware } from "../src/index.js";
+import type { ComposableHttpRouter, HttpRouter } from "@typespex/runtime/server";
 
-function mockRouter(handle: (request: Request) => Promise<Response>): HttpRouter {
-  return { handle };
+function mockRouter(
+  handle: (request: Request) => Promise<Response>,
+  tryHandle: (request: Request) => Promise<Response | undefined> = handle,
+): ComposableHttpRouter {
+  return { handle, tryHandle };
 }
 
 describe("toHonoApp", () => {
   test("delegates all requests to the router", async () => {
-    const router = mockRouter(async (request) =>
-      Response.json({ path: new URL(request.url).pathname }),
-    );
+    const router: HttpRouter = {
+      handle: async (request) => Response.json({ path: new URL(request.url).pathname }),
+    };
     const app = toHonoApp(router);
 
     const response = await app.fetch(new Request("http://localhost/pets"));
@@ -55,5 +59,55 @@ describe("toHonoApp", () => {
     const response = await app.fetch(new Request("http://localhost/test"));
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("Internal Server Error");
+  });
+});
+
+describe("toHonoMiddleware", () => {
+  test("handles requests matched by the TypeSpec router", async () => {
+    const router = mockRouter(
+      async () => new Response("unused"),
+      async (request) => {
+        const pathname = new URL(request.url).pathname;
+        return pathname === "/pets" ? Response.json({ source: "typespex" }) : undefined;
+      },
+    );
+    const app = new Hono();
+    app.use("*", toHonoMiddleware(router));
+    app.get("/health", (c) => c.json({ source: "hono" }));
+
+    const response = await app.fetch(new Request("http://localhost/pets"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ source: "typespex" });
+  });
+
+  test("falls through to user-defined Hono routes when no operation matches", async () => {
+    const router = mockRouter(
+      async () => new Response("unused"),
+      async () => undefined,
+    );
+    const app = new Hono();
+    app.use("*", toHonoMiddleware(router));
+    app.get("/health", (c) => c.json({ status: "ok" }));
+
+    const response = await app.fetch(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
+  });
+
+  test("does not fall through when a matched operation returns 404", async () => {
+    const router = mockRouter(
+      async () => new Response("unused"),
+      async () => Response.json({ source: "typespex" }, { status: 404 }),
+    );
+    const app = new Hono();
+    app.use("*", toHonoMiddleware(router));
+    app.get("/pets/:id", (c) => c.json({ source: "hono" }));
+
+    const response = await app.fetch(new Request("http://localhost/pets/missing"));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ source: "typespex" });
   });
 });

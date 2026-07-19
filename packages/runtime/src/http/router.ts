@@ -85,7 +85,7 @@ export interface HttpInterpreterOptions<Ctx extends RequestContext> {
   readonly createContext?: (
     request: Request,
     match?: MatchedEndpoint,
-  ) => Promise<Ctx>;
+  ) => Promise<Ctx> | Ctx;
   readonly onUnhandledError?: (
     error: unknown,
     context: Ctx,
@@ -95,9 +95,27 @@ export interface HttpInterpreterOptions<Ctx extends RequestContext> {
   ) => Promise<Response> | Response;
 }
 
-/** Runtime HTTP router produced from generated operations and handlers. */
+/** HTTP request handler accepted by the runtime adapters. */
 export interface HttpRouter {
+  /** Handles a request, including configured middleware and not-found handling. */
   handle(request: Request): Promise<Response>;
+
+  /**
+   * Handles a request only when one of the router's operations matches it.
+   *
+   * `undefined` means that no route matched. A `Response`, including a 404
+   * response, is always the result of a matched operation.
+   *
+   * This member is optional for compatibility with custom routers that only
+   * implement `handle`. APIs that require fallthrough use
+   * `ComposableHttpRouter` instead.
+   */
+  tryHandle?(request: Request): Promise<Response | undefined>;
+}
+
+/** Router that can distinguish an unmatched request from a matched response. */
+export interface ComposableHttpRouter extends HttpRouter {
+  tryHandle(request: Request): Promise<Response | undefined>;
 }
 
 /** Binds one generated server operation to its implementation handler. */
@@ -119,7 +137,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
   routes: ReadonlyArray<RouteBinding<any, any, Ctx>>,
   options: HttpInterpreterOptions<Ctx> = {},
   matcher?: RouteMatcher<RouteBinding<any, any, Ctx>>,
-): HttpRouter {
+): ComposableHttpRouter {
   const middleware = options.middleware ?? [];
   const middlewareChain = combineMiddleware(middleware);
 
@@ -140,34 +158,47 @@ export function createHttpRouter<Ctx extends RequestContext>(
 
   const routeMatcher = matcher ?? createRegexMatcher(matcherInput);
 
+  function matchRequest(request: Request) {
+    return routeMatcher.match(request.method, extractPathname(request.url));
+  }
+
+  async function execute(
+    request: Request,
+    matched: ReturnType<typeof routeMatcher.match>,
+  ): Promise<Response> {
+    let context: Ctx | undefined;
+    try {
+      const match: MatchedEndpoint | undefined = matched
+        ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
+        : undefined;
+      context = options.createContext
+        ? await options.createContext(request, match)
+        : (createDefaultContext(request, match) as Ctx);
+
+      const app = matched ? (wrappedApps.get(matched.route) ?? notFoundApp) : notFoundApp;
+      return await app(context);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return error.toResponse();
+      }
+
+      if (options.onUnhandledError && context) {
+        return options.onUnhandledError(error, context);
+      }
+
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
   return {
     async handle(request: Request): Promise<Response> {
-      const method = request.method;
-      const pathname = extractPathname(request.url);
-      const matched = routeMatcher.match(method, pathname);
+      return execute(request, matchRequest(request));
+    },
 
-      let context: Ctx | undefined;
-      try {
-        const match: MatchedEndpoint | undefined = matched
-          ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
-          : undefined;
-        context = options.createContext
-          ? await options.createContext(request, match)
-          : (createDefaultContext(request, match) as Ctx);
-
-        const app = matched ? (wrappedApps.get(matched.route) ?? notFoundApp) : notFoundApp;
-        return await app(context);
-      } catch (error) {
-        if (error instanceof HttpError) {
-          return error.toResponse();
-        }
-
-        if (options.onUnhandledError && context) {
-          return options.onUnhandledError(error, context);
-        }
-
-        return new Response("Internal Server Error", { status: 500 });
-      }
+    async tryHandle(request: Request): Promise<Response | undefined> {
+      const matched = matchRequest(request);
+      if (!matched) return undefined;
+      return execute(request, matched);
     },
   };
 }

@@ -5,7 +5,7 @@ import { toNodeHandler } from "../src/index.js";
 import type { HttpRouter } from "@typespex/runtime/server";
 
 function mockRouter(handle: (request: Request) => Promise<Response>): HttpRouter {
-  return { handle };
+  return { handle, tryHandle: handle };
 }
 
 const silentLogger = {
