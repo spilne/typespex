@@ -26,10 +26,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { HealthStatus } from "./models.js";
@@ -93,10 +90,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Config } from "./models.js";
@@ -151,10 +145,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 
@@ -235,10 +226,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { EscapedModel } from "./models.js";
@@ -247,12 +235,14 @@ const ItemsInput = {
   createRequest: RequestDecoders.query("default", Decoders.string.optional()).map(
     (defaultValue) => ({ defaultValue }),
   ),
-  createBody: Decoders.object<EscapedModel>({
-    default: Decoders.string,
-    "x-request-id": Decoders.string,
-    readonly: Decoders.optional(Decoders.string),
-    ["__proto__"]: Decoders.optional(Decoders.string),
-  }),
+  createBody: {
+    json: Decoders.object<EscapedModel>({
+      default: Decoders.string,
+      "x-request-id": Decoders.string,
+      readonly: Decoders.optional(Decoders.string),
+      ["__proto__"]: Decoders.optional(Decoders.string),
+    }),
+  },
 };
 
 const ItemsOutput = {

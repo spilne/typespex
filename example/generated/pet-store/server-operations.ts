@@ -11,10 +11,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type {
@@ -31,20 +28,31 @@ const PetsInput = {
     [
       RequestDecoders.query(
         "limit",
-        Decoders.number.validate(Validators.minValue(1), Validators.maxValue(100)).optional(),
+        Decoders.integer
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .validate(Validators.minValue(1), Validators.maxValue(100))
+          .optional(),
       ),
-      RequestDecoders.query("offset", Decoders.number.validate(Validators.minValue(0)).optional()),
+      RequestDecoders.query(
+        "offset",
+        Decoders.integer
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .validate(Validators.minValue(0))
+          .optional(),
+      ),
     ],
     (limit, offset) => ({ limit, offset }),
   ),
-  create: Decoders.object<CreatePetInput>({
-    name: Decoders.string.validate(
-      Validators.minLength(1),
-      Validators.maxLength(80),
-      Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
-    ),
-    tag: Decoders.optional(Decoders.string.validate(Validators.maxLength(40))),
-  }),
+  create: {
+    json: Decoders.object<CreatePetInput>({
+      name: Decoders.string.validate(
+        Validators.minLength(1),
+        Validators.maxLength(80),
+        Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
+      ),
+      tag: Decoders.optional(Decoders.string.validate(Validators.maxLength(40))),
+    }),
+  },
   read: RequestDecoders.path("petId", Decoders.string.validate(Validators.minLength(1))).map(
     (petId) => ({ petId }),
   ),
@@ -52,10 +60,12 @@ const PetsInput = {
     (petId) => ({ petId }),
   ),
   uploadPhotoRequest: RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId })),
-  uploadPhotoBody: Decoders.object({
-    caption: Decoders.optional(Decoders.string),
-    photo: Decoders.file,
-  }),
+  uploadPhotoBody: {
+    multipart: Decoders.object({
+      caption: Decoders.optional(Decoders.string),
+      photo: Decoders.file,
+    }),
+  },
 };
 
 const PetsOutput = {
@@ -173,7 +183,8 @@ export const PetsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) => decodeJsonBody<CreatePetInput>(request, PetsInput.create),
+    decodeInput: async (request) =>
+      decodeBody<CreatePetInput>(request, PetsInput.create, { contentTypes: ["application/json"] }),
     encodeResult: (result: Pet | ConflictError) => PetsOutput.create.encode(result),
   } satisfies ServerOperation<CreatePetInput, Pet | ConflictError>,
 
@@ -225,11 +236,12 @@ export const PetsOperations = {
       },
     },
     decodeInput: async (request, pathParams) =>
-      decodeRequestInputAndMultipartBody<{ petId: string }, { caption?: string; photo: File }>(
+      decodeRequestInputAndBody<{ petId: string }, { caption?: string; photo: File }>(
         PetsInput.uploadPhotoRequest,
         PetsInput.uploadPhotoBody,
         request,
         pathParams,
+        { contentTypes: ["multipart/form-data"] },
       ),
     encodeResult: (result: UploadResult | NotFoundError) => PetsOutput.uploadPhoto.encode(result),
   } satisfies ServerOperation<

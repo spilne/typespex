@@ -230,38 +230,66 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
 
   for (const param of op.parameters.parameters) {
-    parts.push(tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
-      optional: param.param.optional,
-    }));
+    parts.push(
+      tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
+        optional: param.param.optional,
+      }),
+    );
   }
 
   if (op.parameters.body) {
     const body = op.parameters.body;
+    const hasNonBodyInput = parts.length > 0;
 
     // Multipart body — build type from parts
     if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
-      const multiParts = (body as any).parts as ReadonlyArray<{ name?: string; body: { type: Type }; optional: boolean; multi: boolean }>;
+      const multipartParts: string[] = [];
+      const bodyOptional = body.property?.optional === true;
+      const multiParts = (body as any).parts as ReadonlyArray<{
+        name?: string;
+        body: { type: Type };
+        optional: boolean;
+        multi: boolean;
+      }>;
       for (const part of multiParts) {
         if (!part.name) continue;
         let tsType = typeToTs(ctx, part.body.type);
         if (part.multi) tsType = `${tsType}[]`;
-        parts.push(tsPropertyDeclaration(part.name, tsType, { optional: part.optional }));
+        multipartParts.push(
+          tsPropertyDeclaration(part.name, tsType, {
+            optional: part.optional || (bodyOptional && hasNonBodyInput),
+          }),
+        );
       }
+      if (bodyOptional && !hasNonBodyInput) {
+        const multipartType =
+          multipartParts.length > 0 ? `{ ${multipartParts.join("; ")} }` : "Record<string, never>";
+        return `${multipartType} | undefined`;
+      }
+      parts.push(...multipartParts);
     } else {
       const bodyType = body.type;
+      const bodyOptional = body.property?.optional === true;
       if (parts.length === 0) {
-        return typeToTs(ctx, bodyType);
+        const bodyTypeTs = typeToTs(ctx, bodyType);
+        return bodyOptional ? `${bodyTypeTs} | undefined` : bodyTypeTs;
       }
 
       if (shouldFlattenBodyType(ctx, bodyType)) {
         for (const prop of walkPropertiesInherited(bodyType)) {
           if (isMetadata(ctx.program, prop)) continue;
-          parts.push(tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
-            optional: prop.optional,
-          }));
+          parts.push(
+            tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
+              optional: bodyOptional || prop.optional,
+            }),
+          );
         }
       } else {
-        parts.push(tsPropertyDeclaration("body", typeToTs(ctx, bodyType)));
+        parts.push(
+          tsPropertyDeclaration("body", typeToTs(ctx, bodyType), {
+            optional: bodyOptional,
+          }),
+        );
       }
     }
   }
@@ -320,9 +348,11 @@ function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | 
 }
 
 export function shouldFlattenBodyType(ctx: EmitterCtx, type: Type): type is Model {
-  return type.kind === "Model" &&
+  return (
+    type.kind === "Model" &&
     !isArrayModelType(ctx.program, type) &&
-    !isRecordModelType(ctx.program, type);
+    !isRecordModelType(ctx.program, type)
+  );
 }
 
 function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string {

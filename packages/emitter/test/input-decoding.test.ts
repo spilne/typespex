@@ -113,6 +113,51 @@ interface Tree {
 }
 `;
 
+const sharedRecursiveSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "SharedTreeApi" })
+namespace SharedTreeApi;
+
+model TreeNode {
+  value: string;
+  children?: TreeNode[];
+}
+
+@route("/first")
+interface First {
+  @post create(@body body: TreeNode): TreeNode;
+}
+
+@route("/second")
+interface Second {
+  @post create(@body body: TreeNode): TreeNode;
+}
+`;
+
+const collidingLazyDecoderNamesSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "LazyNameApi" })
+namespace LazyNameApi;
+
+model Node {
+  next?: Node;
+}
+
+model UserNode {
+  next?: UserNode;
+}
+
+@route("/nodes")
+interface Nodes {
+  @route("/user") @post getUser(@body body: Node): Node;
+  @route("/all") @post get(@body body: UserNode): UserNode;
+}
+`;
+
 const multipartSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -154,8 +199,9 @@ using TypeSpec.Http;
 @service(#{ title: "ContentTypeApi" })
 namespace ContentTypeApi;
 
-model JsonItem { id: string; }
+model JsonItem { id: string; payload: bytes; }
 model FormItem { name: string; }
+model FlexibleItem { count: int32; enabled: boolean; }
 model UploadResult { id: string; }
 
 @route("/items")
@@ -177,12 +223,75 @@ interface Items {
     @body body: bytes,
   ): bytes;
 
+  @route("/mixed") @post createMixed(
+    @header contentType: "application/json" | "application/x-www-form-urlencoded",
+    @body body: FlexibleItem,
+  ): FlexibleItem;
+
   @route("/upload") @post upload(
     @multipartBody body: {
       name: HttpPart<string>;
       file: HttpPart<File>;
     },
   ): UploadResult;
+}
+`;
+
+const parameterWireFormatSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "WireFormatApi" })
+namespace WireFormatApi;
+
+@route("/items")
+interface Items {
+  @route("/{itemId}/{pathValues}") @get read(
+    @path("itemId") localId: string,
+    @path pathValues: string[],
+    @query(#{ name: "compact", explode: false }) compactValues: string[],
+    @query(#{ name: "expanded", explode: true }) expandedValues: string[],
+    @header("x-values") headerValues: string[],
+    @cookie("choices") cookieValues: string[],
+  ): void;
+}
+`;
+
+const renamedPathParameterSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "RenamedPathApi" })
+namespace RenamedPathApi;
+
+@route("/items/{item-id}")
+@get op read(@path("item-id") itemId: int32): string;
+`;
+
+const integerRangesSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "IntegerRangesApi" })
+namespace IntegerRangesApi;
+
+model IntegerPayload {
+  int8Value: int8;
+  uint8Value: uint8;
+  int16Value: int16;
+  uint16Value: uint16;
+  int32Value: int32;
+  uint32Value: uint32;
+  int64Value: int64;
+  uint64Value: uint64;
+  integerValue: integer;
+  safeValue: safeint;
+}
+
+@route("/integers")
+interface Integers {
+  @post create(@body body: IntegerPayload): void;
+  @get read(@query value: uint32): void;
 }
 `;
 
@@ -280,6 +389,23 @@ describe("input decoding", () => {
     expect(r.readFile("tree-api", "server-operations.ts")).toMatchSnapshot();
   });
 
+  test("shared recursive models emit one lazy decoder declaration", () => {
+    const r = compileFixture("shared-recursive", sharedRecursiveSpec);
+    const operations = r.readFile("shared-tree-api", "server-operations.ts");
+
+    expect(operations.match(/const _lazy[^:]+: Decoder<TreeNode>/g)).toHaveLength(1);
+    r.typecheck("shared-tree-api");
+  });
+
+  test("lazy decoder identifiers preserve operation and model boundaries", () => {
+    const r = compileFixture("lazy-name-collisions", collidingLazyDecoderNamesSpec);
+    const operations = r.readFile("lazy-name-api", "server-operations.ts");
+
+    expect(operations.match(/const _lazy[^:]+: Decoder<Node>/g)).toHaveLength(1);
+    expect(operations.match(/const _lazy[^:]+: Decoder<UserNode>/g)).toHaveLength(1);
+    r.typecheck("lazy-name-api");
+  });
+
   test("multipart body with file, multi-valued, and optional parts", () => {
     const r = compileFixture("multipart", multipartSpec);
 
@@ -320,6 +446,84 @@ describe("input decoding", () => {
     expect(operations).toContain(`contentTypes: ["text/plain"]`);
     expect(operations).toContain(`contentTypes: ["application/octet-stream"]`);
     expect(operations).toContain(`contentTypes: ["multipart/form-data"]`);
+    expect(operations).toContain("text: Decoders.string");
+    expect(operations).toContain("binary: Decoders.bytes");
+    expect(operations).toContain("payload: Decoders.strictBytes");
+    expect(operations).toContain("json: Decoders.object<FlexibleItem>");
+    expect(operations).toContain("form: Decoders.object<FlexibleItem>");
+    expect(operations).toContain("count: Decoders.strictInteger");
+    expect(operations).toContain("count: Decoders.integer");
+    expect(operations).toContain("enabled: Decoders.strictBoolean");
+    expect(operations).toContain("enabled: Decoders.boolean");
+    expect(operations).toContain("mediaType: true");
+    expect(operations).toContain('decodeRequestInputAndBody<{ contentType: "text/plain" }');
+    expect(operations).toContain(
+      'decodeRequestInputAndBody<{ contentType: "application/octet-stream" }',
+    );
     r.typecheck("content-type-api");
+  });
+
+  test("emits wire names and array serialization options", () => {
+    const r = compileFixture("parameter-wire-formats", parameterWireFormatSpec);
+    const operations = r.readFile("wire-format-api", "server-operations.ts");
+
+    expect(operations).toContain('RequestDecoders.path("itemId", Decoders.string)');
+    expect(operations).toContain(
+      'RequestDecoders.path("pathValues", Decoders.array(Decoders.string), { array: true })',
+    );
+    expect(operations).toContain("explode: false");
+    expect(operations).toContain("explode: true");
+    expect(operations).toContain(
+      'RequestDecoders.header("x-values", Decoders.array(Decoders.string), { array: true })',
+    );
+    expect(operations).toContain(
+      'RequestDecoders.cookie("choices", Decoders.array(Decoders.string), { array: true })',
+    );
+    expect(operations).toContain("(localId, pathValues, compactValues");
+    r.typecheck("wire-format-api");
+  });
+
+  test("routes renamed path parameters and binds them to the handler input", async () => {
+    const r = compileFixture("renamed-path-parameter", renamedPathParameterSpec);
+    r.typecheck("renamed-path-api");
+
+    const { createRenamedPathApiServerRouter } = await import(
+      `${r.outputDir}/renamed-path-api/server-router.ts`
+    );
+    let handlerInput: { itemId: number } | undefined;
+    let matchedPathParams: Record<string, string> | undefined;
+    const router = createRenamedPathApiServerRouter({
+      read(input: { itemId: number }, context: { match: { pathParams: Record<string, string> } }) {
+        handlerInput = input;
+        matchedPathParams = context.match.pathParams;
+        return `item:${input.itemId}`;
+      },
+    });
+
+    const response = await router.handle(new Request("http://localhost/items/123"));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("item:123");
+    expect(matchedPathParams).toEqual({ "item-id": "123" });
+    expect(handlerInput).toEqual({ itemId: 123 });
+  });
+
+  test("emits intrinsic integer shape and range validation", () => {
+    const r = compileFixture("integer-ranges", integerRangesSpec);
+    const operations = r.readFile("integer-ranges-api", "server-operations.ts");
+
+    expect(operations).toContain("int8Value: Decoders.strictInteger.validate(");
+    expect(operations).toContain("uint32Value: Decoders.strictInteger.validate(");
+    expect(operations).toContain("Validators.minValue(-128)");
+    expect(operations).toContain("Validators.maxValue(4294967295)");
+    expect(operations).toContain("Validators.minValue(-9223372036854775808n)");
+    expect(operations).toContain("Validators.maxValue(9223372036854775807n)");
+    expect(operations).toContain("Validators.maxValue(18446744073709551615n)");
+    expect(operations).toContain("integerValue: Decoders.strictInteger");
+    expect(operations).toContain("safeValue: Decoders.strictSafeInteger");
+    expect(operations).toContain(
+      "Decoders.integer.validate(Validators.minValue(0), Validators.maxValue(4294967295))",
+    );
+    r.typecheck("integer-ranges-api");
   });
 });

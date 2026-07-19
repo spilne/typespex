@@ -41,25 +41,29 @@ export function emitServerOperations(
   lines.push("");
 
   // --- Input decoders + Operations per group ---
+  const emittedHoisted = new Set<string>();
   for (const group of emission.groups) {
     const inputsName = `${group.exportName}Input`;
     const outputsName = `${group.exportName}Output`;
     const decodersByOpId = new Map<string, DecoderEmission>();
     const allEntries: InputDecoderEntry[] = [];
 
-    const allHoisted: string[] = [];
+    const allHoisted = new Set<string>();
     for (const operation of group.operations) {
       const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.propertyName);
       allEntries.push(...decoder.inputEntries);
-      allHoisted.push(...decoder.hoistedDecoders);
+      for (const declaration of decoder.hoistedDecoders) {
+        if (!emittedHoisted.has(declaration)) allHoisted.add(declaration);
+      }
       decodersByOpId.set(operation.operationId, decoder);
     }
 
     // Emit hoisted lazy decoders for recursive models
     for (const line of allHoisted) {
       lines.push(line);
+      emittedHoisted.add(line);
     }
-    if (allHoisted.length > 0) lines.push("");
+    if (allHoisted.size > 0) lines.push("");
 
     // Emit grouped input decoders object
     if (allEntries.length > 0) {
