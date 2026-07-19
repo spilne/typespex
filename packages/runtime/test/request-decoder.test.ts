@@ -9,7 +9,7 @@ import {
   isLeft,
   RequestDecoders,
 } from "../src/server.js";
-import type { RequestDecoder } from "../src/server.js";
+import type { Decoder, RequestDecoder } from "../src/server.js";
 
 describe("http request decoders (sync)", () => {
   test("RequestDecoders.combine builds typed objects applicatively", () => {
@@ -34,11 +34,13 @@ describe("http request decoders (sync)", () => {
       headers: new Headers({ "x-trace-id": "trace-1" }),
     });
 
-    expect(decoded).toEqual(Either.right({
-      petId: "p-1",
-      limit: 2,
-      traceId: "trace-1",
-    }));
+    expect(decoded).toEqual(
+      Either.right({
+        petId: "p-1",
+        limit: 2,
+        traceId: "trace-1",
+      }),
+    );
   });
 
   test("accumulates request validation issues synchronously", () => {
@@ -66,14 +68,11 @@ describe("http request decoders (sync)", () => {
   });
 
   test("decodeRequestInput returns Either.right on success", () => {
-    const decoder = RequestDecoders.path("petId", Decoders.string)
-      .map((petId) => ({ petId }));
+    const decoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId }));
 
-    const result = decodeRequestInput(
-      decoder,
-      new Request("http://localhost/pets/p-1"),
-      { petId: "p-1" },
-    );
+    const result = decodeRequestInput(decoder, new Request("http://localhost/pets/p-1"), {
+      petId: "p-1",
+    });
 
     expect(result).toEqual(Either.right({ petId: "p-1" }));
   });
@@ -84,11 +83,7 @@ describe("http request decoders (sync)", () => {
       (petId) => ({ petId }),
     );
 
-    const result = decodeRequestInput(
-      decoder,
-      new Request("http://localhost/pets"),
-      {},
-    );
+    const result = decodeRequestInput(decoder, new Request("http://localhost/pets"), {});
 
     expect(isLeft(result)).toBe(true);
     if (isLeft(result)) {
@@ -97,14 +92,11 @@ describe("http request decoders (sync)", () => {
   });
 
   test("decodeRequestInput returns validation error for malformed path encoding", () => {
-    const decoder = RequestDecoders.path("petId", Decoders.string)
-      .map((petId) => ({ petId }));
+    const decoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId }));
 
-    const result = decodeRequestInput(
-      decoder,
-      new Request("http://localhost/pets/%E0%A4%A"),
-      { petId: "%E0%A4%A" },
-    );
+    const result = decodeRequestInput(decoder, new Request("http://localhost/pets/%E0%A4%A"), {
+      petId: "%E0%A4%A",
+    });
 
     expect(isLeft(result)).toBe(true);
     if (isLeft(result)) {
@@ -117,9 +109,118 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("array parameters follow their HTTP comma and explode formats", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.path("pathIds", Decoders.array(Decoders.string), { array: true }),
+        RequestDecoders.query("compact", Decoders.array(Decoders.string), {
+          array: true,
+          explode: false,
+        }),
+        RequestDecoders.query("expanded", Decoders.array(Decoders.string), {
+          array: true,
+          explode: true,
+        }),
+        RequestDecoders.header("x-values", Decoders.array(Decoders.string), { array: true }),
+        RequestDecoders.cookie("choices", Decoders.array(Decoders.string), { array: true }),
+      ],
+      (pathIds, compact, expanded, headerValues, choices) => ({
+        pathIds,
+        compact,
+        expanded,
+        headerValues,
+        choices,
+      }),
+    );
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request(
+        "http://localhost/items/a,b%2Cc?compact=one,two%2Cthree&expanded=red&expanded=blue",
+        {
+          headers: {
+            cookie: "choices=yes,no",
+            "x-values": "first, second",
+          },
+        },
+      ),
+      { pathIds: "a,b%2Cc" },
+    );
+
+    expect(result).toEqual(
+      Either.right({
+        pathIds: ["a", "b,c"],
+        compact: ["one", "two,three"],
+        expanded: ["red", "blue"],
+        headerValues: ["first", "second"],
+        choices: ["yes", "no"],
+      }),
+    );
+  });
+
+  test("rejects repeated non-exploded query array parameters", () => {
+    const decoder = RequestDecoders.query("ids", Decoders.array(Decoders.integer), {
+      array: true,
+      explode: false,
+    });
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/items?ids=1,2&ids=999"),
+      {},
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.issues).toEqual([
+        {
+          path: "$query.ids",
+          message: "Expected one comma-delimited query parameter.",
+        },
+      ]);
+    }
+  });
+
+  test("trims raw non-exploded query items while preserving encoded commas", () => {
+    const decoder = RequestDecoders.query("values", Decoders.array(Decoders.string), {
+      array: true,
+      explode: false,
+    });
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/items?values=%20one%20,%20two%2Cthree%20"),
+      {},
+    );
+
+    expect(result).toEqual(Either.right(["one", "two,three"]));
+  });
+
+  test("rejects malformed encoding in a non-exploded query array", () => {
+    const decoder = RequestDecoders.query("values", Decoders.array(Decoders.string), {
+      array: true,
+      explode: false,
+    });
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/items?values=one,%E0%A4%A"),
+      {},
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.issues).toEqual([
+        {
+          path: "$query.values[1]",
+          message: "Expected a valid percent-encoded query value.",
+        },
+      ]);
+    }
+  });
+
   test("Decoder.map lifts one request value into an object", () => {
-    const decoder = RequestDecoders.path("petId", Decoders.string)
-      .map((petId) => ({ petId }));
+    const decoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId }));
 
     const decoded = decoder.decode({
       pathParams: { petId: "p-1" },
@@ -131,8 +232,9 @@ describe("http request decoders (sync)", () => {
   });
 
   test("decodeRequestInputAndBody returns Either.right merging request input and body", async () => {
-    const requestDecoder = RequestDecoders.path("petId", Decoders.string)
-      .map((petId) => ({ petId }));
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
     const bodyDecoder = Decoders.object<{ name: string }>({
       name: Decoders.string,
     });
@@ -140,6 +242,33 @@ describe("http request decoders (sync)", () => {
     const result = await decodeRequestInputAndBody(
       requestDecoder,
       bodyDecoder,
+      new Request("http://localhost/pets/p-1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Milo" }),
+      }),
+      { petId: "p-1" },
+    );
+
+    expect(result).toEqual(Either.right({ petId: "p-1", name: "Milo" }));
+  });
+
+  test("decodeRequestInputAndBody accepts a structurally compatible Decoder", async () => {
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
+    const bodyDecoder = Decoders.object<{ name: string }>({ name: Decoders.string });
+    const foreignBodyDecoder = {
+      decode: bodyDecoder.decode.bind(bodyDecoder),
+      map: bodyDecoder.map.bind(bodyDecoder),
+      refine: bodyDecoder.refine.bind(bodyDecoder),
+      validate: bodyDecoder.validate.bind(bodyDecoder),
+      optional: bodyDecoder.optional.bind(bodyDecoder),
+    } satisfies Decoder<{ name: string }>;
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      foreignBodyDecoder,
       new Request("http://localhost/pets/p-1", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -213,6 +342,89 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("decodeRequestInputAndBody merges request input when an optional body is absent", async () => {
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
+    const bodyDecoder = {
+      json: Decoders.object<{ name: string }>({ name: Decoders.string }),
+    };
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/pets/p-1", { method: "POST" }),
+      { petId: "p-1" },
+      { contentTypes: ["application/json"], optional: true },
+    );
+
+    expect(result).toEqual(Either.right({ petId: "p-1" }));
+  });
+
+  test("decodeRequestInputAndBody accepts an absent optional body with a Decoder", async () => {
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
+    const bodyDecoder = Decoders.object<{ name: string }>({ name: Decoders.string });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/pets/p-1", { method: "POST" }),
+      { petId: "p-1" },
+      { contentTypes: ["application/json"], optional: true },
+    );
+
+    expect(result).toEqual(Either.right({ petId: "p-1" }));
+  });
+
+  test("decodeRequestInputAndBody decodes a present optional body with a Decoder", async () => {
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
+    const bodyDecoder = Decoders.object<{ name: string }>({ name: Decoders.string });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/pets/p-1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Milo" }),
+      }),
+      { petId: "p-1" },
+      { contentTypes: ["application/json"], optional: true },
+    );
+
+    expect(result).toEqual(Either.right({ petId: "p-1", name: "Milo" }));
+  });
+
+  test("decodeRequestInputAndBody still rejects an absent required body with a Decoder", async () => {
+    const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+      petId,
+    }));
+    const bodyDecoder = Decoders.object<{ name: string }>({ name: Decoders.string });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/pets/p-1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      }),
+      { petId: "p-1" },
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(ValidationError);
+      expect((result.left as ValidationError).issues).toEqual([
+        { path: "$body", message: "Body must contain valid JSON." },
+      ]);
+    }
+  });
+
   test("requiredHeader decodes present header and fails on missing", () => {
     const decoder = RequestDecoders.combine(
       [RequestDecoders.header("x-api-key", Decoders.string)],
@@ -233,10 +445,23 @@ describe("http request decoders (sync)", () => {
     });
     expect(isLeft(missing)).toBe(true);
     if (isLeft(missing)) {
-      expect(missing.left).toEqual([
-        { path: "$header.x-api-key", message: "Expected a string." },
-      ]);
+      expect(missing.left).toEqual([{ path: "$header.x-api-key", message: "Expected a string." }]);
     }
+  });
+
+  test("content-type header decoding ignores media type parameters", () => {
+    const decoder = RequestDecoders.header("content-type", Decoders.literal("text/plain"), {
+      mediaType: true,
+    }).map((contentType) => ({ contentType }));
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/test", {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      }),
+      {},
+    );
+    expect(result).toEqual(Either.right({ contentType: "text/plain" }));
   });
 
   test("requiredCookie decodes present cookie and fails on missing", () => {
@@ -254,11 +479,7 @@ describe("http request decoders (sync)", () => {
     );
     expect(ok).toEqual(Either.right({ session: "abc123" }));
 
-    const missing = decodeRequestInput(
-      decoder,
-      new Request("http://localhost/test"),
-      {},
-    );
+    const missing = decodeRequestInput(decoder, new Request("http://localhost/test"), {});
     expect(isLeft(missing)).toBe(true);
   });
 
@@ -268,11 +489,7 @@ describe("http request decoders (sync)", () => {
       (token) => ({ token }),
     );
 
-    const result = decodeRequestInput(
-      decoder,
-      new Request("http://localhost/test"),
-      {},
-    );
+    const result = decodeRequestInput(decoder, new Request("http://localhost/test"), {});
     expect(result).toEqual(Either.right({ token: undefined }));
   });
 
