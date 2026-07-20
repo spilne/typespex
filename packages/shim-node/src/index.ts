@@ -3,6 +3,8 @@ import { type HttpRouter, type Logger, consoleLogger } from "@typespex/runtime/s
 
 export interface NodeHandlerOptions {
   readonly logger?: Logger;
+  /** Trust the first X-Forwarded-Proto value when running behind a trusted proxy. */
+  readonly trustProxy?: boolean;
 }
 
 /**
@@ -18,8 +20,11 @@ export function toNodeHandler(
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const logger = options?.logger ?? consoleLogger;
   return async (req, res) => {
+    let releaseRequestBody: (() => void) | undefined;
     try {
-      const request = incomingMessageToRequest(req);
+      const converted = incomingMessageToRequest(req, options);
+      const request = converted.request;
+      releaseRequestBody = converted.releaseBody;
       const response = await router.handle(request);
       await writeResponse(response, res);
     } catch (error) {
@@ -28,15 +33,42 @@ export function toNodeHandler(
         method: req.method,
         url: req.url,
       });
+      if (res.headersSent || res.writableEnded) {
+        res.destroy(toError(error));
+        return;
+      }
+      for (const name of res.getHeaderNames()) res.removeHeader(name);
       res.statusCode = 500;
       res.end("Internal Server Error");
+    } finally {
+      releaseRequestBody?.();
     }
   };
 }
 
-function incomingMessageToRequest(req: IncomingMessage): Request {
-  const forwarded = req.headers["x-forwarded-proto"];
-  const protocol = typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "http";
+interface ConvertedIncomingRequest {
+  readonly request: Request;
+  readonly releaseBody: () => void;
+}
+
+function incomingMessageToRequest(
+  req: IncomingMessage,
+  options?: NodeHandlerOptions,
+): ConvertedIncomingRequest {
+  const forwarded = options?.trustProxy ? req.headers["x-forwarded-proto"] : undefined;
+  const firstForwarded = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const forwardedProtocol =
+    typeof firstForwarded === "string"
+      ? firstForwarded.split(",", 1)[0].trim().toLowerCase()
+      : undefined;
+  const socket = req.socket;
+  const encrypted = socket != null && "encrypted" in socket && socket.encrypted === true;
+  const protocol =
+    forwardedProtocol === "http" || forwardedProtocol === "https"
+      ? forwardedProtocol
+      : encrypted
+        ? "https"
+        : "http";
   const host = req.headers.host ?? "localhost";
   const url = new URL(req.url ?? "/", `${protocol}://${host}`);
 
@@ -53,47 +85,183 @@ function incomingMessageToRequest(req: IncomingMessage): Request {
   }
 
   const method = req.method ?? "GET";
-  const hasBody = method !== "GET" && method !== "HEAD";
+  const hasBody = hasIncomingBody(req, method);
 
-  const body = hasBody
-    ? new ReadableStream<Uint8Array>({
-        start(controller) {
-          req.on("data", (chunk: Buffer) =>
-            controller.enqueue(new Uint8Array(chunk)),
-          );
-          req.on("end", () => controller.close());
-          req.on("error", (err) => controller.error(err));
-        },
-      })
-    : undefined;
+  const abortController = new AbortController();
+  const bodyBridge = hasBody ? incomingBodyStream(req, abortController) : undefined;
 
-  return new Request(url.toString(), {
-    method,
-    headers,
-    body,
-    // @ts-expect-error duplex is required for streaming bodies in Node
-    duplex: hasBody ? "half" : undefined,
-  });
+  return {
+    request: new Request(url.toString(), {
+      method,
+      headers,
+      body: bodyBridge?.stream,
+      signal: abortController.signal,
+      // @ts-expect-error duplex is required for streaming bodies in Node
+      duplex: hasBody ? "half" : undefined,
+    }),
+    releaseBody: bodyBridge?.drain ?? (() => {}),
+  };
 }
 
-async function writeResponse(
-  response: Response,
-  res: ServerResponse,
-): Promise<void> {
+function hasIncomingBody(req: IncomingMessage, method: string): boolean {
+  if (method === "GET" || method === "HEAD") return false;
+  if (req.headers["transfer-encoding"] !== undefined) return true;
+
+  const header = req.headers["content-length"];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (value === undefined) return false;
+  const length = Number(value);
+  return !Number.isFinite(length) || length > 0;
+}
+
+function incomingBodyStream(
+  req: IncomingMessage,
+  abortController: AbortController,
+): { readonly stream: ReadableStream<Uint8Array>; readonly drain: () => void } {
+  let closed = false;
+  let cleanup = () => {};
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+  // A data listener makes a Node Readable flow unless it has already been paused.
+  req.pause();
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        streamController = controller;
+        cleanup = () => {
+          req.off("data", onData);
+          req.off("end", onEnd);
+          req.off("aborted", onAborted);
+          req.off("error", onError);
+        };
+        const finish = (action: () => void) => {
+          if (closed) return;
+          closed = true;
+          cleanup();
+          action();
+        };
+        const onData = (chunk: Buffer) => {
+          controller.enqueue(chunk);
+          if ((controller.desiredSize ?? 1) <= 0) req.pause();
+        };
+        const onEnd = () => finish(() => controller.close());
+        const onAborted = () => {
+          const error = new Error("Client aborted the request body.");
+          abortController.abort(error);
+          finish(() => controller.error(error));
+        };
+        const onError = (error: Error) => {
+          abortController.abort(error);
+          finish(() => controller.error(error));
+        };
+
+        req.on("data", onData);
+        req.once("end", onEnd);
+        req.once("aborted", onAborted);
+        req.once("error", onError);
+      },
+      pull() {
+        req.resume();
+      },
+      cancel() {
+        if (closed) return;
+        closed = true;
+        cleanup();
+        req.destroy();
+      },
+    },
+    {
+      // Pull only when application code asks for data; do not prefill a Web stream queue.
+      highWaterMark: 0,
+    },
+  );
+
+  return {
+    stream,
+    drain() {
+      if (closed) return;
+      closed = true;
+      cleanup();
+      try {
+        streamController?.close();
+      } catch {
+        // The stream may already be canceled or errored by user code.
+      }
+      const ignoreDrainError = () => {};
+      req.on("error", ignoreDrainError);
+      req.once("close", () => req.off("error", ignoreDrainError));
+      req.resume();
+    },
+  };
+}
+
+async function writeResponse(response: Response, res: ServerResponse): Promise<void> {
   res.statusCode = response.status;
 
   response.headers.forEach((value, key) => {
+    if (key.toLowerCase() === "set-cookie") return;
     res.setHeader(key, value);
   });
+  const setCookies = getSetCookieHeaders(response.headers);
+  if (setCookies.length > 0) {
+    res.setHeader("set-cookie", setCookies);
+  }
 
   if (response.body) {
     const reader = response.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(value);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!res.write(value)) await waitForDrain(res);
+      }
+    } catch (error) {
+      await reader.cancel(error).catch(() => undefined);
+      throw error;
+    } finally {
+      reader.releaseLock();
     }
   }
 
   res.end();
+}
+
+function getSetCookieHeaders(headers: Headers): readonly string[] {
+  const getSetCookie = headers.getSetCookie;
+  if (typeof getSetCookie === "function") return getSetCookie.call(headers);
+  const combined = headers.get("set-cookie");
+  return combined === null ? [] : [combined];
+}
+
+function waitForDrain(res: ServerResponse): Promise<void> {
+  if (res.destroyed) {
+    return Promise.reject(new Error("Client connection closed while streaming response."));
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+      res.off("error", onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Client connection closed while streaming response."));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+    res.once("error", onError);
+  });
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
