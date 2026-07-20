@@ -1,5 +1,13 @@
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
@@ -34,6 +42,7 @@ export interface CompileResult {
   outputDir: string;
   readFile(serviceDirOrFile: string, fileName?: string): string;
   fileExists(serviceDirOrFile: string, fileName?: string): boolean;
+  listFiles(serviceDir: string): string[];
   typecheck(serviceDir: string, extraFiles?: Record<string, string>): void;
 }
 
@@ -42,7 +51,7 @@ export interface CompileDiagnostics {
   readonly stderr: string;
 }
 
-export interface FailedCompileResult extends CompileResult {
+export interface CompileResultWithDiagnostics extends CompileResult {
   readonly diagnostics: CompileDiagnostics;
 }
 
@@ -58,17 +67,30 @@ export function compileFixture(
 
 /**
  * Runs the compiler expecting it to surface diagnostics (non-zero exit).
- * Returns the captured stdout/stderr alongside the same file-reading surface
- * as a normal compile so tests can inspect what was still written.
+ * Returns captured stdout/stderr and file-reading helpers so tests can verify
+ * that diagnostic failures suppress generated output.
  */
 export function compileFixtureExpectingDiagnostics(
   name: string,
   source: string,
   configExtra = "",
   extraFiles?: Record<string, string>,
-): FailedCompileResult {
+): CompileResultWithDiagnostics {
   const { result, diagnostics } = runCompiler(name, source, configExtra, extraFiles, {
     expectFailure: true,
+  });
+  return { ...result, diagnostics };
+}
+
+/** Runs the compiler and returns diagnostics regardless of its exit code. */
+export function compileFixtureCollectingDiagnostics(
+  name: string,
+  source: string,
+  configExtra = "",
+  extraFiles?: Record<string, string>,
+): CompileResultWithDiagnostics {
+  const { result, diagnostics } = runCompiler(name, source, configExtra, extraFiles, {
+    expectFailure: "allow",
   });
   return { ...result, diagnostics };
 }
@@ -78,7 +100,7 @@ function runCompiler(
   source: string,
   configExtra: string,
   extraFiles: Record<string, string> | undefined,
-  options: { expectFailure: boolean },
+  options: { expectFailure: boolean | "allow" },
 ): { result: CompileResult; diagnostics: CompileDiagnostics } {
   const fixtureDir = mkdtempSync(join(repoRoot, `example/tmp-typespex-${name}-`));
   tempDirs.push(fixtureDir);
@@ -105,17 +127,17 @@ function runCompiler(
   );
 
   const diagnostics: CompileDiagnostics = {
-    stdout: proc.stdout.toString(),
-    stderr: proc.stderr.toString(),
+    stdout: stripVTControlCharacters(proc.stdout.toString()),
+    stderr: stripVTControlCharacters(proc.stderr.toString()),
   };
 
-  if (options.expectFailure && proc.exitCode === 0) {
+  if (options.expectFailure === true && proc.exitCode === 0) {
     throw new Error(
       `TypeSpec compile succeeded but diagnostics were expected\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
     );
   }
 
-  if (!options.expectFailure && proc.exitCode !== 0) {
+  if (options.expectFailure === false && proc.exitCode !== 0) {
     throw new Error(
       `TypeSpec compile failed\nstdout:\n${diagnostics.stdout}\nstderr:\n${diagnostics.stderr}`,
     );
@@ -134,6 +156,10 @@ function runCompiler(
         ? join(outputDir, serviceDirOrFile, fileName)
         : join(outputDir, serviceDirOrFile);
       return existsSync(path);
+    },
+    listFiles(serviceDir: string): string[] {
+      const path = join(outputDir, serviceDir);
+      return existsSync(path) ? readdirSync(path).sort() : [];
     },
     typecheck(serviceDir: string, extraFiles?: Record<string, string>): void {
       ensureRuntimeDeclarationsExist();

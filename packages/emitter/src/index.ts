@@ -1,14 +1,20 @@
 import type { EmitContext } from "@typespec/compiler";
 import { emitFile, resolvePath } from "@typespec/compiler";
-import { getAllHttpServices, type HttpService } from "@typespec/http";
+import { getAllHttpServices, type HttpOperation, type HttpService } from "@typespec/http";
 import { format } from "oxfmt";
 import { $lib, type TypespexEmitterOptions } from "./lib.js";
-import { DEFAULT_FILE_NAMES, createEmitterContext, type GeneratedFileNames } from "./ctx.js";
+import {
+  DEFAULT_FILE_NAMES,
+  createEmitterContext,
+  type EmitterCtx,
+  type GeneratedFileNames,
+} from "./ctx.js";
 import { emitModels } from "./emit-models.js";
 import { emitServerHints } from "./emit-server-hints.js";
 import { emitServerOperations } from "./emit-server-operations.js";
 import { emitServer } from "./emit-server.js";
 import { emitServerRouter } from "./emit-server-router.js";
+import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
 
 async function formatTs(fileName: string, content: string): Promise<string> {
   try {
@@ -40,30 +46,68 @@ export async function $onEmit(
   }
 
   const serviceOutput = resolveServiceOutput(context.options);
-
-  for (const service of services) {
+  const emissionPlans = services.map((service): ServiceEmissionPlan => {
     const layout = createServiceLayout(service, serviceOutput, context.options);
-    const ctx = createEmitterContext(program, service, context.options, layout.fileNames);
+    return {
+      service,
+      layout,
+      ctx: createEmitterContext(program, service, context.options, layout.fileNames),
+      httpOperations: service.operations,
+    };
+  });
 
-    // Gather all HTTP operations
-    const httpOperations = service.operations;
-
-    const files: Array<[string, string]> = [
-      [`${layout.fileNames.models}.ts`, emitModels(ctx)],
-      [`${layout.fileNames.serverHints}.ts`, emitServerHints(ctx, httpOperations)],
-      [`${layout.fileNames.serverOperations}.ts`, emitServerOperations(ctx, httpOperations)],
-      [`${layout.fileNames.server}.ts`, emitServer(ctx, httpOperations)],
-      [`${layout.fileNames.serverRouter}.ts`, emitServerRouter(ctx, httpOperations)],
-    ];
-
-    for (const [fileName, raw] of files) {
-      const content = await formatTs(fileName, raw);
-      await emitFile(program, {
-        path: resolvePath(emitterOutputDir, layout.outputDir, fileName),
-        content,
-      });
-    }
+  for (const { ctx, httpOperations } of emissionPlans) {
+    reportIgnoredDecorators(ctx, httpOperations);
   }
+
+  if (program.hasError()) return;
+
+  // Render every service before writing anything. Some response diagnostics
+  // are discovered while rendering, and an error must not leave partial output.
+  const files = emissionPlans.flatMap(({ ctx, httpOperations, layout }) => [
+    {
+      fileName: `${layout.fileNames.models}.ts`,
+      outputDir: layout.outputDir,
+      raw: emitModels(ctx),
+    },
+    {
+      fileName: `${layout.fileNames.serverHints}.ts`,
+      outputDir: layout.outputDir,
+      raw: emitServerHints(ctx, httpOperations),
+    },
+    {
+      fileName: `${layout.fileNames.serverOperations}.ts`,
+      outputDir: layout.outputDir,
+      raw: emitServerOperations(ctx, httpOperations),
+    },
+    {
+      fileName: `${layout.fileNames.server}.ts`,
+      outputDir: layout.outputDir,
+      raw: emitServer(ctx, httpOperations),
+    },
+    {
+      fileName: `${layout.fileNames.serverRouter}.ts`,
+      outputDir: layout.outputDir,
+      raw: emitServerRouter(ctx, httpOperations),
+    },
+  ]);
+
+  if (program.hasError()) return;
+
+  for (const { fileName, outputDir, raw } of files) {
+    const content = await formatTs(fileName, raw);
+    await emitFile(program, {
+      path: resolvePath(emitterOutputDir, outputDir, fileName),
+      content,
+    });
+  }
+}
+
+interface ServiceEmissionPlan {
+  readonly service: HttpService;
+  readonly layout: ServiceLayout;
+  readonly ctx: EmitterCtx;
+  readonly httpOperations: HttpOperation[];
 }
 
 type ResolvedServiceOutput = "flat" | "prefix" | "directory";

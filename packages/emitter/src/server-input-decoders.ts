@@ -15,6 +15,7 @@ import {
   isRecordModelType,
   walkPropertiesInherited,
 } from "@typespec/compiler";
+import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
 import { buildInputType, shouldFlattenBodyType } from "./emit-server-common.js";
 import { scalarToTs } from "./scalar-map.js";
@@ -28,7 +29,6 @@ import {
 } from "./typescript-names.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
-type BodyDecoderKind = "json" | "form" | "multipart" | "text" | "binary";
 
 /** Tracks hoisted lazy decoders for recursive models during a single emitDecoder call. */
 interface DecoderEmitContext {
@@ -248,7 +248,7 @@ function isArrayInputType(ctx: EmitterCtx, type: Type): type is Model {
 }
 
 interface BodyEmission {
-  readonly decoderKinds: readonly BodyDecoderKind[];
+  readonly decoderKinds: readonly BodyMediaKind[];
   readonly contentTypes: readonly string[];
   readonly optional: boolean;
 }
@@ -275,39 +275,10 @@ function analyzeBody(op: HttpOperation): BodyEmission {
   }
 
   return {
-    decoderKinds: declared.length > 0 ? bodyDecoderKinds(declared) : ["json"],
+    decoderKinds: declared.length > 0 ? getBodyMediaKinds(declared) : ["json"],
     contentTypes: declared,
     optional: body.property?.optional === true,
   };
-}
-
-function bodyDecoderKinds(contentTypes: readonly string[]): BodyDecoderKind[] {
-  const kinds = new Set<BodyDecoderKind>();
-  for (const contentType of contentTypes) {
-    const mediaType = contentType.split(";", 1)[0]!.trim().toLowerCase();
-    if (mediaType === "*/*") {
-      kinds.add("json");
-      kinds.add("form");
-      kinds.add("multipart");
-      kinds.add("text");
-      kinds.add("binary");
-    } else if (mediaType === "application/*") {
-      kinds.add("json");
-      kinds.add("form");
-      kinds.add("binary");
-    } else if (mediaType === "application/json" || mediaType.endsWith("+json")) {
-      kinds.add("json");
-    } else if (mediaType === "application/x-www-form-urlencoded") {
-      kinds.add("form");
-    } else if (mediaType.startsWith("multipart/")) {
-      kinds.add("multipart");
-    } else if (mediaType.startsWith("text/")) {
-      kinds.add("text");
-    } else {
-      kinds.add("binary");
-    }
-  }
-  return [...kinds];
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +360,7 @@ function emitBodyDecoderExpression(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
   op: HttpOperation,
-  kind: BodyDecoderKind,
+  kind: BodyMediaKind,
 ): string {
   const body = op.parameters.body!;
   if (kind === "multipart" && isMultipartBody(op)) {
