@@ -3,6 +3,7 @@ import { emitFile, resolvePath } from "@typespec/compiler";
 import { getAllHttpServices, type HttpOperation, type HttpService } from "@typespec/http";
 import { format } from "oxfmt";
 import { $lib, type TypespexEmitterOptions } from "./lib.js";
+import { getNamespaceFullName } from "./namespace-names.js";
 import {
   DEFAULT_FILE_NAMES,
   createEmitterContext,
@@ -27,9 +28,7 @@ async function formatTs(fileName: string, content: string): Promise<string> {
 
 export { $lib } from "./lib.js";
 
-export async function $onEmit(
-  context: EmitContext<TypespexEmitterOptions>,
-): Promise<void> {
+export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Promise<void> {
   const { program, emitterOutputDir } = context;
 
   const [services, diagnostics] = getAllHttpServices(program);
@@ -56,6 +55,7 @@ export async function $onEmit(
     };
   });
 
+  reportDuplicateOutputPaths(context, emissionPlans);
   for (const { ctx, httpOperations } of emissionPlans) {
     reportIgnoredDecorators(ctx, httpOperations);
   }
@@ -64,33 +64,13 @@ export async function $onEmit(
 
   // Render every service before writing anything. Some response diagnostics
   // are discovered while rendering, and an error must not leave partial output.
-  const files = emissionPlans.flatMap(({ ctx, httpOperations, layout }) => [
-    {
-      fileName: `${layout.fileNames.models}.ts`,
+  const files = emissionPlans.flatMap(({ ctx, httpOperations, layout }) =>
+    GENERATED_ARTIFACTS.map((artifact) => ({
+      fileName: generatedArtifactFileName(artifact, layout.fileNames),
       outputDir: layout.outputDir,
-      raw: emitModels(ctx),
-    },
-    {
-      fileName: `${layout.fileNames.serverHints}.ts`,
-      outputDir: layout.outputDir,
-      raw: emitServerHints(ctx, httpOperations),
-    },
-    {
-      fileName: `${layout.fileNames.serverOperations}.ts`,
-      outputDir: layout.outputDir,
-      raw: emitServerOperations(ctx, httpOperations),
-    },
-    {
-      fileName: `${layout.fileNames.server}.ts`,
-      outputDir: layout.outputDir,
-      raw: emitServer(ctx, httpOperations),
-    },
-    {
-      fileName: `${layout.fileNames.serverRouter}.ts`,
-      outputDir: layout.outputDir,
-      raw: emitServerRouter(ctx, httpOperations),
-    },
-  ]);
+      raw: artifact.emit(ctx, httpOperations),
+    })),
+  );
 
   if (program.hasError()) return;
 
@@ -110,6 +90,58 @@ interface ServiceEmissionPlan {
   readonly httpOperations: HttpOperation[];
 }
 
+interface GeneratedArtifactDefinition {
+  readonly artifact: string;
+  readonly fileNameKey: keyof GeneratedFileNames;
+  readonly emit: (ctx: EmitterCtx, httpOperations: HttpOperation[]) => string;
+}
+
+const GENERATED_ARTIFACTS: readonly GeneratedArtifactDefinition[] = [
+  { artifact: "models", fileNameKey: "models", emit: (ctx) => emitModels(ctx) },
+  { artifact: "server-hints", fileNameKey: "serverHints", emit: emitServerHints },
+  {
+    artifact: "server-operations",
+    fileNameKey: "serverOperations",
+    emit: emitServerOperations,
+  },
+  { artifact: "server", fileNameKey: "server", emit: emitServer },
+  { artifact: "server-router", fileNameKey: "serverRouter", emit: emitServerRouter },
+];
+
+function reportDuplicateOutputPaths(
+  context: EmitContext<TypespexEmitterOptions>,
+  plans: readonly ServiceEmissionPlan[],
+): void {
+  const owners = new Map<string, string>();
+
+  for (const { service, layout } of plans) {
+    const serviceName = getNamespaceFullName(service.namespace) || "Service";
+    for (const definition of GENERATED_ARTIFACTS) {
+      const fileName = generatedArtifactFileName(definition, layout.fileNames);
+      const path = resolvePath(context.emitterOutputDir, layout.outputDir, fileName);
+      const artifact = `${serviceName}.${definition.artifact}`;
+      const owner = owners.get(path);
+      if (owner === undefined) {
+        owners.set(path, artifact);
+        continue;
+      }
+
+      $lib.reportDiagnostic(context.program, {
+        code: "duplicate-output-path",
+        format: { first: owner, second: artifact, path },
+        target: service.namespace,
+      });
+    }
+  }
+}
+
+function generatedArtifactFileName(
+  definition: GeneratedArtifactDefinition,
+  fileNames: GeneratedFileNames,
+): string {
+  return `${fileNames[definition.fileNameKey]}.ts`;
+}
+
 type ResolvedServiceOutput = "flat" | "prefix" | "directory";
 
 interface ServiceLayout {
@@ -117,9 +149,7 @@ interface ServiceLayout {
   readonly fileNames: GeneratedFileNames;
 }
 
-function resolveServiceOutput(
-  options: TypespexEmitterOptions,
-): ResolvedServiceOutput {
+function resolveServiceOutput(options: TypespexEmitterOptions): ResolvedServiceOutput {
   const configured = options["service-output"] ?? "auto";
   if (configured === "auto") return "directory";
   return configured;
@@ -133,9 +163,7 @@ function createServiceLayout(
   const serviceName = service.namespace.name || "Service";
   const tokens = createNameTokens(serviceName);
   const serviceFolderPattern = options["service-folder-pattern"] ?? "{service.kebab}";
-  const defaultFileNamePattern = serviceOutput === "prefix"
-    ? "{service}.{file}"
-    : "{file}";
+  const defaultFileNamePattern = serviceOutput === "prefix" ? "{service}.{file}" : "{file}";
   const fileNamePattern = options["file-name-pattern"] ?? defaultFileNamePattern;
 
   if (serviceOutput === "directory") {
@@ -166,10 +194,7 @@ interface NameTokens {
   readonly "service.snake": string;
 }
 
-function renderFileNames(
-  pattern: string,
-  tokens: NameTokens,
-): GeneratedFileNames {
+function renderFileNames(pattern: string, tokens: NameTokens): GeneratedFileNames {
   return {
     models: renderNamePattern(pattern, tokens, DEFAULT_FILE_NAMES.models),
     serverHints: renderNamePattern(pattern, tokens, DEFAULT_FILE_NAMES.serverHints),
@@ -179,11 +204,7 @@ function renderFileNames(
   };
 }
 
-function renderNamePattern(
-  pattern: string,
-  tokens: NameTokens,
-  fileName = "",
-): string {
+function renderNamePattern(pattern: string, tokens: NameTokens, fileName = ""): string {
   const rendered = pattern.replace(/\{([^}]+)\}/g, (_match, rawToken: string) => {
     const token = rawToken.trim();
     if (token === "file") return fileName;

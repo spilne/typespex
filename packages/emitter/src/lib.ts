@@ -38,6 +38,12 @@ export const $lib = createTypeSpecLibrary({
         default: "No HTTP services found in program",
       },
     },
+    "duplicate-output-path": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Generated artifacts "${"first"}" and "${"second"}" both resolve to "${"path"}". Give the services unique names or configure layout patterns that resolve to distinct paths.`,
+      },
+    },
     "undifferentiable-response-union": {
       severity: "error",
       messages: {
