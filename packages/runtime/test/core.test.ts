@@ -9,6 +9,7 @@ import {
   emptyHints,
 } from "../src/server.js";
 import { HttpError } from "../src/errors.js";
+import { bytesToBase64 } from "../src/http/json.js";
 import { getSearchParams } from "../src/http/query-params.js";
 
 describe("HttpError", () => {
@@ -17,6 +18,20 @@ describe("HttpError", () => {
     const response = error.toResponse();
     expect(response.status).toBe(400);
     expect(response.headers.get("content-type")).toBe("application/json");
+  });
+
+  test("serializes bigint and nested bytes in JSON error bodies", async () => {
+    const error = new HttpError(422, "Invalid value", {
+      limit: 9_223_372_036_854_775_807n,
+      digest: new Uint8Array([1, 2, 255]),
+    });
+
+    const response = error.toResponse();
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).toBe(
+      '{"limit":9223372036854775807,"digest":"AQL/"}',
+    );
   });
 
   test("toResponse with plain message (no body)", () => {
@@ -39,6 +54,17 @@ describe("HttpError", () => {
 describe("absurd", () => {
   test("throws if ever reached at runtime", () => {
     expect(() => absurd("oops" as never)).toThrow("absurd");
+  });
+});
+
+describe("bytesToBase64", () => {
+  test("encodes payloads spanning multiple accumulation chunks", () => {
+    const bytes = new Uint8Array(0x8000 * 3 + 7);
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = index % 251;
+    }
+
+    expect(bytesToBase64(bytes)).toBe(Buffer.from(bytes).toString("base64"));
   });
 });
 
