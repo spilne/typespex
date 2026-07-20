@@ -1,5 +1,10 @@
-import type { HttpOperation, HttpService } from "@typespec/http";
-import type { EmitterCtx } from "./ctx.js";
+import type { HttpOperation } from "@typespec/http";
+import {
+  allocateGeneratedNames,
+  getNamespaceFullName,
+  getRelativeNamespaceSegments,
+  type EmitterCtx,
+} from "./ctx.js";
 import {
   buildInputType,
   buildResultType,
@@ -9,11 +14,9 @@ import {
 } from "./emit-server-common.js";
 import {
   emitHintEntries,
-  getNamespaceFullName,
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
-import { tsIdentifier } from "./typescript-names.js";
 
 export interface ServerEmission {
   readonly serviceName: string;
@@ -30,6 +33,7 @@ export interface ServerEmissionGroup {
 
 export interface ServerOperationEmission {
   readonly name: string;
+  readonly propertyName: string;
   readonly operationId: string;
   readonly inputType: string;
   readonly resultType: string;
@@ -51,12 +55,33 @@ export function buildServerEmission(
   ctx: EmitterCtx,
   httpOperations: HttpOperation[],
 ): ServerEmission {
-  const groups = groupOperations(httpOperations).map((group) => ({
-    interfaceName: group.interfaceName,
-    propertyName: group.propertyName,
-    exportName: tsIdentifier(group.interfaceName ?? ctx.serviceName, "Group"),
-    operations: group.operations.map((operation) => buildOperationEmission(ctx, operation, group.interfaceName)),
-  }));
+  const operationIds = allocateOperationIds(ctx, httpOperations);
+  const rawGroups = groupOperations(ctx, httpOperations);
+  const interfaceProperties = new Set(
+    rawGroups
+      .filter((group) => group.interfaceName !== undefined)
+      .map((group) => group.propertyName),
+  );
+  const groups = rawGroups.map((group) => {
+    const operationNames = allocateOperationNames(
+      ctx,
+      group.operations,
+      group.interfaceName ? new Set() : interfaceProperties,
+    );
+    return {
+      interfaceName: group.interfaceName,
+      propertyName: group.propertyName,
+      exportName: group.exportName,
+      operations: group.operations.map((operation) =>
+        buildOperationEmission(
+          ctx,
+          operation,
+          operationNames.get(operation)!,
+          operationIds.get(operation)!,
+        )
+      ),
+    };
+  });
 
   return {
     serviceName: ctx.serviceName,
@@ -68,14 +93,14 @@ export function buildServerEmission(
 function buildOperationEmission(
   ctx: EmitterCtx,
   operation: HttpOperation,
-  interfaceName: string | undefined,
+  propertyName: string,
+  operationId: string,
 ): ServerOperationEmission {
   const operationName = operation.operation.name;
   return {
     name: operationName,
-    operationId: interfaceName
-      ? `${interfaceName}.${operationName}`
-      : `${ctx.serviceName}.${operationName}`,
+    propertyName,
+    operationId,
     inputType: buildInputType(ctx, operation),
     resultType: buildResultType(ctx, operation),
     method: operation.verb.toUpperCase(),
@@ -89,6 +114,90 @@ function buildOperationEmission(
     operationHints: emitHintEntries(ctx, operation.operation),
     httpOperation: operation,
   };
+}
+
+function allocateOperationNames(
+  ctx: EmitterCtx,
+  operations: readonly HttpOperation[],
+  reservedNames: ReadonlySet<string>,
+): Map<HttpOperation, string> {
+  return allocateGeneratedNames(
+    operations.map((operation) => {
+      const namespace = getRelativeNamespaceSegments(
+        ctx.service.namespace,
+        operation.operation.namespace,
+      );
+      const interfaceName = operation.operation.interface?.name;
+      const qualifiedSegments = interfaceName
+        ? [...namespace, interfaceName, operation.operation.name]
+        : [...namespace, operation.operation.name];
+      return {
+        value: operation,
+        stableKey: operationStableKey(operation),
+        baseName: operation.operation.name,
+        qualifiedName: qualifiedSegments.join("_"),
+        fallbackName: [ctx.serviceName, ...qualifiedSegments, "Operation"].join("_"),
+        preserveBaseName: true,
+      };
+    }),
+    reservedNames,
+  );
+}
+
+function allocateOperationIds(
+  ctx: EmitterCtx,
+  operations: readonly HttpOperation[],
+): Map<HttpOperation, string> {
+  const legacyIds = new Map<HttpOperation, string>();
+  const counts = new Map<string, number>();
+  for (const operation of operations) {
+    const operationName = operation.operation.name;
+    const id = operation.operation.interface
+      ? `${operation.operation.interface.name}.${operationName}`
+      : `${ctx.serviceName}.${operationName}`;
+    legacyIds.set(operation, id);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+
+  const allocated = new Map<HttpOperation, string>();
+  const used = new Set<string>();
+  const ordered = [...operations].sort((a, b) =>
+    operationStableKey(a).localeCompare(operationStableKey(b))
+  );
+  for (const operation of ordered) {
+    const legacyId = legacyIds.get(operation)!;
+    if (counts.get(legacyId) === 1 && !used.has(legacyId)) {
+      allocated.set(operation, legacyId);
+      used.add(legacyId);
+    }
+  }
+
+  for (const operation of ordered) {
+    if (allocated.has(operation)) continue;
+    const qualifiedId = operationQualifiedName(operation);
+    let id = qualifiedId;
+    let suffix = 2;
+    while (used.has(id)) {
+      id = `${qualifiedId}.${suffix}`;
+      suffix += 1;
+    }
+    allocated.set(operation, id);
+    used.add(id);
+  }
+
+  return allocated;
+}
+
+function operationQualifiedName(operation: HttpOperation): string {
+  return [
+    getNamespaceFullName(operation.operation.namespace),
+    operation.operation.interface?.name,
+    operation.operation.name,
+  ].filter((part): part is string => Boolean(part)).join(".");
+}
+
+function operationStableKey(operation: HttpOperation): string {
+  return `${operationQualifiedName(operation)}:${operation.verb}:${operation.path}`;
 }
 
 export function collectReferencedModelImports(

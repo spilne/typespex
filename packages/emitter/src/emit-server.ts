@@ -25,11 +25,11 @@ export function emitServer(
   for (const group of emission.groups) {
     if (!group.interfaceName) continue;
 
-    const interfaceName = tsIdentifier(group.interfaceName, "Interface");
+    const interfaceName = group.exportName;
     lines.push(`export interface ${interfaceName}Server<Ctx = MatchedRequestContext> {`);
     for (const operation of group.operations) {
       lines.push(
-        `  ${tsPropertyDeclaration(operation.name, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
+        `  ${tsPropertyDeclaration(operation.propertyName, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
       );
     }
     lines.push("}");
@@ -40,14 +40,14 @@ export function emitServer(
   lines.push(`export interface ${serviceName}Server<Ctx = MatchedRequestContext> {`);
   for (const group of emission.groups) {
     if (group.interfaceName) {
-      const interfaceName = tsIdentifier(group.interfaceName, "Interface");
+      const interfaceName = group.exportName;
       lines.push(`  ${tsPropertyDeclaration(group.propertyName, `${interfaceName}Server<Ctx>`, { readonly: true })};`);
       continue;
     }
 
     for (const operation of group.operations) {
       lines.push(
-        `  ${tsPropertyDeclaration(operation.name, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
+        `  ${tsPropertyDeclaration(operation.propertyName, `OperationHandler<${operation.inputType}, ${operation.resultType}, Ctx>`, { readonly: true })};`,
       );
     }
   }
