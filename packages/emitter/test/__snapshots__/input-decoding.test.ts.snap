@@ -14,10 +14,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Item } from "./models.js";
@@ -25,8 +22,18 @@ import type { Item } from "./models.js";
 const ItemsInput = {
   list: RequestDecoders.combine(
     [
-      RequestDecoders.query("limit", Decoders.number.optional()),
-      RequestDecoders.query("offset", Decoders.number.optional()),
+      RequestDecoders.query(
+        "limit",
+        Decoders.integer
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .optional(),
+      ),
+      RequestDecoders.query(
+        "offset",
+        Decoders.integer
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .optional(),
+      ),
       RequestDecoders.header("x-request-id", Decoders.string.optional()),
     ],
     (limit, offset, requestId) => ({ limit, offset, requestId }),
@@ -96,10 +103,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { CreateItem } from "./models.js";
@@ -109,7 +113,9 @@ const ItemsInput = {
     [
       RequestDecoders.query(
         "limit",
-        Decoders.number.validate(Validators.minValue(1), Validators.maxValue(100)),
+        Decoders.integer
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .validate(Validators.minValue(1), Validators.maxValue(100)),
       ),
       RequestDecoders.query(
         "ratio",
@@ -118,21 +124,31 @@ const ItemsInput = {
     ],
     (limit, ratio) => ({ limit, ratio }),
   ),
-  read: RequestDecoders.path("itemId", Decoders.bigint.validate(Validators.minValue(1n))).map(
-    (itemId) => ({ itemId }),
-  ),
-  create: Decoders.object<CreateItem>({
-    name: Decoders.string.validate(
-      Validators.minLength(1),
-      Validators.maxLength(20),
-      Validators.pattern("^[A-Z].*", "Must start with uppercase."),
-    ),
-    tags: Decoders.strictArray(Decoders.string).validate(
-      Validators.minItems(1),
-      Validators.maxItems(3),
-    ),
-    count: Decoders.number.validate(Validators.minValue(0)),
-  }),
+  read: RequestDecoders.path(
+    "itemId",
+    Decoders.bigint
+      .validate(
+        Validators.minValue(-9223372036854775808n),
+        Validators.maxValue(9223372036854775807n),
+      )
+      .validate(Validators.minValue(1n)),
+  ).map((itemId) => ({ itemId })),
+  create: {
+    json: Decoders.object<CreateItem>({
+      name: Decoders.string.validate(
+        Validators.minLength(1),
+        Validators.maxLength(20),
+        Validators.pattern("^[A-Z].*", "Must start with uppercase."),
+      ),
+      tags: Decoders.strictArray(Decoders.string).validate(
+        Validators.minItems(1),
+        Validators.maxItems(3),
+      ),
+      count: Decoders.strictInteger
+        .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+        .validate(Validators.minValue(0)),
+    }),
+  },
 };
 
 const ItemsOutput = {
@@ -189,9 +205,7 @@ export const ItemsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeJsonBody<CreateItem>(request, ItemsInput.create, {
-        contentTypes: ["application/json"],
-      }),
+      decodeBody<CreateItem>(request, ItemsInput.create, { contentTypes: ["application/json"] }),
     encodeResult: (result: CreateItem) => ItemsOutput.create.encode(result),
   } satisfies ServerOperation<CreateItem, CreateItem>,
 } as const;
@@ -212,10 +226,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Item, UpdatePayload } from "./models.js";
@@ -228,10 +239,12 @@ const ItemsInput = {
     ],
     (itemId, dryRun) => ({ itemId, dryRun }),
   ),
-  updateBody: Decoders.object<UpdatePayload>({
-    name: Decoders.string,
-    tags: Decoders.optional(Decoders.strictArray(Decoders.string)),
-  }),
+  updateBody: {
+    json: Decoders.object<UpdatePayload>({
+      name: Decoders.string,
+      tags: Decoders.optional(Decoders.strictArray(Decoders.string)),
+    }),
+  },
 };
 
 const ItemsOutput = {
@@ -282,10 +295,7 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Profile } from "./models.js";
@@ -355,33 +365,25 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { TreeNode } from "./models.js";
 
-const _lazyTreeNode: Decoder<TreeNode> = Decoders.lazy(() =>
+const _lazy6_Create_8_TreeNode_json: Decoder<TreeNode> = Decoders.lazy(() =>
   Decoders.object<TreeNode>({
     value: Decoders.string,
-    children: Decoders.optional(Decoders.strictArray(_lazyTreeNode)),
+    children: Decoders.optional(Decoders.strictArray(_lazy6_Create_8_TreeNode_json)),
   }),
 );
 
 const TreeInput = {
-  create: Decoders.object<TreeNode>({
-    value: Decoders.string,
-    children: Decoders.optional(
-      Decoders.strictArray(
-        Decoders.object<TreeNode>({
-          value: Decoders.string,
-          children: Decoders.optional(Decoders.strictArray(_lazyTreeNode)),
-        }),
-      ),
-    ),
-  }),
+  create: {
+    json: Decoders.object<TreeNode>({
+      value: Decoders.string,
+      children: Decoders.optional(Decoders.strictArray(_lazy6_Create_8_TreeNode_json)),
+    }),
+  },
 };
 
 const TreeOutput = {
@@ -402,7 +404,7 @@ export const TreeOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeJsonBody<TreeNode>(request, TreeInput.create, { contentTypes: ["application/json"] }),
+      decodeBody<TreeNode>(request, TreeInput.create, { contentTypes: ["application/json"] }),
     encodeResult: (result: TreeNode) => TreeOutput.create.encode(result),
   } satisfies ServerOperation<TreeNode, TreeNode>,
 } as const;
@@ -423,21 +425,27 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { UploadResult } from "./models.js";
 
 const UploadsInput = {
-  single: Decoders.object({ name: Decoders.string, file: Decoders.file }),
-  multi: Decoders.object({ label: Decoders.string, files: Decoders.strictArray(Decoders.file) }),
-  optional: Decoders.object({
-    name: Decoders.string,
-    description: Decoders.optional(Decoders.string),
-  }),
+  single: {
+    multipart: Decoders.object({ name: Decoders.string, file: Decoders.file }),
+  },
+  multi: {
+    multipart: Decoders.object({
+      label: Decoders.string,
+      files: Decoders.oneOrMany(Decoders.file),
+    }),
+  },
+  optional: {
+    multipart: Decoders.object({
+      name: Decoders.string,
+      description: Decoders.optional(Decoders.string),
+    }),
+  },
 };
 
 const UploadsOutput = {
@@ -460,7 +468,7 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: string; file: File }>(request, UploadsInput.single, {
+      decodeBody<{ name: string; file: File }>(request, UploadsInput.single, {
         contentTypes: ["multipart/form-data"],
       }),
     encodeResult: (result: UploadResult) => UploadsOutput.single.encode(result),
@@ -479,7 +487,7 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ label: string; files: File[] }>(request, UploadsInput.multi, {
+      decodeBody<{ label: string; files: File[] }>(request, UploadsInput.multi, {
         contentTypes: ["multipart/form-data"],
       }),
     encodeResult: (result: UploadResult) => UploadsOutput.multi.encode(result),
@@ -498,7 +506,7 @@ export const UploadsOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeMultipartBody<{ name: string; description?: string }>(request, UploadsInput.optional, {
+      decodeBody<{ name: string; description?: string }>(request, UploadsInput.optional, {
         contentTypes: ["multipart/form-data"],
       }),
     encodeResult: (result: UploadResult) => UploadsOutput.optional.encode(result),
@@ -539,33 +547,47 @@ import {
   Validators,
   decodeRequestInput,
   decodeRequestInputAndBody,
-  decodeRequestInputAndMultipartBody,
-  decodeJsonBody,
-  decodeFormBody,
-  decodeMultipartBody,
+  decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
 import type { Cat, Circle, Dog, Left, Right, Square } from "./models.js";
 
 const ShapesInput = {
-  create: Decoders.discriminated<Circle | Square>("kind", {
-    circle: Decoders.object<Circle>({
-      kind: Decoders.strictLiteral("circle"),
-      radius: Decoders.number,
+  create: {
+    json: Decoders.discriminated<Circle | Square>("kind", {
+      circle: Decoders.object<Circle>({
+        kind: Decoders.strictLiteral("circle"),
+        radius: Decoders.strictNumber,
+      }),
+      square: Decoders.object<Square>({
+        kind: Decoders.strictLiteral("square"),
+        size: Decoders.strictNumber,
+      }),
     }),
-    square: Decoders.object<Square>({
-      kind: Decoders.strictLiteral("square"),
-      size: Decoders.number,
+  },
+  adopt: {
+    json: Decoders.discriminated<Cat | Dog>("species", {
+      cat: Decoders.object<Cat>({
+        species: Decoders.strictLiteral("cat"),
+        meows: Decoders.strictBoolean,
+      }),
+      dog: Decoders.object<Dog>({
+        species: Decoders.strictLiteral("dog"),
+        barks: Decoders.strictBoolean,
+      }),
     }),
-  }),
-  adopt: Decoders.discriminated<Cat | Dog>("species", {
-    cat: Decoders.object<Cat>({ species: Decoders.strictLiteral("cat"), meows: Decoders.boolean }),
-    dog: Decoders.object<Dog>({ species: Decoders.strictLiteral("dog"), barks: Decoders.boolean }),
-  }),
-  mix: Decoders.union<Left | Right>([
-    Decoders.object<Left>({ value: Decoders.string }),
-    Decoders.object<Right>({ count: Decoders.number }),
-  ]),
+  },
+  mix: {
+    json: Decoders.union<Left | Right>([
+      Decoders.object<Left>({ value: Decoders.string }),
+      Decoders.object<Right>({
+        count: Decoders.strictInteger.validate(
+          Validators.minValue(-2147483648),
+          Validators.maxValue(2147483647),
+        ),
+      }),
+    ]),
+  },
 };
 
 const ShapesOutput = {
@@ -588,7 +610,7 @@ export const ShapesOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeJsonBody<Circle | Square>(request, ShapesInput.create, {
+      decodeBody<Circle | Square>(request, ShapesInput.create, {
         contentTypes: ["application/json"],
       }),
     encodeResult: (result: Circle) => ShapesOutput.create.encode(result),
@@ -607,7 +629,7 @@ export const ShapesOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeJsonBody<Cat | Dog>(request, ShapesInput.adopt, { contentTypes: ["application/json"] }),
+      decodeBody<Cat | Dog>(request, ShapesInput.adopt, { contentTypes: ["application/json"] }),
     encodeResult: (result: Cat) => ShapesOutput.adopt.encode(result),
   } satisfies ServerOperation<Cat | Dog, Cat>,
 
@@ -624,9 +646,7 @@ export const ShapesOperations = {
       },
     },
     decodeInput: async (request) =>
-      decodeJsonBody<Left | Right>(request, ShapesInput.mix, {
-        contentTypes: ["application/json"],
-      }),
+      decodeBody<Left | Right>(request, ShapesInput.mix, { contentTypes: ["application/json"] }),
     encodeResult: (result: Left) => ShapesOutput.mix.encode(result),
   } satisfies ServerOperation<Left | Right, Left>,
 } as const;
