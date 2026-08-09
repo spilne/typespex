@@ -55,13 +55,9 @@ describe("optional body handler types", () => {
       "readonly wrapped: OperationHandler<{ trace: string; body?: Payload[] }, Payload, Ctx>",
     );
     expect(server).toContain("readonly multipartOnly: OperationHandler<");
-    expect(server).toContain(
-      "{ description: string; attachment: Uint8Array } | undefined,",
-    );
+    expect(server).toContain("{ description: string; attachment: Uint8Array } | undefined,");
     expect(server).toContain("readonly multipartFlattened: OperationHandler<");
-    expect(server).toContain(
-      "{ trace: string; description?: string; attachment?: Uint8Array },",
-    );
+    expect(server).toContain("{ trace: string; description?: string; attachment?: Uint8Array },");
     expect(operations.match(/optional: true/g)).toHaveLength(5);
     expect(router).toContain("): ComposableHttpRouter {");
     r.typecheck("optional-body-api", {

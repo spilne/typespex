@@ -41,9 +41,7 @@ export interface Validator<A> {
   validate(value: A): readonly ValidationIssue[];
 }
 
-function createValidator<A>(
-  validate: (value: A) => readonly ValidationIssue[],
-): Validator<A> {
+function createValidator<A>(validate: (value: A) => readonly ValidationIssue[]): Validator<A> {
   return { validate };
 }
 
@@ -66,9 +64,7 @@ function refineValidator<A>(
   );
 }
 
-function minValueValidator(
-  min: number | bigint,
-): Validator<number | bigint> {
+function minValueValidator(min: number | bigint): Validator<number | bigint> {
   return createValidator((value) =>
     compareNumeric(value, min) >= 0
       ? noIssues()
@@ -76,9 +72,7 @@ function minValueValidator(
   );
 }
 
-function maxValueValidator(
-  max: number | bigint,
-): Validator<number | bigint> {
+function maxValueValidator(max: number | bigint): Validator<number | bigint> {
   return createValidator((value) =>
     compareNumeric(value, max) <= 0
       ? noIssues()
@@ -86,9 +80,7 @@ function maxValueValidator(
   );
 }
 
-function minValueExclusiveValidator(
-  min: number | bigint,
-): Validator<number | bigint> {
+function minValueExclusiveValidator(min: number | bigint): Validator<number | bigint> {
   return createValidator((value) =>
     compareNumeric(value, min) > 0
       ? noIssues()
@@ -96,9 +88,7 @@ function minValueExclusiveValidator(
   );
 }
 
-function maxValueExclusiveValidator(
-  max: number | bigint,
-): Validator<number | bigint> {
+function maxValueExclusiveValidator(max: number | bigint): Validator<number | bigint> {
   return createValidator((value) =>
     compareNumeric(value, max) < 0
       ? noIssues()
@@ -106,9 +96,7 @@ function maxValueExclusiveValidator(
   );
 }
 
-function minLengthValidator(
-  min: number,
-): Validator<{ readonly length: number }> {
+function minLengthValidator(min: number): Validator<{ readonly length: number }> {
   return createValidator((value) =>
     value.length >= min
       ? noIssues()
@@ -116,33 +104,21 @@ function minLengthValidator(
   );
 }
 
-function maxLengthValidator(
-  max: number,
-): Validator<{ readonly length: number }> {
+function maxLengthValidator(max: number): Validator<{ readonly length: number }> {
   return createValidator((value) =>
-    value.length <= max
-      ? noIssues()
-      : singleIssue(`Expected length less than or equal to ${max}.`),
+    value.length <= max ? noIssues() : singleIssue(`Expected length less than or equal to ${max}.`),
   );
 }
 
-function minItemsValidator<A>(
-  min: number,
-): Validator<readonly A[]> {
+function minItemsValidator<A>(min: number): Validator<readonly A[]> {
   return createValidator((value) =>
-    value.length >= min
-      ? noIssues()
-      : singleIssue(`Expected at least ${min} item(s).`),
+    value.length >= min ? noIssues() : singleIssue(`Expected at least ${min} item(s).`),
   );
 }
 
-function maxItemsValidator<A>(
-  max: number,
-): Validator<readonly A[]> {
+function maxItemsValidator<A>(max: number): Validator<readonly A[]> {
   return createValidator((value) =>
-    value.length <= max
-      ? noIssues()
-      : singleIssue(`Expected at most ${max} item(s).`),
+    value.length <= max ? noIssues() : singleIssue(`Expected at most ${max} item(s).`),
   );
 }
 
@@ -158,10 +134,7 @@ function patternValidator(
   });
 }
 
-function compareNumeric(
-  value: number | bigint,
-  limit: number | bigint,
-): number {
+function compareNumeric(value: number | bigint, limit: number | bigint): number {
   if (typeof value === "bigint" || typeof limit === "bigint") {
     const left = typeof value === "bigint" ? value : BigInt(value);
     const right = typeof limit === "bigint" ? limit : BigInt(limit);

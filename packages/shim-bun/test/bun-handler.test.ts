@@ -22,9 +22,7 @@ describe("toBunHandler", () => {
   });
 
   test("returns 404 from router for unmatched routes", async () => {
-    const router = mockRouter(async () =>
-      Response.json({ error: "Not Found" }, { status: 404 }),
-    );
+    const router = mockRouter(async () => Response.json({ error: "Not Found" }, { status: 404 }));
     const handler = toBunHandler(router);
 
     const response = await handler.fetch(new Request("http://localhost/unknown"));

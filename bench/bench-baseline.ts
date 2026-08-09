@@ -24,7 +24,7 @@ const server = Bun.serve({
 
     // POST /pets
     if (method === "POST" && path === "/pets") {
-      const body = await req.json() as { name: string; tag?: string };
+      const body = (await req.json()) as { name: string; tag?: string };
       const pet = { id: crypto.randomUUID(), ...body };
       pets.set(pet.id, pet);
       return Response.json(pet);
@@ -34,7 +34,11 @@ const server = Bun.serve({
     if (method === "GET" && path.startsWith("/pets/") && path.split("/").length === 3) {
       const petId = decodeURIComponent(path.split("/")[2]);
       const pet = pets.get(petId);
-      if (!pet) return Response.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, { status: 404 });
+      if (!pet)
+        return Response.json(
+          { code: "NOT_FOUND", message: `Pet ${petId} not found` },
+          { status: 404 },
+        );
       return Response.json(pet);
     }
 
@@ -42,7 +46,11 @@ const server = Bun.serve({
     if (method === "DELETE" && path.startsWith("/pets/") && path.split("/").length === 3) {
       const petId = decodeURIComponent(path.split("/")[2]);
       const pet = pets.get(petId);
-      if (!pet) return Response.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, { status: 404 });
+      if (!pet)
+        return Response.json(
+          { code: "NOT_FOUND", message: `Pet ${petId} not found` },
+          { status: 404 },
+        );
       pets.delete(petId);
       return new Response(null, { status: 204 });
     }

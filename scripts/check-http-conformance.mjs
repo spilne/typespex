@@ -16,20 +16,12 @@ const HTTP_SPECS_INTEGRITY =
   "sha512-TOspHYLAoR0iKFlYEKYRUbjtOaHvhT//m+IrgAtfVmk1FPfA6Qoap7wiI7kk46xT+E/uKsyyTAfNMMbiQsn0+w==";
 const HTTP_SPECS_PACKAGE = `@typespec/http-specs@${HTTP_SPECS_VERSION}`;
 const HTTP_SPECS_TARBALL = `typespec-http-specs-${HTTP_SPECS_VERSION}.tgz`;
-const SCENARIOS = [
-  "parameters/basic",
-  "parameters/query",
-  "type/array",
-  "type/model/empty",
-];
+const SCENARIOS = ["parameters/basic", "parameters/query", "type/array", "type/model/empty"];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
 const emitterDir = resolve(repoRoot, "packages/emitter");
-const typeScriptCli = resolve(
-  repoRoot,
-  "packages/shim-node/node_modules/typescript/bin/tsc",
-);
+const typeScriptCli = resolve(repoRoot, "packages/shim-node/node_modules/typescript/bin/tsc");
 // Keep transformed inputs under the example workspace so TypeSpec resolves the
 // same compiler and HTTP library versions used by the repository.
 const workDir = mkdtempSync(join(repoRoot, "example/tmp-typespex-http-conformance-"));
@@ -37,22 +29,12 @@ const workDir = mkdtempSync(join(repoRoot, "example/tmp-typespex-http-conformanc
 try {
   assertFileExists(compilerCli, "TypeSpec compiler");
   assertFileExists(resolve(emitterDir, "dist/index.js"), "built emitter");
-  assertFileExists(
-    resolve(repoRoot, "packages/runtime/dist/server.d.ts"),
-    "runtime declarations",
-  );
+  assertFileExists(resolve(repoRoot, "packages/runtime/dist/server.d.ts"), "runtime declarations");
   assertFileExists(typeScriptCli, "TypeScript compiler");
 
   run(
     "npm",
-    [
-      "pack",
-      HTTP_SPECS_PACKAGE,
-      "--ignore-scripts",
-      "--silent",
-      "--pack-destination",
-      workDir,
-    ],
+    ["pack", HTTP_SPECS_PACKAGE, "--ignore-scripts", "--silent", "--pack-destination", workDir],
     "download TypeSpec HTTP scenarios",
   );
 
@@ -65,9 +47,7 @@ try {
   const packageMetadata = JSON.parse(readFileSync(resolve(packageDir, "package.json"), "utf8"));
   if (packageMetadata.version !== HTTP_SPECS_VERSION) {
     const actualVersion = packageMetadata.version ?? "an unknown version";
-    throw new Error(
-      `Expected ${HTTP_SPECS_PACKAGE}, received ${actualVersion}.`,
-    );
+    throw new Error(`Expected ${HTTP_SPECS_PACKAGE}, received ${actualVersion}.`);
   }
 
   const generatedFiles = [];
@@ -152,10 +132,7 @@ function removeScenarioRunnerMetadata(source, scenario) {
   const transformed = source
     .replace(/^import "@typespec\/spector";\r?\n/m, "")
     .replace(/^using Spector;\r?\n/m, "")
-    .replace(
-      /@scenarioDoc\(\s*(?:"""[\s\S]*?"""|"(?:\\.|[^"\\])*")\s*\)\s*/g,
-      "",
-    )
+    .replace(/@scenarioDoc\(\s*(?:"""[\s\S]*?"""|"(?:\\.|[^"\\])*")\s*\)\s*/g, "")
     .replace(/^\s*@scenario\s*$\r?\n/gm, "")
     .replace(
       /@scenarioService\("([^"]+)"\)/,

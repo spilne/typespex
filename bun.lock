@@ -6,6 +6,7 @@
       "name": "typespex",
       "devDependencies": {
         "@js-temporal/polyfill": "^0.5.1",
+        "oxfmt": "0.62.0",
       },
     },
     "bench": {

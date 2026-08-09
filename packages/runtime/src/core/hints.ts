@@ -41,9 +41,7 @@ class HintMap implements Hints {
 }
 
 /** Creates a `Hints` instance from typed key/value pairs. */
-export function createHints(
-  entries?: Iterable<readonly [HintKey<unknown>, unknown]>,
-): Hints {
+export function createHints(entries?: Iterable<readonly [HintKey<unknown>, unknown]>): Hints {
   return new HintMap(entries);
 }
 

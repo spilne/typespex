@@ -866,7 +866,9 @@ if (import.meta.main) {
     main();
   } catch (error) {
     const workflow = process.argv.includes("--package-check") ? "Package check" : "Release";
-    console.error(`\n${workflow} failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `\n${workflow} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 1;
   }
 }

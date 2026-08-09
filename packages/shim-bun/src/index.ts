@@ -10,7 +10,10 @@ export interface BunHandlerOptions {
  * @example
  * Bun.serve({ port: 3000, ...toBunHandler(router) });
  */
-export function toBunHandler(router: HttpRouter, options?: BunHandlerOptions): {
+export function toBunHandler(
+  router: HttpRouter,
+  options?: BunHandlerOptions,
+): {
   fetch: (request: Request) => Promise<Response>;
 } {
   const logger = options?.logger ?? consoleLogger;
