@@ -649,6 +649,28 @@ describe("http decoder - combinators", () => {
     );
   });
 
+  test("Decoders.discriminated ignores inherited discriminator values", () => {
+    const discriminator = "__typespex_inherited_discriminator__";
+    const decoder = Decoders.discriminated(discriminator, {
+      polluted: Decoders.unknown,
+    });
+
+    Object.defineProperty(Object.prototype, discriminator, {
+      configurable: true,
+      value: "polluted",
+    });
+    try {
+      expectLeftIssues(decoder.decode({}), [
+        {
+          path: `.${discriminator}`,
+          message: "Unknown discriminator value: undefined.",
+        },
+      ]);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[discriminator];
+    }
+  });
+
   test("nested object validation reports precise relative paths", () => {
     const decoder = Decoders.object<{
       name: string;

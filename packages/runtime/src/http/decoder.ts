@@ -617,7 +617,9 @@ function discriminatedDecoder<A>(
   return Decoder.of((input) => {
     const object = expectPlainObject(input);
     if (isLeft(object)) return object;
-    const tag = object.right[discriminator];
+    const tag = Object.prototype.hasOwnProperty.call(object.right, discriminator)
+      ? object.right[discriminator]
+      : undefined;
     const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
     const namedVariant =
       key !== undefined && Object.prototype.hasOwnProperty.call(variants, key)
