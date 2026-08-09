@@ -612,8 +612,14 @@ bun run format:check
 bun run build
 bun run typecheck
 bun run test
+bun run test:coverage
 bun run check:generated
 ```
+
+`bun run test:coverage` enforces 95% aggregate line coverage, 94% aggregate function
+coverage, and lower per-file floors for runtime and adapter source. Emitter behavior is
+covered separately by its compile fixtures and the pinned HTTP conformance suite because
+emitter execution occurs in compiler subprocesses.
 
 Run `bun run format` to apply the committed formatting rules.
 

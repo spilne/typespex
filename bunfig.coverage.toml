@@ -1,0 +1,18 @@
+[test]
+# Keep this report focused on production code executed in the test process.
+# Emitter integration runs in compiler subprocesses and is guarded separately
+# by compile fixtures plus the pinned TypeSpec HTTP conformance suite.
+coverageSkipTestFiles = true
+coverageReporter = ["text", "lcov"]
+coverageDir = ".context/coverage"
+coveragePathIgnorePatterns = [
+  "**/dist/**",
+  "bench/**",
+  "example/**",
+  "packages/emitter/**",
+  "scripts/**",
+]
+
+# Bun applies these floors to each reported file. The aggregate thresholds are
+# enforced by scripts/check-coverage.ts after the LCOV report is written.
+coverageThreshold = { functions = 0.7, lines = 0.8 }

@@ -81,6 +81,9 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Check coverage
+        run: bun run test:coverage
+
   typespec-compatibility:
     runs-on: ubuntu-latest
     strategy:
