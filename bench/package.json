@@ -10,12 +10,12 @@
     "@typespex/shim-bun": "workspace:*",
     "hono": "^4.13.1",
     "zod": "^4.0.0",
-    "@hono/zod-validator": "^0.8.0",
+    "@hono/zod-validator": "^0.9.0",
     "autocannon": "^8.0.0"
   },
   "devDependencies": {
     "@types/autocannon": "^7.12.0",
-    "bun-types": "1.3.13",
+    "bun-types": "1.3.14",
     "typescript": "^5.7.0"
   }
 }
