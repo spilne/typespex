@@ -18,6 +18,7 @@ import {
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
+import { getSharedRouteSelections, type RouteSelectionEmission } from "./route-selection.js";
 import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
 
 export interface ServerEmission {
@@ -43,6 +44,7 @@ export interface ServerOperationEmission {
   readonly method: string;
   readonly path: string;
   readonly routePattern: RoutePattern;
+  readonly routeSelection?: RouteSelectionEmission;
   readonly serviceHints: readonly EmittedHintEntry[];
   readonly namespaces: readonly ServerNamespaceEmission[];
   readonly operationHints: readonly EmittedHintEntry[];
@@ -60,6 +62,7 @@ export function buildServerEmission(
   httpOperations: HttpOperation[],
 ): ServerEmission {
   const operationIds = allocateOperationIds(ctx, httpOperations);
+  const routeSelections = getSharedRouteSelections(ctx, httpOperations);
   const rawGroups = groupOperations(ctx, httpOperations);
   const interfaceProperties = new Set(
     rawGroups
@@ -82,6 +85,7 @@ export function buildServerEmission(
           operation,
           operationNames.get(operation)!,
           operationIds.get(operation)!,
+          routeSelections.get(operation),
         ),
       ),
     };
@@ -100,6 +104,7 @@ function buildOperationEmission(
   operation: HttpOperation,
   propertyName: string,
   operationId: string,
+  routeSelection: RouteSelectionEmission | undefined,
 ): ServerOperationEmission {
   const operationName = operation.operation.name;
   const lowered = lowerUriTemplate(operation);
@@ -117,6 +122,7 @@ function buildOperationEmission(
     method: operation.verb.toUpperCase(),
     path: lowered.value.path,
     routePattern: lowered.value.routePattern,
+    routeSelection,
     serviceHints: emitHintEntries(ctx, ctx.service.namespace),
     namespaces: getOperationNamespaces(ctx.service.namespace, operation.operation.namespace).map(
       (namespace) => ({

@@ -482,6 +482,112 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       ).toThrow("Duplicate route: GET /pets/:id");
     });
 
+    test("dispatches shared routes by pairwise-disjoint required headers", () => {
+      const routes = [
+        {
+          method: "GET",
+          path: "/reports/:reportId",
+          selection: {
+            headers: [{ name: "x-view", values: ["detailed"] }],
+          },
+          route: "detailed",
+        },
+        {
+          method: "GET",
+          path: "/reports/:id",
+          selection: {
+            headers: [{ name: "X-View", values: ["summary"] }],
+          },
+          route: "summary",
+        },
+      ];
+
+      for (const ordered of [routes, [...routes].reverse()]) {
+        const shared = create(ordered);
+        expect(shared.match("GET", "/reports/r-1", new Headers({ "x-view": "summary" }))).toEqual({
+          route: "summary",
+          pathParams: { id: "r-1" },
+        });
+        expect(shared.match("GET", "/reports/r-1", new Headers({ "x-view": "detailed" }))).toEqual({
+          route: "detailed",
+          pathParams: { reportId: "r-1" },
+        });
+        expect(shared.match("GET", "/reports/r-1", new Headers())).toBeNull();
+      }
+    });
+
+    test("dispatches shared routes using media-type semantics", () => {
+      const shared = create([
+        {
+          method: "POST",
+          path: "/documents",
+          selection: {
+            headers: [{ name: "content-type", values: ["application/*"], kind: "media-type" }],
+          },
+          route: "structured",
+        },
+        {
+          method: "POST",
+          path: "/documents",
+          selection: {
+            headers: [{ name: "content-type", values: ["text/plain"], kind: "media-type" }],
+          },
+          route: "text",
+        },
+      ]);
+
+      expect(
+        shared.match(
+          "POST",
+          "/documents",
+          new Headers({ "content-type": "Application/JSON; charset=utf-8" }),
+        )?.route,
+      ).toBe("structured");
+      expect(
+        shared.match("POST", "/documents", new Headers({ "content-type": "text/plain" }))?.route,
+      ).toBe("text");
+    });
+
+    test("rejects overlapping shared-route constraints with both route identities", () => {
+      expect(() =>
+        create([
+          {
+            method: "POST",
+            path: "/documents",
+            label: "Documents.acceptAnyApplication",
+            selection: {
+              headers: [{ name: "content-type", values: ["application/*"], kind: "media-type" }],
+            },
+            route: "application",
+          },
+          {
+            method: "POST",
+            path: "/documents",
+            label: "Documents.acceptJson",
+            selection: {
+              headers: [{ name: "content-type", values: ["application/json"], kind: "media-type" }],
+            },
+            route: "json",
+          },
+        ]),
+      ).toThrow(
+        "Duplicate route: POST /documents (Documents.acceptJson) conflicts with POST /documents (Documents.acceptAnyApplication)",
+      );
+    });
+
+    test("reports malformed shared-route selectors with route context", () => {
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/reports",
+            selection: { headers: [{}] },
+            route: "invalid",
+          } as any,
+        ]),
+      ).toThrow("Invalid route selection: GET /reports");
+    });
+
     test("rejects static routes that are equivalent after path canonicalization", () => {
       for (const paths of [
         ["/café", "/caf%C3%A9"],

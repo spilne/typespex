@@ -30,6 +30,13 @@ reachable from operation inputs and responses, including their transitive extern
 The layout options are `service-output`, `service-folder-pattern`, and `file-name-pattern`. See the
 repository README for the mapping table and complete configuration examples.
 
+## Shared routes
+
+`@sharedRoute` operations are generated only when each colliding pair is distinguishable by
+non-overlapping values of the same required literal header. Required request body media types are
+treated as `Content-Type` constraints. Ambiguous collisions produce an emitter diagnostic and no
+partial service output; see the repository README for examples and matching details.
+
 ## Runtime requirements
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` is
