@@ -4,26 +4,53 @@ import autocannon from "autocannon";
 // Config
 // ---------------------------------------------------------------------------
 
-const DURATION = 10;
-const CONNECTIONS = 50;
-const PIPELINING = 10;
+function positiveIntegerSetting(name: string, fallback: number): number {
+  const raw = Bun.env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
 
-const SERVERS = [
+const DURATION = positiveIntegerSetting("TYPESPEX_BENCH_DURATION", 10);
+const CONNECTIONS = positiveIntegerSetting("TYPESPEX_BENCH_CONNECTIONS", 50);
+const PIPELINING = positiveIntegerSetting("TYPESPEX_BENCH_PIPELINING", 10);
+
+export const SERVERS = [
   { name: "Bare Bun", port: 3457 },
   { name: "Hono", port: 3458 },
   { name: "Hono+Zod", port: 3459 },
   { name: "typespex", port: 3456 },
 ] as const;
 
-const SCENARIOS = [
-  { name: "GET  /pets?limit=10", path: "/pets?limit=10" },
-  { name: "GET  /pets/:id (404)", path: "/pets/nonexistent" },
+export interface BenchmarkScenario {
+  readonly name: string;
+  readonly path: string;
+  readonly method?: autocannon.Request["method"];
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body?: string;
+  readonly expectedStatus: number;
+}
+
+export type FetchRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export interface BenchmarkServer {
+  readonly name: string;
+  readonly port: number;
+}
+
+export const SCENARIOS: readonly BenchmarkScenario[] = [
+  { name: "GET  /pets?limit=10", path: "/pets?limit=10", expectedStatus: 200 },
+  { name: "GET  /pets/:id (404)", path: "/pets/nonexistent", expectedStatus: 404 },
   {
     name: "POST /pets (create)",
     path: "/pets",
-    method: "POST" as const,
+    method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Bench", tag: "test" }),
+    expectedStatus: 200,
   },
 ];
 
@@ -40,11 +67,22 @@ interface Row {
   total: number;
 }
 
-async function runScenario(url: string): Promise<autocannon.Result> {
+export function autocannonOptions(url: string, scenario: BenchmarkScenario): autocannon.Options {
+  return {
+    url,
+    duration: DURATION,
+    connections: CONNECTIONS,
+    pipelining: PIPELINING,
+    method: scenario.method ?? "GET",
+    headers: scenario.headers,
+    body: scenario.body,
+  };
+}
+
+async function runScenario(url: string, scenario: BenchmarkScenario): Promise<autocannon.Result> {
   return new Promise((resolve, reject) => {
-    const instance = autocannon(
-      { url, duration: DURATION, connections: CONNECTIONS, pipelining: PIPELINING },
-      (err, result) => (err ? reject(err) : resolve(result)),
+    const instance = autocannon(autocannonOptions(url, scenario), (err, result) =>
+      err ? reject(err) : resolve(result),
     );
     autocannon.track(instance, { renderProgressBar: false });
   });
@@ -98,14 +136,41 @@ async function isAlive(port: number): Promise<boolean> {
   }
 }
 
-async function seedPets(port: number, count: number) {
+export async function seedPets(
+  server: BenchmarkServer,
+  count: number,
+  fetchRequest: FetchRequest = fetch,
+): Promise<void> {
   for (let i = 0; i < count; i++) {
-    const res = await fetch(`http://localhost:${port}/pets`, {
+    const res = await fetchRequest(`http://localhost:${server.port}/pets`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: `Pet${i}`, tag: `tag${i % 5}` }),
     });
     await res.arrayBuffer();
+    if (res.status !== 200) {
+      throw new Error(
+        `${server.name} seed request ${i + 1}/${count} returned ${res.status}; expected 200.`,
+      );
+    }
+  }
+}
+
+export async function validateScenario(
+  url: string,
+  scenario: BenchmarkScenario,
+  fetchRequest: FetchRequest = fetch,
+): Promise<void> {
+  const response = await fetchRequest(url, {
+    method: scenario.method ?? "GET",
+    headers: scenario.headers,
+    body: scenario.body,
+  });
+  await response.arrayBuffer();
+  if (response.status !== scenario.expectedStatus) {
+    throw new Error(
+      `${scenario.name} preflight returned ${response.status}; expected ${scenario.expectedStatus} for ${scenario.method ?? "GET"} ${url}.`,
+    );
   }
 }
 
@@ -119,18 +184,22 @@ async function main() {
     process.exit(1);
   }
 
-  for (const s of active) await seedPets(s.port, 20);
+  for (const s of active) await seedPets(s, 20);
 
   console.log(`autocannon — ${CONNECTIONS} connections, ${PIPELINING} pipelining, ${DURATION}s\n`);
 
   for (const scenario of SCENARIOS) {
     const rows: Row[] = [];
     for (const server of active) {
-      const result = await runScenario(`http://localhost:${server.port}${scenario.path}`);
+      const url = `http://localhost:${server.port}${scenario.path}`;
+      await validateScenario(url, scenario);
+      const result = await runScenario(url, scenario);
       rows.push(extractRow(server.name, result));
     }
     printTable(scenario.name, rows);
   }
 }
 
-main();
+if (import.meta.main) {
+  await main();
+}
