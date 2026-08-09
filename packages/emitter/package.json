@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@typespex/runtime": "workspace:*",
-    "oxfmt": "^0.62.0"
+    "oxfmt": "0.62.0"
   },
   "devDependencies": {
     "@typespec/compiler": "^1.14.0",
