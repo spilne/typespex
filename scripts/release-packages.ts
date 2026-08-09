@@ -277,10 +277,13 @@ export function parseArguments(args: readonly string[]): CliOptions {
     } else if (argument.startsWith("--output-dir=")) {
       outputDirectory = requiredArgument(argument.slice("--output-dir=".length), "--output-dir");
     } else if (argument === "--help" || argument === "-h") {
-      console.log(`Usage: ./scripts/publish-packages.sh [options]
+      console.log(`Usage:
+  ./scripts/publish-packages.sh [options]
+  bun ./scripts/release-packages.ts --package-check [options]
 
 By default the command runs every release gate and packs every package without
-publishing. Registry writes require --publish.
+publishing. Registry writes require --publish. The root bun run check:packages
+script invokes the package-check form used by CI.
 
 Options:
   --tag v<version>       Validate the tag against every package version
