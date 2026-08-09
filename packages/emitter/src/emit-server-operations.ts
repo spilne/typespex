@@ -1,4 +1,5 @@
 import type { EmitterCtx } from "./ctx.js";
+import { addTemporalImport } from "./datetime-mode.js";
 import type { HttpOperation } from "@typespec/http";
 import { emitResultResponseEncoder } from "./emit-server-common.js";
 import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
@@ -142,6 +143,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     lines.push("");
   }
 
+  addTemporalImport(lines, "value");
   return lines.join("\n");
 }
 

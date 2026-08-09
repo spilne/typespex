@@ -288,7 +288,10 @@ const strictBytesDecoder: Decoder<Uint8Array> = Decoder.of((input) => {
   return fail("", "Expected a base64 string.");
 });
 
-function transformDecoder<A, B>(decoder: Decoder<A>, transform: (value: A) => B): Decoder<B> {
+function transformDecoder<A, B, Input>(
+  decoder: Decoder<A, Input>,
+  transform: (value: A) => B,
+): Decoder<B, Input> {
   return Decoder.of((input) => {
     const decoded = decoder.decode(input);
     if (isLeft(decoded)) return decoded;
@@ -336,6 +339,10 @@ const base64UrlBytesDecoder = transformDecoder(stringDecoder, ScalarEncodings.de
 
 function unixTimestampDecoder<A extends number | bigint>(wire: Decoder<A>): Decoder<string> {
   return transformDecoder(wire, ScalarEncodings.decodeUnixTimestamp);
+}
+
+function dateTimeDateDecoder<Input>(wire: Decoder<string, Input>): Decoder<Date, Input> {
+  return transformDecoder(wire, ScalarEncodings.decodeDateTimeDate);
 }
 
 function numericDurationDecoder<A extends number | bigint>(
@@ -1233,12 +1240,14 @@ export const Decoders = {
   bytes: bytesDecoder,
   strictBytes: strictBytesDecoder,
   compose: composeDecoder,
+  transform: transformDecoder,
   encodedNumberString: encodedNumberStringDecoder,
   encodedIntegerString: encodedIntegerStringDecoder,
   encodedBigIntString: encodedBigIntStringDecoder,
   encodedBooleanString: encodedBooleanStringDecoder,
   rfc3339DateTime: rfc3339DateTimeDecoder,
   rfc7231DateTime: rfc7231DateTimeDecoder,
+  dateTimeDate: dateTimeDateDecoder,
   unixTimestamp: unixTimestampDecoder,
   isoDuration: isoDurationDecoder,
   numericDuration: numericDurationDecoder,

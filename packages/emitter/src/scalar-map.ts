@@ -1,4 +1,5 @@
 import type { Scalar } from "@typespec/compiler";
+import { dateTimeHandlerType, type DateTimeMode } from "./datetime-mode.js";
 
 const INTRINSIC_SCALAR_NAMES = new Set([
   "int8",
@@ -31,8 +32,10 @@ const INTRINSIC_SCALAR_NAMES = new Set([
 /**
  * Maps TypeSpec scalar types to TypeScript type strings.
  */
-export function scalarToTs(scalar: Scalar): string {
+export function scalarToTs(scalar: Scalar, dateTimeMode: DateTimeMode = "string"): string {
   const name = getIntrinsicScalarName(scalar);
+  const dateTimeType = dateTimeHandlerType(scalar, dateTimeMode);
+  if (dateTimeType) return dateTimeType;
 
   switch (name) {
     case "int8":

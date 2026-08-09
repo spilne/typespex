@@ -12,6 +12,7 @@ import type {
 import { getDiscriminator, isArrayModelType, walkPropertiesInherited } from "@typespec/compiler";
 import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import { emitDateTimeDecoder } from "./datetime-mode.js";
 import {
   discriminatedVariantToTs,
   discriminatedVariants,
@@ -739,9 +740,9 @@ function emitScalarDecoder(
       emitUnencodedScalarDecoder(encoding.plan.wireType, mode),
       encoding.plan.wireType,
     );
-    return emitScalarEncodingDecoder(encoding.plan, wireDecoder);
+    return emitScalarEncodingDecoder(ctx, encoding.plan, wireDecoder);
   }
-  return emitUnencodedScalarDecoder(scalar, mode);
+  return emitDateTimeDecoder(ctx, scalar, emitUnencodedScalarDecoder(scalar, mode));
 }
 
 function emitUnencodedScalarDecoder(scalar: Scalar, mode: DecoderMode): string {

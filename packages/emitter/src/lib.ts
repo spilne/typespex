@@ -4,6 +4,7 @@ export interface TypespexEmitterOptions {
   "service-output"?: "auto" | "flat" | "prefix" | "directory";
   "service-folder-pattern"?: string;
   "file-name-pattern"?: string;
+  "datetime-mode"?: "string" | "date" | "temporal";
 }
 
 const EmitterOptionsSchema: JSONSchemaType<TypespexEmitterOptions> = {
@@ -17,6 +18,11 @@ const EmitterOptionsSchema: JSONSchemaType<TypespexEmitterOptions> = {
     },
     "service-folder-pattern": { type: "string", nullable: true },
     "file-name-pattern": { type: "string", nullable: true },
+    "datetime-mode": {
+      type: "string",
+      enum: ["string", "date", "temporal"],
+      nullable: true,
+    },
   },
   required: [],
 };

@@ -1,6 +1,7 @@
 import type { Model, ModelProperty, Type, Union } from "@typespec/compiler";
 import { resolveEncodedName } from "@typespec/compiler";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import { dateTimeScalarNeedsTransform, emitDateTimeSerializer } from "./datetime-mode.js";
 import {
   discriminatedVariantToTs,
   discriminatedVariants,
@@ -240,7 +241,10 @@ function computeJsonWireTransformChangesType(
 ): boolean {
   if (projection && payloadProjectionFiltersProperties(ctx, type, projection)) return true;
   if (type.kind === "Scalar") {
-    return resolveScalarEncoding(ctx, type, target, encodingContext).status === "supported";
+    return (
+      dateTimeScalarNeedsTransform(ctx, type) ||
+      resolveScalarEncoding(ctx, type, target, encodingContext).status === "supported"
+    );
   }
   const projectionKey = `${encodingContext}:${projection?.cacheKey ?? "raw"}`;
   const seenProjections = seen.get(type);
@@ -401,7 +405,9 @@ function emitRequiredSerializer(
       const encoding = resolveScalarEncoding(ctx, type, target, encodingContext);
       return encoding.status === "supported"
         ? emitScalarEncodingSerializer(ctx, encoding.plan)
-        : identitySerializer(ctx, type, projection);
+        : dateTimeScalarNeedsTransform(ctx, type)
+          ? emitDateTimeSerializer(ctx, type, "JsonSerializers.identity<string>()")
+          : identitySerializer(ctx, type, projection);
     }
     case "ModelProperty":
     case "UnionVariant":

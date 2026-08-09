@@ -10,6 +10,7 @@ import type {
 import { isArrayModelType, isTemplateDeclaration } from "@typespec/compiler";
 import { SyntaxKind, type TypeReferenceNode } from "@typespec/compiler/ast";
 import { getGeneratedTypeName, hasGeneratedTypeNameCollision, type EmitterCtx } from "./ctx.js";
+import { addTemporalImport } from "./datetime-mode.js";
 import { discriminatedUnionBodyToTs, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { isHttpFileModel, isHttpPartModel } from "./http-models.js";
 import { isPureRecordModel } from "./model-indexer.js";
@@ -46,6 +47,7 @@ export function emitModels(ctx: EmitterCtx): string {
     }
   }
 
+  addTemporalImport(lines, "type");
   return lines.join("\n");
 }
 

@@ -234,6 +234,23 @@ function scalarJsonSerializer<A>(transform: (value: A) => unknown): JsonSerializ
   });
 }
 
+function transformInputJsonSerializer<A, B>(
+  serializer: JsonSerializer<B>,
+  transform: (value: A) => B,
+): JsonSerializer<A> {
+  return JsonSerializer.of((value, path) => {
+    let transformed: B;
+    try {
+      transformed = transform(value);
+    } catch (error) {
+      if (error instanceof JsonSerializationError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new JsonSerializationError(path, message, { cause: error });
+    }
+    return serializeNested(serializer, transformed, path);
+  });
+}
+
 function validatedJsonSerializer<A, Wire>(
   serializer: JsonSerializer<A>,
   ...validators: readonly Validator<Wire>[]
@@ -356,6 +373,7 @@ export const JsonSerializers = {
   discriminated: discriminatedJsonSerializer,
   lazy: lazyJsonSerializer,
   validate: validatedJsonSerializer,
+  transformInput: transformInputJsonSerializer,
   encodedNumberString: encodedNumberStringJsonSerializer,
   encodedBigIntString: encodedBigIntStringJsonSerializer,
   encodedBooleanString: encodedBooleanStringJsonSerializer,

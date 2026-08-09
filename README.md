@@ -258,6 +258,45 @@ Generated files contain an `AUTO-GENERATED` header and should not be edited. Cha
 source or emitter, then regenerate them. The emitter also supports `flat`, `prefix`, and
 `directory` service layouts plus configurable service-folder and file-name patterns.
 
+### Date-time modes
+
+Set `datetime-mode` in the emitter options to choose the handler-facing representation of TypeSpec
+date and duration scalars:
+
+| `datetime-mode` | `plainDate`          | `plainTime`          | `utcDateTime`      | `offsetDateTime`         | `duration`          | Extra dependency        |
+| --------------- | -------------------- | -------------------- | ------------------ | ------------------------ | ------------------- | ----------------------- |
+| `string`        | `string`             | `string`             | `string`           | `string`                 | `string`            | None                    |
+| `date`          | `string`             | `string`             | `Date`             | `Date`                   | `string`            | None                    |
+| `temporal`      | `Temporal.PlainDate` | `Temporal.PlainTime` | `Temporal.Instant` | `Temporal.ZonedDateTime` | `Temporal.Duration` | `@js-temporal/polyfill` |
+
+`string` is the default and preserves the existing generated API. `date` is useful for codebases
+that already use the built-in `Date`, but `Date` only represents an instant: decoded offsets are
+normalized to UTC and sub-millisecond precision is truncated. The scalars that `Date` cannot
+represent faithfully remain strings.
+
+`temporal` preserves the distinct TypeSpec concepts. Decoded `offsetDateTime` values use a fixed
+offset `Temporal.ZonedDateTime`; serialization emits its local date-time and current numeric offset
+without a bracketed zone identifier. Temporal has no lossless representation for RFC 3339's
+unknown-local-offset marker (`-00:00`) or leap-second spelling, so temporal mode rejects those wire
+values with a request validation error; use string mode when either representation must be
+preserved. Generated files import `Temporal` directly, so services using this mode must install the
+dependency:
+
+```sh
+bun add @js-temporal/polyfill
+```
+
+```yaml
+emit:
+  - "@typespex/emitter"
+options:
+  "@typespex/emitter":
+    datetime-mode: temporal
+```
+
+The configured representation applies consistently to path, query, header, cookie, form,
+multipart, text, and JSON request values as well as response bodies and modeled response headers.
+
 ## HTTP and Error Behavior
 
 TypeSpex decodes path, query, header, cookie, JSON, form, multipart, text, binary, and raw file
@@ -348,11 +387,11 @@ Numeric and boolean values can be string-encoded; date-times support `rfc3339`, 
 `base64` and unpadded `base64url`. Encodings declared on a scalar are inherited and a property
 encoding takes precedence. Unannotated HTTP values follow TypeSpec's protocol defaults:
 date-times use RFC 7231 in headers and RFC 3339 elsewhere, durations use ISO 8601, and bytes use
-base64 whenever the wire location is textual. Handler types stay semantic: date-times and
-durations are strings, bytes are `Uint8Array`, and 64-bit integers are `bigint`. Date-time wire
-values are converted to RFC 3339 handler strings, while numeric duration values become ISO 8601
-handler strings. Raw binary bodies contain exact bytes and cannot apply a textual scalar encoding;
-use a textual or JSON media type instead.
+base64 whenever the wire location is textual. Date-time and duration handler types follow the
+configured `datetime-mode`; bytes are `Uint8Array`, and 64-bit integers are `bigint`. In the default
+string mode, date-time wire values are converted to RFC 3339 handler strings, while numeric duration
+values become ISO 8601 handler strings. Raw binary bodies contain exact bytes and cannot apply a
+textual scalar encoding; use a textual or JSON media type instead.
 
 Lifecycle visibility is projected into each operation's handler-facing request and response
 shape. HTTP method defaults and explicit `@parameterVisibility`/`@returnTypeVisibility` overrides

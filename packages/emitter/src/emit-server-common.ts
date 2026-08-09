@@ -30,6 +30,7 @@ import {
   hasGeneratedTypeNameCollision,
   type EmitterCtx,
 } from "./ctx.js";
+import { dateTimeScalarNeedsTransform, getDateTimeMode } from "./datetime-mode.js";
 import { getHttpPartType, isHttpFileModel, propertiesShareSource } from "./http-models.js";
 import {
   emitJsonWireSerializer,
@@ -1089,7 +1090,10 @@ function emitResponseHeaderTransform(
 function headerTypeHasScalarEncoding(ctx: EmitterCtx, type: Type, target?: ModelProperty): boolean {
   switch (type.kind) {
     case "Scalar":
-      return resolveScalarEncoding(ctx, type, target, "header").status === "supported";
+      return (
+        dateTimeScalarNeedsTransform(ctx, type) ||
+        resolveScalarEncoding(ctx, type, target, "header").status === "supported"
+      );
     case "Model": {
       const collection = getPayloadCollection(ctx, type);
       return collection?.kind === "array"
@@ -1390,7 +1394,7 @@ function emitDirectTypeCondition(
 
   if (response.type.kind !== "Scalar") return undefined;
 
-  const scalarType = scalarToTs(response.type);
+  const scalarType = scalarToTs(response.type, getDateTimeMode(ctx));
   if (scalarType === "string") {
     return wrapSubjectGuard(response, `typeof ${subject} === "string"`);
   }
@@ -1405,6 +1409,9 @@ function emitDirectTypeCondition(
   }
   if (scalarType === "bigint") {
     return wrapSubjectGuard(response, `typeof ${subject} === "bigint"`);
+  }
+  if (scalarType === "Date" || scalarType.startsWith("Temporal.")) {
+    return wrapSubjectGuard(response, `${subject} instanceof ${scalarType}`);
   }
 
   return undefined;
@@ -1571,7 +1578,19 @@ function emitExclusivePropertyCondition(
   return [emitObjectShapeCondition(response), ...propertyChecks].join(" && ");
 }
 
-type BodyShape = "array" | "string" | "number" | "boolean" | "bytes" | "object";
+type BodyShape =
+  | "array"
+  | "string"
+  | "number"
+  | "boolean"
+  | "bytes"
+  | "object"
+  | "date"
+  | "temporal-plain-date"
+  | "temporal-plain-time"
+  | "temporal-instant"
+  | "temporal-zoned-date-time"
+  | "temporal-duration";
 
 /**
  * Dispatch variants whose envelope is a single `body` property and whose
@@ -1611,11 +1630,17 @@ function bodyShapeFor(ctx: EmitterCtx, type: Type): BodyShape | undefined {
   }
   if (type.kind === "Tuple") return "array";
   if (type.kind === "Scalar") {
-    const tsType = scalarToTs(type);
+    const tsType = scalarToTs(type, getDateTimeMode(ctx));
     if (tsType === "string") return "string";
     if (tsType === "number") return "number";
     if (tsType === "boolean") return "boolean";
     if (tsType === "Uint8Array") return "bytes";
+    if (tsType === "Date") return "date";
+    if (tsType === "Temporal.PlainDate") return "temporal-plain-date";
+    if (tsType === "Temporal.PlainTime") return "temporal-plain-time";
+    if (tsType === "Temporal.Instant") return "temporal-instant";
+    if (tsType === "Temporal.ZonedDateTime") return "temporal-zoned-date-time";
+    if (tsType === "Temporal.Duration") return "temporal-duration";
     return undefined;
   }
   return undefined;
@@ -1637,6 +1662,18 @@ function emitBodyShapeCondition(bodyProperty: string, shape: BodyShape): string 
       return `${guard} && ${body} instanceof Uint8Array`;
     case "object":
       return `${guard} && typeof ${body} === "object" && ${body} !== null && !Array.isArray(${body})`;
+    case "date":
+      return `${guard} && ${body} instanceof Date`;
+    case "temporal-plain-date":
+      return `${guard} && ${body} instanceof Temporal.PlainDate`;
+    case "temporal-plain-time":
+      return `${guard} && ${body} instanceof Temporal.PlainTime`;
+    case "temporal-instant":
+      return `${guard} && ${body} instanceof Temporal.Instant`;
+    case "temporal-zoned-date-time":
+      return `${guard} && ${body} instanceof Temporal.ZonedDateTime`;
+    case "temporal-duration":
+      return `${guard} && ${body} instanceof Temporal.Duration`;
   }
 }
 

@@ -8,6 +8,22 @@ import {
 } from "../src/server.js";
 
 describe("scalar wire encodings", () => {
+  test("wraps custom scalar conversions as boundary errors", () => {
+    const decoder = Decoders.transform(Decoders.string, () => {
+      throw new TypeError("Cannot decode custom scalar.");
+    });
+    expect(decoder.decode("wire")).toEqual(
+      Either.left([{ path: "", message: "Cannot decode custom scalar." }]),
+    );
+
+    const serializer = JsonSerializers.transformInput(JsonSerializers.identity<string>(), () => {
+      throw new TypeError("Cannot encode custom scalar.");
+    });
+    expect(() => serializer.serialize("handler", "$response.value")).toThrow(
+      "$response.value: Cannot encode custom scalar.",
+    );
+  });
+
   test("decodes string-encoded numeric and boolean handler values", () => {
     expect(Decoders.encodedNumberString.decode("1.25")).toEqual(Either.right(1.25));
     expect(Decoders.encodedIntegerString.decode("42")).toEqual(Either.right(42));
@@ -44,6 +60,9 @@ describe("scalar wire encodings", () => {
     );
     expect(Decoders.unixTimestamp(Decoders.strictInteger).decode(0)).toEqual(
       Either.right("1970-01-01T00:00:00.000Z"),
+    );
+    expect(Decoders.dateTimeDate(Decoders.rfc3339DateTime).decode("2016-12-31T23:59:60Z")).toEqual(
+      Either.right(new Date("2017-01-01T00:00:00.000Z")),
     );
   });
 
