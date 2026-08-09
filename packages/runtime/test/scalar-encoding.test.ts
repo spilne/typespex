@@ -79,6 +79,9 @@ describe("scalar wire encodings", () => {
     expect(JsonSerializers.encodedBigIntString().serialize(9223372036854775807n)).toBe(
       "9223372036854775807",
     );
+    expect(() =>
+      JsonSerializers.encodedBigIntString({ max: 9007199254740992 }).serialize(9007199254740993n),
+    ).toThrow("Encoded value must be at most 9007199254740992.");
     expect(JsonSerializers.encodedBooleanString.serialize(false)).toBe("false");
     expect(JsonSerializers.rfc3339DateTime.serialize("2024-01-02T03:04:05Z")).toBe(
       "2024-01-02T03:04:05Z",

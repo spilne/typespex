@@ -443,8 +443,5 @@ function validateNumericWireValue(value: number | bigint, options: NumericWireEn
 }
 
 function compareNumeric(left: number | bigint, right: number | bigint): number {
-  if (typeof left === typeof right) return left < right ? -1 : left > right ? 1 : 0;
-  const leftNumber = Number(left);
-  const rightNumber = Number(right);
-  return leftNumber < rightNumber ? -1 : leftNumber > rightNumber ? 1 : 0;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
