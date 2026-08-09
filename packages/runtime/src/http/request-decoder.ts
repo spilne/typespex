@@ -86,10 +86,7 @@ export function requiredQuery<A>(
 ): RequestDecoder<A> {
   const prefix = `$query.${name}`;
   return createRequestDecoder((input) => {
-    if (options.array && options.explode === false && input.query.getAll(name).length > 1) {
-      return fail(prefix, "Expected one comma-delimited query parameter.");
-    }
-    const value = readQueryValue(input.query, input.rawQuery, name, options);
+    const value = readQueryValue(input, name, options);
     if (isLeft(value)) return prefixIssues(value, prefix);
     const result = decoder.decode(value.right);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
@@ -360,40 +357,60 @@ function createRequestInputSource(
 }
 
 function readQueryValue(
-  query: URLSearchParams,
-  rawQuery: string | undefined,
+  input: RequestInputSource,
   name: string,
   options: RequestParameterDecodeOptions,
 ): DecoderResult<string | readonly string[] | undefined> {
+  if (input.rawQuery !== undefined) {
+    return readRawQueryValue(input.rawQuery, name, options);
+  }
+  const query = input.query;
   if (!query.has(name)) return Either.right(undefined);
   if (options.array && options.explode === false) {
-    const rawValue = readDelimitedRawQueryValue(rawQuery, name);
-    if (isLeft(rawValue)) return rawValue;
-    return Either.right(rawValue.right ?? splitCommaSeparated(query.get(name)!));
+    if (query.getAll(name).length > 1) {
+      return fail("", "Expected one comma-delimited query parameter.");
+    }
+    return Either.right(splitCommaSeparated(query.get(name)!));
   }
   const values = query.getAll(name);
   if (options.array) return Either.right(values);
   return Either.right(values.length === 1 ? values[0] : values);
 }
 
-function readDelimitedRawQueryValue(
-  rawQuery: string | undefined,
+function readRawQueryValue(
+  rawQuery: string,
   name: string,
-): DecoderResult<readonly string[] | undefined> {
-  if (rawQuery === undefined) return Either.right(undefined);
+  options: RequestParameterDecodeOptions,
+): DecoderResult<string | readonly string[] | undefined> {
+  const rawValues: string[] = [];
   for (const pair of rawQuery.split("&")) {
     const equals = pair.indexOf("=");
     const rawName = equals === -1 ? pair : pair.substring(0, equals);
     const decodedName = decodeQueryComponent(rawName);
     if (isLeft(decodedName) || decodedName.right !== name) continue;
-    const rawValue = equals === -1 ? "" : pair.substring(equals + 1);
-    return traverseEither(rawValue.split(","), (item, index) => {
+    rawValues.push(equals === -1 ? "" : pair.substring(equals + 1));
+  }
+
+  if (rawValues.length === 0) return Either.right(undefined);
+  if (options.array && options.explode === false) {
+    if (rawValues.length > 1) {
+      return fail("", "Expected one comma-delimited query parameter.");
+    }
+    return traverseEither(rawValues[0]!.split(","), (item, index) => {
       const decoded = decodeQueryComponent(item);
       if (isLeft(decoded)) return prefixIssues(decoded, `[${index}]`);
       return Either.right(decoded.right.trim());
     });
   }
-  return Either.right(undefined);
+
+  const values = traverseEither<string, string>(rawValues, (rawValue, index) => {
+    const decoded = decodeQueryComponent(rawValue);
+    if (isLeft(decoded) && options.array) return prefixIssues(decoded, `[${index}]`);
+    return decoded;
+  });
+  if (isLeft(values)) return values;
+  if (options.array) return values;
+  return Either.right(values.right.length === 1 ? values.right[0] : values.right);
 }
 
 function decodeQueryComponent(value: string): DecoderResult<string> {

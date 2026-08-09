@@ -6,7 +6,6 @@ import {
   createContextKey,
   createContextMap,
   createHttpRouter,
-  decode,
   decodeRequestInput,
   emptyHints,
   type MatchedRequestContext,
@@ -379,8 +378,11 @@ describe("createHttpRouter", () => {
         },
       },
       decodeInput(request) {
-        const value = new URL(request.url).searchParams.get("limit");
-        return Either.map(decode(Decoders.number, value, "$query.limit"), (limit) => ({ limit }));
+        return decodeRequestInput(
+          RequestDecoders.query("limit", Decoders.number).map((limit) => ({ limit })),
+          request,
+          {},
+        );
       },
       encodeResult(result: { limit: number }) {
         return Response.json(result, { status: 200 });
@@ -402,6 +404,19 @@ describe("createHttpRouter", () => {
     expect(await response.json()).toEqual({
       error: "Invalid request",
       issues: [{ path: "$query.limit", message: "Expected a finite number." }],
+    });
+
+    const malformed = await router.handle(new Request("http://localhost/pets?limit=%ZZ"));
+
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({
+      error: "Invalid request",
+      issues: [
+        {
+          path: "$query.limit",
+          message: "Expected a valid percent-encoded query value.",
+        },
+      ],
     });
   });
 
