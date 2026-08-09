@@ -359,6 +359,12 @@ shape. HTTP method defaults and explicit `@parameterVisibility`/`@returnTypeVisi
 are honored, including configured PATCH optionality and collection-item rules. Canonical generated
 model types remain complete while operation-local payload aliases describe the actual wire contract.
 
+Standard `@discriminated` unions preserve their declared wire representation in handler types.
+Object envelopes use the configured discriminator and value property names; `envelope: "none"`
+injects the required discriminator into every model variant. Request decoding dispatches by that
+field, response serialization transforms the selected payload recursively, and unnamed default
+variants handle discriminator values that are not mapped explicitly.
+
 Raw file responses accept a Web `File`, validate its media type, and use its name for a safe
 `Content-Disposition` filename. Empty optional media types and names omit those response headers;
 a filename relocated to a modeled response header suppresses the default `Content-Disposition`.
@@ -372,7 +378,7 @@ configured.
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
 diagnostics cover custom or location-incompatible scalar encodings, non-JSON encoded property
-names, `@discriminated` union envelopes, and standard `@useAuth` metadata.
+names, unsupported `@discriminated` configurations, and standard `@useAuth` metadata.
 They also reject ambiguous nested response unions that require different JSON transforms,
 parameter serialization styles, media/body shape combinations, and output layouts that the
 generated runtime cannot represent

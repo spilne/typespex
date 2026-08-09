@@ -90,10 +90,10 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`@encodedName on "${"name"}" is not supported by @typespex/emitter; generating this service would use the wrong property name on the wire.`,
       },
     },
-    "ignored-discriminated": {
+    "unsupported-discriminated-union": {
       severity: "error",
       messages: {
-        default: paramMessage`@discriminated union "${"name"}" is not supported by @typespex/emitter; generating this service would use the wrong envelope format.`,
+        default: paramMessage`@discriminated union "${"name"}" cannot be represented safely: ${"reason"}.`,
       },
     },
     "ignored-auth": {

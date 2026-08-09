@@ -1,14 +1,17 @@
-import type { Model, ModelProperty, Scalar, Type, Union } from "@typespec/compiler";
-import {
-  getDiscriminatedUnion,
-  isArrayModelType,
-  resolveEncodedName,
-  walkPropertiesInherited,
+import type {
+  DiscriminatedUnion,
+  Model,
+  ModelProperty,
+  Scalar,
+  Type,
+  Union,
 } from "@typespec/compiler";
+import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
 import { getAuthenticationForOperation } from "@typespec/http";
 import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
+import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { propertiesShareSource } from "./http-models.js";
 import { $lib } from "./lib.js";
 import {
@@ -598,13 +601,47 @@ function checkScalarEncode(
 }
 
 function checkUnion(ctx: EmitterCtx, reported: ServiceDecoratorReports, union: Union): void {
-  const [discriminated] = getDiscriminatedUnion(ctx.program, union);
-  if (discriminated && !reported.discriminated.has(union)) {
-    reported.discriminated.add(union);
-    $lib.reportDiagnostic(ctx.program, {
-      code: "ignored-discriminated",
-      format: { name: union.name ?? "(anonymous)" },
-      target: union,
-    });
+  const discriminated = resolveDiscriminatedUnion(ctx.program, union);
+  if (!discriminated || reported.discriminated.has(union)) return;
+
+  const reason = unsupportedDiscriminatedUnionReason(ctx, discriminated);
+  if (!reason) return;
+  reported.discriminated.add(union);
+  $lib.reportDiagnostic(ctx.program, {
+    code: "unsupported-discriminated-union",
+    format: { name: union.name ?? "(anonymous)", reason },
+    target: union,
+  });
+}
+
+function unsupportedDiscriminatedUnionReason(
+  ctx: EmitterCtx,
+  discriminated: DiscriminatedUnion,
+): string | undefined {
+  const { discriminatorPropertyName, envelope, envelopePropertyName } = discriminated.options;
+  if (envelope === "object" && discriminatorPropertyName === envelopePropertyName) {
+    return `discriminator and envelope properties both use ${JSON.stringify(discriminatorPropertyName)}`;
   }
+  if (envelope !== "none") return undefined;
+
+  for (const variant of discriminatedVariants(discriminated)) {
+    const label = variant.tag === undefined ? "default" : JSON.stringify(variant.tag);
+    if (variant.type.kind !== "Model") {
+      return `inline ${label} variant must be an object model, but it is ${variant.type.kind}`;
+    }
+    if (isArrayModelType(ctx.program, variant.type)) {
+      return `inline ${label} variant is an array model and cannot receive discriminator property ${JSON.stringify(discriminatorPropertyName)}`;
+    }
+
+    for (const property of walkPropertiesInherited(variant.type)) {
+      const wireName = resolveEncodedName(ctx.program, property, "application/json");
+      if (property.name === discriminatorPropertyName && wireName !== discriminatorPropertyName) {
+        return `inline ${label} discriminator property is encoded as ${JSON.stringify(wireName)} instead of ${JSON.stringify(discriminatorPropertyName)}`;
+      }
+      if (property.name !== discriminatorPropertyName && wireName === discriminatorPropertyName) {
+        return `inline ${label} property ${JSON.stringify(property.name)} uses the discriminator wire name ${JSON.stringify(discriminatorPropertyName)}`;
+      }
+    }
+  }
+  return undefined;
 }

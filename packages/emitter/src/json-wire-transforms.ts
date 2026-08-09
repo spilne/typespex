@@ -1,6 +1,11 @@
 import type { Model, ModelProperty, Type, Union } from "@typespec/compiler";
 import { resolveEncodedName } from "@typespec/compiler";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import {
+  discriminatedVariantToTs,
+  discriminatedVariants,
+  resolveDiscriminatedUnion,
+} from "./discriminated-unions.js";
 import { getHttpPartType } from "./http-models.js";
 import { getAdditionalPropertiesValue, isNeverAdditionalProperties } from "./model-indexer.js";
 import {
@@ -18,13 +23,13 @@ import {
   type ScalarEncodingContext,
 } from "./scalar-encoding.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
-import { tsIdentifier } from "./typescript-names.js";
+import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
 
 const JSON_MEDIA_TYPE = "application/json";
 
 interface JsonSerializerEmission {
   readonly name: string;
-  readonly type: Model;
+  readonly type: Model | Union;
   readonly projection?: PayloadProjection;
   readonly encodingContext: ScalarEncodingContext;
   declaration?: string;
@@ -33,7 +38,7 @@ interface JsonSerializerEmission {
 
 interface JsonWireState {
   readonly changes: Map<Type, Map<string, boolean>>;
-  readonly serializers: Map<Model, Map<string, JsonSerializerEmission>>;
+  readonly serializers: Map<Model | Union, Map<string, JsonSerializerEmission>>;
   readonly usedNames: Set<string>;
 }
 
@@ -137,6 +142,20 @@ export function unsupportedJsonWireTransformReason(
         : undefined;
     }
     case "Union": {
+      const discriminated = resolveDiscriminatedUnion(ctx.program, type);
+      if (discriminated) {
+        for (const variant of discriminatedVariants(discriminated)) {
+          const reason = unsupportedJsonWireTransformReason(
+            ctx,
+            variant.type,
+            projection,
+            nextSeen,
+            target,
+          );
+          if (reason) return reason;
+        }
+        return undefined;
+      }
       if (!jsonWireTransformChangesType(ctx, type, projection, target)) return undefined;
       const nonNull = nonNullUnionVariants(type);
       if (nonNull && nonNull.length === 1) {
@@ -187,12 +206,15 @@ export function getJsonWireSerializerDeclarations(ctx: EmitterCtx): readonly str
   while (pending) {
     pending.building = true;
     const typeTs = payloadTypeToTs(ctx, pending.type, pending.projection);
-    const body = emitObjectSerializer(
-      ctx,
-      pending.type,
-      pending.projection,
-      pending.encodingContext,
-    );
+    const body =
+      pending.type.kind === "Model"
+        ? emitObjectSerializer(ctx, pending.type, pending.projection, pending.encodingContext)
+        : emitDiscriminatedUnionSerializerBody(
+            ctx,
+            pending.type,
+            pending.projection,
+            pending.encodingContext,
+          );
     pending.declaration = `const ${pending.name}: JsonSerializer<${typeTs}> = JsonSerializers.lazy<${typeTs}>(() => ${body});`;
     pending.building = false;
     pending = nextPendingSerializer(state);
@@ -284,6 +306,10 @@ function computeJsonWireTransformChangesType(
       );
     }
     case "Union":
+      // The emitted handler type includes the synthetic envelope/discriminator,
+      // but a serializer is still required to validate dispatch and transform
+      // the selected payload recursively.
+      if (resolveDiscriminatedUnion(ctx.program, type)) return true;
       return [...type.variants.values()].some((variant) =>
         computeJsonWireTransformChangesType(
           ctx,
@@ -347,6 +373,12 @@ function emitRequiredSerializer(
       return emitObjectSerializer(ctx, type, projection, encodingContext);
     }
     case "Union": {
+      const discriminated = resolveDiscriminatedUnion(ctx.program, type);
+      if (discriminated) {
+        return type.name
+          ? getOrCreateSerializer(ctx, type, projection, encodingContext).name
+          : emitDiscriminatedUnionSerializerBody(ctx, type, projection, encodingContext);
+      }
       const nonNull = nonNullUnionVariants(type);
       if (nonNull?.length === 1) {
         return `JsonSerializers.nullable(${emitRequiredSerializer(ctx, nonNull[0]!, projection, target, encodingContext)})`;
@@ -384,17 +416,33 @@ function emitObjectSerializer(
   model: Model,
   projection?: PayloadProjection,
   encodingContext: ScalarEncodingContext = "value",
+  syntheticDiscriminator?: {
+    readonly name: string;
+    readonly typeTs: string;
+  },
 ): string {
-  const typeTs = payloadTypeToTs(ctx, model, projection);
-  const properties = payloadModelProperties(model, projection).map((property) => {
+  const typeTs = syntheticDiscriminator?.typeTs ?? payloadTypeToTs(ctx, model, projection);
+  const modelProperties = payloadModelProperties(model, projection);
+  const properties: string[] = [];
+  if (
+    syntheticDiscriminator &&
+    !modelProperties.some((property) => property.name === syntheticDiscriminator.name)
+  ) {
+    properties.push(emitSyntheticDiscriminatorSerializer(syntheticDiscriminator.name));
+  }
+  for (const property of modelProperties) {
+    if (property.name === syntheticDiscriminator?.name) {
+      properties.push(emitSyntheticDiscriminatorSerializer(syntheticDiscriminator.name));
+      continue;
+    }
     const fields = [
       `property: ${JSON.stringify(property.name)}`,
       `wireName: ${JSON.stringify(getJsonPropertyWireName(ctx, property))}`,
       `serializer: ${emitRequiredSerializer(ctx, property.type, projection, property, encodingContext)}`,
     ];
     if (payloadPropertyOptional(property, projection)) fields.push("optional: true");
-    return `{ ${fields.join(", ")} }`;
-  });
+    properties.push(`{ ${fields.join(", ")} }`);
+  }
 
   const additional = getAdditionalPropertiesValue(model);
   const options =
@@ -410,28 +458,92 @@ function emitObjectSerializer(
   return `JsonSerializers.object<${typeTs}>([${properties.join(", ")}]${options})`;
 }
 
+function emitSyntheticDiscriminatorSerializer(name: string): string {
+  return `{ property: ${JSON.stringify(name)}, wireName: ${JSON.stringify(
+    name,
+  )}, serializer: JsonSerializers.identity() }`;
+}
+
+function emitDiscriminatedUnionSerializerBody(
+  ctx: EmitterCtx,
+  union: Union,
+  projection?: PayloadProjection,
+  encodingContext: ScalarEncodingContext = "value",
+): string {
+  const discriminated = resolveDiscriminatedUnion(ctx.program, union);
+  if (!discriminated) return identitySerializer(ctx, union, projection);
+
+  const entries: string[] = [];
+  let defaultVariant: string | undefined;
+  for (const variant of discriminatedVariants(discriminated)) {
+    const payloadTs = payloadTypeToTs(ctx, variant.type, projection);
+    const variantTs = discriminatedVariantToTs(discriminated, variant, payloadTs);
+    let serializer: string;
+
+    if (discriminated.options.envelope === "object") {
+      serializer = `JsonSerializers.object<${variantTs}>([${emitSyntheticDiscriminatorSerializer(
+        discriminated.options.discriminatorPropertyName,
+      )}, { property: ${JSON.stringify(
+        discriminated.options.envelopePropertyName,
+      )}, wireName: ${JSON.stringify(
+        discriminated.options.envelopePropertyName,
+      )}, serializer: ${emitRequiredSerializer(
+        ctx,
+        variant.type,
+        projection,
+        undefined,
+        encodingContext,
+      )} }])`;
+    } else if (variant.type.kind === "Model") {
+      serializer = emitObjectSerializer(ctx, variant.type, projection, encodingContext, {
+        name: discriminated.options.discriminatorPropertyName,
+        typeTs: variantTs,
+      });
+    } else {
+      // The preflight diagnostic suppresses output for this invalid inline
+      // shape. Keep a safe placeholder for callers that render despite errors.
+      serializer = `JsonSerializers.identity<${variantTs}>()`;
+    }
+
+    if (variant.tag === undefined) {
+      defaultVariant = serializer;
+    } else {
+      entries.push(`${tsObjectKey(variant.tag)}: ${serializer}`);
+    }
+  }
+
+  const options = defaultVariant ? `, { defaultVariant: ${defaultVariant} }` : "";
+  return `JsonSerializers.discriminated<${payloadTypeToTs(
+    ctx,
+    union,
+    projection,
+  )}>(${JSON.stringify(
+    discriminated.options.discriminatorPropertyName,
+  )}, { ${entries.join(", ")} }${options})`;
+}
+
 function identitySerializer(ctx: EmitterCtx, type: Type, projection?: PayloadProjection): string {
   return `JsonSerializers.identity<${payloadTypeToTs(ctx, type, projection)}>()`;
 }
 
 function getOrCreateSerializer(
   ctx: EmitterCtx,
-  model: Model,
+  type: Model | Union,
   projection?: PayloadProjection,
   encodingContext: ScalarEncodingContext = "value",
 ): JsonSerializerEmission {
   const state = getState(ctx);
-  let byProjection = state.serializers.get(model);
+  let byProjection = state.serializers.get(type);
   if (!byProjection) {
     byProjection = new Map();
-    state.serializers.set(model, byProjection);
+    state.serializers.set(type, byProjection);
   }
 
   const key = `${encodingContext}:${projection?.cacheKey ?? "raw"}`;
   const existing = byProjection.get(key);
   if (existing) return existing;
 
-  const typeName = getGeneratedTypeName(ctx, model, "Model");
+  const typeName = getGeneratedTypeName(ctx, type, type.kind === "Model" ? "Model" : "Union");
   const projectionName = projection ? tsIdentifier(projection.cacheKey, "payload") : "raw";
   const contextName = encodingContext === "value" ? "" : `_${encodingContext}`;
   const baseName = `_jsonSerializer_${typeName}_${projectionName}${contextName}`;
@@ -445,7 +557,7 @@ function getOrCreateSerializer(
 
   const serializer: JsonSerializerEmission = {
     name,
-    type: model,
+    type,
     projection,
     encodingContext,
   };

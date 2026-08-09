@@ -28,15 +28,6 @@ model Event {
 }
 `;
 
-const discriminatedSpec = `${header("DiscriminatedApi")}
-model Cat { meows: boolean; }
-model Dog { barks: boolean; }
-@discriminated union Pet { cat: Cat, dog: Dog }
-@route("/pets") interface Pets {
-  @post adopt(@body body: Pet): Cat;
-}
-`;
-
 const authSpec = `${header("AuthApi")}
 model Item { id: string; }
 @useAuth(BearerAuth)
@@ -103,14 +94,6 @@ describe("unsupported decorator diagnostics", () => {
       "unsupported-scalar-encoding",
       "createdAt",
       "encode-api",
-    ],
-    [
-      "@discriminated",
-      "diag-discriminated",
-      discriminatedSpec,
-      "ignored-discriminated",
-      "Pet",
-      "discriminated-api",
     ],
     ["@useAuth", "diag-auth", authSpec, "ignored-auth", "authentication", "auth-api"],
   ] as const) {

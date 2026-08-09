@@ -10,6 +10,7 @@ import type {
 import { isArrayModelType, isTemplateDeclaration } from "@typespec/compiler";
 import { SyntaxKind, type TypeReferenceNode } from "@typespec/compiler/ast";
 import { getGeneratedTypeName, hasGeneratedTypeNameCollision, type EmitterCtx } from "./ctx.js";
+import { discriminatedUnionBodyToTs, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { isHttpFileModel, isHttpPartModel } from "./http-models.js";
 import { isPureRecordModel } from "./model-indexer.js";
 import { getNamespaceFullName } from "./namespace-names.js";
@@ -207,8 +208,10 @@ function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
   ctx.emittedModels.add(union);
 
   const typeParams = templateParametersToTs(ctx, union);
-  const variants = [...union.variants.values()];
-  const variantTypes = variants.map((v) => unionVariantToTs(ctx, v)).join(" | ");
+  const discriminated = resolveDiscriminatedUnion(ctx.program, union);
+  const variantTypes = discriminated
+    ? discriminatedUnionBodyToTs(discriminated, ({ variant }) => unionVariantToTs(ctx, variant))
+    : [...union.variants.values()].map((variant) => unionVariantToTs(ctx, variant)).join(" | ");
 
   lines.push(
     `export type ${getGeneratedTypeName(ctx, union, "Union")}${typeParams} = ${variantTypes};`,
