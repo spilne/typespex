@@ -164,9 +164,15 @@ export function templateParametersToTs(ctx: EmitterCtx, type: TemplatedType): st
 }
 
 export function isTypeSpecNamespaceModel(model: Model): boolean {
-  // Built-in TypeSpec helper models are inlined; HTTP library models with their
-  // own namespaces are handled by explicit cases such as HttpPart and File.
-  return model.namespace?.name === "TypeSpec";
+  // TypeSpec library helper models are not emitted as declarations, so inline
+  // models from TypeSpec itself and nested library namespaces such as
+  // TypeSpec.Http. Explicit cases such as HttpPart and File are handled first.
+  let namespace = model.namespace;
+  while (namespace) {
+    if (namespace.name === "TypeSpec") return true;
+    namespace = namespace.namespace;
+  }
+  return false;
 }
 
 export function isTemplatedScalarReference(scalar: Scalar): boolean {

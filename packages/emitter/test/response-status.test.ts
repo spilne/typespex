@@ -223,7 +223,38 @@ model DynamicResponse {
 op ambiguous(): FixedOpenResponse | DynamicResponse;
 `;
 
+const canonicalNoContentSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "CanonicalNoContentApi" })
+namespace CanonicalNoContentApi;
+
+model User {
+  name: string;
+}
+
+@route("/users")
+@put
+op replace(@body user: User): NoContentResponse;
+`;
+
 describe("response status lowering", () => {
+  test("inlines canonical HTTP response models without importing missing declarations", () => {
+    const result = compileFixture("canonical-no-content", canonicalNoContentSpec);
+    const models = result.readFile("canonical-no-content-api", "models.ts");
+    const server = result.readFile("canonical-no-content-api", "server.ts");
+    const operations = result.readFile("canonical-no-content-api", "server-operations.ts");
+
+    expect(models).not.toContain("NoContentResponse");
+    expect(server).toContain(
+      "readonly replace: OperationHandler<User, Record<string, never>, Ctx>",
+    );
+    expect(operations).not.toContain("NoContentResponse");
+    expect(operations).toMatch(/status: 204,\s*kind: "empty"/);
+    result.typecheck("canonical-no-content-api");
+  });
+
   test("preserves body absence and drives dynamic statuses from handler results", async () => {
     const result = compileFixture("response-status", responseStatusSpec);
     const server = result.readFile("response-status-api", "server.ts");
