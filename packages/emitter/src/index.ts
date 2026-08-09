@@ -1,7 +1,6 @@
 import type { EmitContext } from "@typespec/compiler";
 import { emitFile, resolvePath } from "@typespec/compiler";
 import { getAllHttpServices, type HttpOperation, type HttpService } from "@typespec/http";
-import { format } from "oxfmt";
 import { $lib, type TypespexEmitterOptions } from "./lib.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import {
@@ -22,15 +21,11 @@ import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
 import { reportUnsupportedLiterals } from "./report-unsupported-literals.js";
-
-async function formatTs(fileName: string, content: string): Promise<string> {
-  try {
-    const result = await format(fileName, content);
-    return result.errors.length === 0 ? result.code : content;
-  } catch {
-    return content;
-  }
-}
+import {
+  formatGeneratedFiles,
+  GeneratedFileFormatError,
+  type FormattedGeneratedFile,
+} from "./format-generated.js";
 
 export { $lib } from "./lib.js";
 
@@ -85,8 +80,24 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
 
   if (program.hasError()) return;
 
-  for (const { fileName, outputDir, raw } of files) {
-    const content = await formatTs(fileName, raw);
+  let formattedFiles: FormattedGeneratedFile[];
+  try {
+    formattedFiles = await formatGeneratedFiles(files);
+  } catch (error) {
+    const file =
+      error instanceof GeneratedFileFormatError
+        ? resolvePath(error.outputDir, error.fileName)
+        : "unknown generated file";
+    const reason = error instanceof Error ? error.message : String(error);
+    $lib.reportDiagnostic(program, {
+      code: "generated-format-error",
+      format: { file, reason },
+      target: program.getGlobalNamespaceType(),
+    });
+    return;
+  }
+
+  for (const { fileName, outputDir, content } of formattedFiles) {
     await emitFile(program, {
       path: resolvePath(emitterOutputDir, outputDir, fileName),
       content,
