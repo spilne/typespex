@@ -79,7 +79,11 @@ export function createEmitterContext(
   fileNames: GeneratedFileNames = DEFAULT_FILE_NAMES,
 ): EmitterCtx {
   const serviceName = service.namespace.name || "Service";
-  const namedTypes = collectEmittedNamedTypes(program, service);
+  const namedTypes = collectEmittedNamedTypes(
+    program,
+    service,
+    options["omit-unreachable-types"] ?? false,
+  );
   return {
     program,
     service,

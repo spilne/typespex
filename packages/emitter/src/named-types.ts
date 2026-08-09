@@ -10,6 +10,7 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, isType, isValue } from "@typespec/compiler";
 import type { HttpService } from "@typespec/http";
+import { SyntaxKind } from "@typespec/compiler/ast";
 import { getHttpPartType, isHttpFileModel, isHttpPartModel } from "./http-models.js";
 import { getAdditionalPropertiesValues, isPureRecordModel } from "./model-indexer.js";
 import { getNamespaceFullName } from "./namespace-names.js";
@@ -24,14 +25,17 @@ export type EmittedNamedType = Model | Scalar | Enum | Union;
 export function collectEmittedNamedTypes(
   program: Program,
   service: HttpService,
+  omitUnreachableTypes = false,
 ): readonly EmittedNamedType[] {
   const declarations: EmittedNamedType[] = [];
   const included = new Set<string>();
   const expanded = new Set<string>();
 
-  collectNamespaceDeclarations(program, service.namespace, (type) => {
-    addDeclaration(type);
-  });
+  if (!omitUnreachableTypes) {
+    collectNamespaceDeclarations(program, service.namespace, (type) => {
+      addDeclaration(type);
+    });
+  }
 
   for (const declaration of [...declarations]) {
     expandDeclaration(declaration);
@@ -138,6 +142,8 @@ export function collectEmittedNamedTypes(
     if (expanded.has(key)) return;
     expanded.add(key);
 
+    visitTemplateParameterTypes(type);
+
     switch (type.kind) {
       case "Model":
         if (type.baseModel) visitType(type.baseModel);
@@ -156,6 +162,25 @@ export function collectEmittedNamedTypes(
         break;
       case "Enum":
         break;
+    }
+  }
+
+  function visitTemplateParameterTypes(type: EmittedNamedType): void {
+    if (type.kind === "Enum") return;
+    const node = type.node;
+    if (!node || !("templateParameters" in node)) return;
+
+    for (const parameter of node.templateParameters) {
+      if (parameter.constraint) {
+        const constraint =
+          parameter.constraint.kind === SyntaxKind.ValueOfExpression
+            ? parameter.constraint.target
+            : parameter.constraint;
+        visitType(program.checker.getTypeForNode(constraint));
+      }
+      if (parameter.default) {
+        visitType(program.checker.getTypeForNode(parameter.default));
+      }
     }
   }
 }
@@ -198,8 +223,12 @@ function shouldEmitNamedType(program: Program, type: EmittedNamedType): boolean 
 }
 
 function resolveTemplateDeclaration<T extends EmittedNamedType>(program: Program, type: T): T {
-  if (!("templateNode" in type) || !type.templateNode) return type;
-  const declaration = program.checker.getTypeForNode(type.templateNode);
+  if (!("templateMapper" in type) || !type.templateMapper) return type;
+  // Model and union instances expose templateNode, while scalar instances in
+  // supported TypeSpec releases retain only the declaration node.
+  const declarationNode = type.templateNode ?? type.node;
+  if (!declarationNode) return type;
+  const declaration = program.checker.getTypeForNode(declarationNode);
   return declaration.kind === type.kind ? (declaration as T) : type;
 }
 
