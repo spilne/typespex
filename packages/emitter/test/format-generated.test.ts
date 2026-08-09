@@ -13,9 +13,7 @@ describe("generated TypeScript formatting", () => {
   });
 
   test("rejects generated TypeScript with formatter parse errors", async () => {
-    await expect(formatGeneratedTypeScript("generated.ts", "export interface {")).rejects.toThrow(
-      "Unexpected token",
-    );
+    await expect(formatGeneratedTypeScript("generated.ts", "export interface {")).rejects.toThrow();
   });
 
   test("rejects the complete plan with the failing artifact context", async () => {

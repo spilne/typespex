@@ -86,7 +86,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
   } catch (error) {
     const file =
       error instanceof GeneratedFileFormatError
-        ? resolvePath(error.outputDir, error.fileName)
+        ? resolvePath(emitterOutputDir, error.outputDir, error.fileName)
         : "unknown generated file";
     const reason = error instanceof Error ? error.message : String(error);
     $lib.reportDiagnostic(program, {
