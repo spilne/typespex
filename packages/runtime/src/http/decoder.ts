@@ -400,7 +400,8 @@ function literalDecoder<A extends LiteralValue>(value: A): Decoder<A> {
     }
 
     if (typeof value === "bigint" && typeof input === "string") {
-      if (DECIMAL_INTEGER_PATTERN.test(input) && BigInt(input) === value) return succeed(value);
+      const canonical = String(value);
+      if (input === canonical || (value === 0n && input === "-0")) return succeed(value);
     }
 
     if (typeof value === "boolean" && typeof input === "string" && input === String(value)) {

@@ -235,6 +235,9 @@ describe("http decoder - combinators", () => {
     expect(Decoders.literal(9223372036854775807n).decode("9223372036854775807")).toEqual(
       Either.right(9223372036854775807n),
     );
+    expectLeftIssues(Decoders.literal(1n).decode("9".repeat(100_000)), [
+      { path: "", message: "Expected literal 1n." },
+    ]);
     expectLeftIssues(Decoders.literal("x").decode("y"), [
       { path: "", message: 'Expected literal "x".' },
     ]);

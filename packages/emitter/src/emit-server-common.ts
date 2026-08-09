@@ -1502,11 +1502,8 @@ function emitLiteralFieldBranches(
     }
     if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
     const numericValue = prop.type.kind === "Number" ? resolveNumericLiteral(prop.type) : undefined;
-    const valueKey = numericValue
-      ? numericValue.supported
-        ? numericValue.key
-        : `unsupported:${numericValue.exactValue}`
-      : `string:${prop.type.value}`;
+    if (numericValue && !numericValue.supported) return undefined;
+    const valueKey = numericValue ? numericValue.key : `string:${prop.type.value}`;
     if (values.has(valueKey)) return undefined;
     values.add(valueKey);
     const subject = subjectExpr(response);
