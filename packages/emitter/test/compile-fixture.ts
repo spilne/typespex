@@ -1,22 +1,57 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { setDefaultTimeout } from "bun:test";
+
+// Compiler-backed fixtures spawn TypeSpec and TypeScript subprocesses. Set the
+// timeout inside every worker importing this helper because Bun 1.3 does not
+// propagate bunfig's test timeout to parallel test workers consistently.
+setDefaultTimeout(30_000);
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
+const emitterSourceDir = resolve(repoRoot, "packages/emitter/src");
+const emitterBuildArtifact = resolve(repoRoot, "packages/emitter/dist/index.js");
+const emitterBuildStamp = resolve(repoRoot, "packages/emitter/dist/.test-build-complete");
+const emitterBuildLock = resolve(repoRoot, ".context/test-build-locks/emitter");
+const runtimeSourceDir = resolve(repoRoot, "packages/runtime/src");
+const runtimeBuildArtifact = resolve(repoRoot, "packages/runtime/dist/server.d.ts");
+const runtimeBuildStamp = resolve(repoRoot, "packages/runtime/dist/.test-build-complete");
+const runtimeBuildLock = resolve(repoRoot, ".context/test-build-locks/runtime");
+const sharedBuildInputs = [
+  resolve(repoRoot, "package.json"),
+  resolve(repoRoot, "bun.lock"),
+  resolve(repoRoot, "tsconfig.base.json"),
+];
+const emitterBuildInputs = [
+  emitterSourceDir,
+  resolve(repoRoot, "packages/emitter/package.json"),
+  resolve(repoRoot, "packages/emitter/tsconfig.json"),
+  ...sharedBuildInputs,
+];
+const runtimeBuildInputs = [
+  runtimeSourceDir,
+  resolve(repoRoot, "packages/runtime/package.json"),
+  resolve(repoRoot, "packages/runtime/tsconfig.json"),
+  ...sharedBuildInputs,
+];
 const runtimeDeclarationPaths = [
   resolve(repoRoot, "packages/runtime/dist/index.d.ts"),
   resolve(repoRoot, "packages/runtime/dist/server.d.ts"),
 ];
 
 const tempDirs: string[] = [];
+let emitterBuildReady = false;
 let runtimeDeclarationsReady = false;
 
 export function cleanupFixtures(): void {
@@ -26,16 +61,16 @@ export function cleanupFixtures(): void {
 }
 
 export function buildEmitter(): void {
-  const proc = Bun.spawnSync(
-    ["bun", "run", "--filter", "@typespex/emitter", "build"],
-    { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
+  if (emitterBuildReady) return;
+  ensureTestBuild(
+    "@typespex/emitter",
+    emitterBuildInputs,
+    emitterBuildArtifact,
+    emitterBuildStamp,
+    emitterBuildLock,
+    "Emitter",
   );
-
-  if (proc.exitCode !== 0) {
-    throw new Error(
-      `Emitter build failed\nstdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
-    );
-  }
+  emitterBuildReady = true;
 }
 
 export interface CompileResult {
@@ -198,10 +233,11 @@ function runCompiler(
         ),
       );
 
-      const proc = Bun.spawnSync(
-        ["bun", "run", "tsc", "--project", generatedTsconfig],
-        { cwd: join(repoRoot, "packages/emitter"), stdout: "pipe", stderr: "pipe" },
-      );
+      const proc = Bun.spawnSync(["bun", "run", "tsc", "--project", generatedTsconfig], {
+        cwd: join(repoRoot, "packages/emitter"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
       if (proc.exitCode !== 0) {
         throw new Error(
@@ -215,23 +251,19 @@ function runCompiler(
 }
 
 function ensureRuntimeDeclarationsExist(): void {
-  if (runtimeDeclarationsReady && runtimeDeclarationPaths.every((path) => existsSync(path))) {
-    return;
-  }
+  if (runtimeDeclarationsReady) return;
 
-  if (runtimeDeclarationPaths.some((path) => !existsSync(path))) {
-    const proc = Bun.spawnSync(
-      ["bun", "run", "--filter", "@typespex/runtime", "build"],
-      { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
-    );
-
-    if (proc.exitCode !== 0) {
-      throw new Error(
-        `Runtime build failed before generated TypeScript typecheck\n` +
-          `stdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
-      );
-    }
-  }
+  // Bun runs test files in parallel workers. Coordinate the declaration build
+  // across those workers so they neither stampede `tsc` nor observe partially
+  // rewritten output from another worker.
+  ensureTestBuild(
+    "@typespex/runtime",
+    runtimeBuildInputs,
+    runtimeBuildArtifact,
+    runtimeBuildStamp,
+    runtimeBuildLock,
+    "Runtime",
+  );
 
   const missing = runtimeDeclarationPaths.filter((path) => !existsSync(path));
   if (missing.length > 0) {
@@ -242,4 +274,190 @@ function ensureRuntimeDeclarationsExist(): void {
   }
 
   runtimeDeclarationsReady = true;
+}
+
+const BUILD_LOCK_WAIT_MS = 25;
+const BUILD_LOCK_TIMEOUT_MS = 15_000;
+const INCOMPLETE_LOCK_STALE_MS = 2_000;
+const OWNED_LOCK_STALE_MS = 60_000;
+
+interface BuildLockOwner {
+  readonly pid: number;
+  readonly token: string;
+  readonly createdAt: number;
+}
+
+function ensureTestBuild(
+  packageName: string,
+  inputs: readonly string[],
+  artifact: string,
+  stamp: string,
+  lockDir: string,
+  label: string,
+): void {
+  if (isBuildFresh(inputs, artifact, stamp)) return;
+
+  mkdirSync(resolve(lockDir, ".."), { recursive: true });
+  const deadline = Date.now() + BUILD_LOCK_TIMEOUT_MS;
+  const owner: BuildLockOwner = {
+    pid: process.pid,
+    token: randomUUID(),
+    createdAt: Date.now(),
+  };
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      writeFileSync(resolve(lockDir, "owner.json"), JSON.stringify(owner));
+      break;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      if (isBuildFresh(inputs, artifact, stamp)) return;
+      reclaimAbandonedBuildLock(lockDir);
+      if (Date.now() >= deadline) {
+        throw new Error(`${label} test build lock timed out: ${lockDir}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, BUILD_LOCK_WAIT_MS);
+    }
+  }
+
+  try {
+    // Another worker may have completed the build immediately before this
+    // worker acquired the lock.
+    if (isBuildFresh(inputs, artifact, stamp)) return;
+
+    for (;;) {
+      const before = fingerprintBuildInputs(inputs);
+      rmSync(artifact, { force: true });
+      rmSync(stamp, { force: true });
+
+      const proc = Bun.spawnSync(["bun", "run", "--filter", packageName, "build"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (proc.exitCode !== 0) {
+        throw new Error(
+          `${label} build failed\nstdout:\n${proc.stdout.toString()}\nstderr:\n${proc.stderr.toString()}`,
+        );
+      }
+      if (!existsSync(artifact)) {
+        throw new Error(`${label} build did not produce its expected artifact: ${artifact}`);
+      }
+
+      const after = fingerprintBuildInputs(inputs);
+      if (before !== after) continue;
+      writeFileSync(stamp, after);
+      break;
+    }
+  } finally {
+    releaseBuildLock(lockDir, owner.token);
+  }
+}
+
+function isBuildFresh(inputs: readonly string[], artifact: string, stamp: string): boolean {
+  try {
+    if (!existsSync(artifact) || !existsSync(stamp)) return false;
+    return readFileSync(stamp, "utf8") === fingerprintBuildInputs(inputs);
+  } catch {
+    // Another worker may be replacing an artifact or stamp while this worker
+    // checks it. The lock path will decide which worker rebuilds.
+    return false;
+  }
+}
+
+function fingerprintBuildInputs(inputs: readonly string[]): string {
+  const hash = createHash("sha256");
+  for (const input of [...inputs].sort()) {
+    updateFingerprint(hash, input);
+  }
+  return hash.digest("hex");
+}
+
+function updateFingerprint(hash: ReturnType<typeof createHash>, path: string): void {
+  const entry = statSync(path);
+  hash.update(path);
+  hash.update("\0");
+  if (!entry.isDirectory()) {
+    hash.update(readFileSync(path));
+    hash.update("\0");
+    return;
+  }
+
+  for (const child of readdirSync(path).sort()) {
+    updateFingerprint(hash, join(path, child));
+  }
+}
+
+function reclaimAbandonedBuildLock(lockDir: string): void {
+  if (!isBuildLockAbandoned(lockDir)) return;
+
+  // Only one waiter performs reclamation. Re-read under the guard so an
+  // observed lock cannot be confused with a later owner's lock.
+  const reclaimGuard = `${lockDir}.reclaim`;
+  try {
+    mkdirSync(reclaimGuard);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) return;
+    throw error;
+  }
+
+  try {
+    if (isBuildLockAbandoned(lockDir)) {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(reclaimGuard, { recursive: true, force: true });
+  }
+}
+
+function isBuildLockAbandoned(lockDir: string): boolean {
+  const owner = readBuildLockOwner(lockDir);
+  if (owner) {
+    return !isProcessAlive(owner.pid) || Date.now() - owner.createdAt >= OWNED_LOCK_STALE_MS;
+  }
+  try {
+    return Date.now() - statSync(lockDir).mtimeMs >= INCOMPLETE_LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function readBuildLockOwner(lockDir: string): BuildLockOwner | undefined {
+  try {
+    const value = JSON.parse(
+      readFileSync(resolve(lockDir, "owner.json"), "utf8"),
+    ) as Partial<BuildLockOwner>;
+    if (
+      typeof value.pid !== "number" ||
+      typeof value.token !== "string" ||
+      typeof value.createdAt !== "number"
+    ) {
+      return undefined;
+    }
+    return value as BuildLockOwner;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ESRCH"
+    );
+  }
+}
+
+function releaseBuildLock(lockDir: string, token: string): void {
+  if (readBuildLockOwner(lockDir)?.token !== token) return;
+  rmSync(lockDir, { recursive: true, force: true });
+}
+
+function isAlreadyExistsError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
 }

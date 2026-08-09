@@ -10,7 +10,6 @@ import type {
 } from "@typespec/compiler";
 import {
   isArrayModelType,
-  isRecordModelType,
   isTemplateDeclaration,
   isTemplateInstance,
   isType,
@@ -25,6 +24,11 @@ import {
   type EmitterCtx,
 } from "./ctx.js";
 import { getHttpPartType, isHttpFileModel } from "./http-models.js";
+import {
+  getAdditionalPropertiesValues,
+  isNeverAdditionalProperties,
+  isPureRecordModel,
+} from "./model-indexer.js";
 import { scalarToTs } from "./scalar-map.js";
 import { isEntityLike } from "./type-guards.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
@@ -58,21 +62,13 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       ) {
         return arrayTypeToTs(typeToTs(ctx, firstTemplateArg));
       }
-      if (
-        namespace === "TypeSpec" &&
-        type.name === "Record" &&
-        templateArgs.length === 1 &&
-        isType(firstTemplateArg)
-      ) {
-        return `Record<string, ${typeToTs(ctx, firstTemplateArg)}>`;
-      }
       if (isArrayModelType(ctx.program, type)) {
         const elementType = type.indexer!.value;
         return arrayTypeToTs(typeToTs(ctx, elementType));
       }
-      if (isRecordModelType(ctx.program, type)) {
-        const valueType = type.indexer!.value;
-        return `Record<string, ${typeToTs(ctx, valueType)}>`;
+      if (isPureRecordModel(type)) {
+        const valueTypes = getAdditionalPropertiesValues(type).map((value) => typeToTs(ctx, value));
+        return `Record<string, ${valueTypes.join(" | ")}>`;
       }
       // Unwrap the canonical TypeSpec.Http HttpPart<T> to its payload type.
       const httpPartType = getHttpPartType(ctx.program, type);
@@ -91,7 +87,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
     }
 
     case "Union": {
-      if (shouldReferenceUnion(type) || hasGeneratedTypeNameCollision(ctx, type)) {
+      if (isNamedUnionReference(type) || hasGeneratedTypeNameCollision(ctx, type)) {
         return templatedNamedTypeToTs(ctx, type, "Union");
       }
       const variants = [...type.variants.values()];
@@ -181,8 +177,12 @@ export function isTemplatedScalarReference(scalar: Scalar): boolean {
   return shouldReferenceScalar(scalar);
 }
 
+export function isNamedUnionReference(union: Union): boolean {
+  return Boolean(union.name);
+}
+
 export function isTemplatedUnionReference(union: Union): boolean {
-  return shouldReferenceUnion(union);
+  return Boolean(union.name && (isTemplateDeclaration(union) || isTemplateInstance(union)));
 }
 
 function modelToTs(ctx: EmitterCtx, model: Model): string {
@@ -195,8 +195,7 @@ function templatedNamedTypeToTs(
   fallback: string,
 ): string {
   const name = getGeneratedTypeName(ctx, type, fallback);
-  if (!isTemplateInstance(type)) return name;
-  const args = type.templateMapper.args.map((arg) => templateArgumentToTs(ctx, arg));
+  const args = type.templateMapper?.args.map((arg) => templateArgumentToTs(ctx, arg)) ?? [];
   return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
 }
 
@@ -206,10 +205,6 @@ function shouldReferenceScalar(scalar: Scalar): boolean {
     scalar.namespace?.name !== "TypeSpec" &&
     (isTemplateDeclaration(scalar) || isTemplateInstance(scalar)),
   );
-}
-
-function shouldReferenceUnion(union: Union): boolean {
-  return Boolean(union.name && (isTemplateDeclaration(union) || isTemplateInstance(union)));
 }
 
 function getTemplateParameters(type: TemplatedType): readonly TemplateParameterDeclaration[] {
@@ -300,5 +295,32 @@ function emitInlineModel(ctx: EmitterCtx, model: Model): string {
       optional: prop.optional,
     });
   });
+  const indexer = modelAdditionalPropertiesToTs(ctx, model);
+  if (indexer) props.push(indexer);
   return `{ ${props.join("; ")} }`;
+}
+
+/**
+ * Emit the index signature for a model that combines declared fields with
+ * explicit additional properties. TypeScript requires every named property to
+ * be assignable to the index signature, so widen its value with those fields.
+ */
+export function modelAdditionalPropertiesToTs(ctx: EmitterCtx, model: Model): string | undefined {
+  const additionalTypes = getAdditionalPropertiesValues(model);
+  if (
+    additionalTypes.length === 0 ||
+    isPureRecordModel(model) ||
+    isNeverAdditionalProperties(model)
+  ) {
+    return undefined;
+  }
+
+  const valueTypes = new Set<string>(
+    additionalTypes.map((additionalType) => typeToTs(ctx, additionalType)),
+  );
+  for (const property of walkPropertiesInherited(model)) {
+    valueTypes.add(typeToTs(ctx, property.type));
+    if (property.optional) valueTypes.add("undefined");
+  }
+  return `[key: string]: ${[...valueTypes].join(" | ")}`;
 }

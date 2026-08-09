@@ -1,4 +1,4 @@
-import type { HttpOperation } from "@typespec/http";
+import type { HttpOperation, HttpOperationMultipartBody, HttpOperationPart } from "@typespec/http";
 import type { Enum, Model, ModelProperty, Numeric, Scalar, Type, Union } from "@typespec/compiler";
 import {
   getDiscriminator,
@@ -12,13 +12,34 @@ import {
   getMinValueExclusiveAsNumeric,
   getPatternData,
   isArrayModelType,
-  isRecordModelType,
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
-import { buildInputType, shouldFlattenBodyType } from "./emit-server-common.js";
+import { buildInputType } from "./emit-server-common.js";
+import { propertiesShareSource } from "./http-models.js";
+import {
+  getAdditionalPropertiesValue,
+  isNeverAdditionalProperties,
+  isPureRecordModel,
+} from "./model-indexer.js";
+import { multipartBodyTypeToTs } from "./multipart-input.js";
+import {
+  getPayloadCollection,
+  getRequestBodyProjection,
+  payloadItemProjection,
+  payloadModelProperties,
+  payloadProjectionChangesType,
+  payloadPropertyOptional,
+  payloadTypeToTs,
+  type PayloadProjection,
+} from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
+import {
+  getRequestInputPlan,
+  shouldFlattenBodyType,
+  type RequestBodyInputPlan,
+} from "./request-input-plan.js";
 import { typeToTs } from "./type-reference.js";
 import {
   isTsIdentifier,
@@ -30,26 +51,26 @@ import {
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
-/** Tracks hoisted lazy decoders for recursive models during a single emitDecoder call. */
+/** Tracks hoisted lazy decoders for recursive named types during a single emitDecoder call. */
 interface DecoderEmitContext {
   readonly scopeName: string;
-  /** mode-qualified generated model name → hoisted lazy decoder. */
-  readonly lazyDecoders: Map<string, LazyDecoderEmission>;
+  /** Semantic TypeSpec identity → mode/projection → hoisted lazy decoder. */
+  readonly lazyDecoders: Map<Type, Map<string, LazyDecoderEmission>>;
   /** Tracks which lazy decoders have been fully emitted (not just referenced). */
-  readonly emittedLazy: Set<string>;
+  readonly emittedLazy: Set<LazyDecoderEmission>;
   /** Cumulative declarations returned by every hoisting pass. */
   readonly hoistedDecoderLines: string[];
 }
 
 interface LazyDecoderEmission {
-  readonly model: Model;
-  readonly modelName: string;
+  readonly type: Model | Union;
   readonly mode: DecoderMode;
+  readonly projection?: PayloadProjection;
   readonly varName: string;
 }
 
-function createDecoderEmitContext(operationName: string): DecoderEmitContext {
-  const identifier = tsIdentifier(operationName, "Operation");
+function createDecoderEmitContext(inputsRef: string, operationName: string): DecoderEmitContext {
+  const identifier = tsIdentifier(`${inputsRef}_${operationName}`, "Operation");
   return {
     scopeName: `${identifier[0]!.toUpperCase()}${identifier.slice(1)}`,
     lazyDecoders: new Map(),
@@ -101,7 +122,7 @@ export function emitDecoder(
   inputsRef: string,
   opName: string,
 ): DecoderEmission {
-  const dec = createDecoderEmitContext(opName);
+  const dec = createDecoderEmitContext(inputsRef, opName);
   const pathParams = op.parameters.parameters.filter((p) => p.type === "path");
   const queryParams = op.parameters.parameters.filter((p) => p.type === "query");
   const headerParams = op.parameters.parameters.filter((p) => p.type === "header");
@@ -199,7 +220,7 @@ export function emitDecoder(
     };
   }
 
-  const body = hasBody ? analyzeBody(op) : undefined;
+  const body = hasBody ? analyzeBody(ctx, op) : undefined;
   const bodyOptionsArg = body ? emitBodyOptionsArg(body) : "";
 
   // Case 3: body only — async Either
@@ -220,10 +241,11 @@ export function emitDecoder(
   const bodyRef = tsPropertyAccess(inputsRef, `${opName}Body`);
   const bodyInputType = buildBodyInputType(ctx, op);
   const requestType = buildRequestOnlyType(ctx, op);
+  const bodyPlan = getRequestInputPlan(ctx, op).body;
   return {
     inputEntries: [
       emitRequestDecoderEntry(`${opName}Request`, requestEntries),
-      emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op, body!, { wrapNonFlattenedBody: true }),
+      emitBodyDecoderEntry(`${opName}Body`, ctx, dec, op, body!, bodyPlan),
     ],
     decodeExpression: `decodeRequestInputAndBody<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams${bodyOptionsArg})`,
     needsPathParams: true,
@@ -239,6 +261,11 @@ function emitBodyOptionsArg(emission: BodyEmission): string {
     const literal = emission.contentTypes.map((ct) => JSON.stringify(ct)).join(", ");
     options.push(`contentTypes: [${literal}]`);
   }
+  if (emission.allowMissingContentType) options.push("allowMissingContentType: true");
+  if (emission.fileNameProperty && emission.fileBodyProperty) {
+    options.push(`fileNameProperty: ${JSON.stringify(emission.fileNameProperty)}`);
+    options.push(`fileBodyProperty: ${JSON.stringify(emission.fileBodyProperty)}`);
+  }
   if (emission.optional) options.push("optional: true");
   return options.length > 0 ? `, { ${options.join(", ")} }` : "";
 }
@@ -250,6 +277,9 @@ function isArrayInputType(ctx: EmitterCtx, type: Type): type is Model {
 interface BodyEmission {
   readonly decoderKinds: readonly BodyMediaKind[];
   readonly contentTypes: readonly string[];
+  readonly allowMissingContentType?: boolean;
+  readonly fileNameProperty?: string;
+  readonly fileBodyProperty?: string;
   readonly optional: boolean;
 }
 
@@ -257,7 +287,7 @@ interface BodyEmission {
  * Resolves the body decode function and declared media types in one pass.
  * Multipart bodies default to `["multipart/form-data"]` when no list is set.
  */
-function analyzeBody(op: HttpOperation): BodyEmission {
+function analyzeBody(ctx: EmitterCtx, op: HttpOperation): BodyEmission {
   const body = op.parameters.body;
   if (!body) return { decoderKinds: ["json"], contentTypes: [], optional: false };
 
@@ -265,6 +295,22 @@ function analyzeBody(op: HttpOperation): BodyEmission {
     "contentTypes" in body && Array.isArray(body.contentTypes)
       ? body.contentTypes.filter((ct): ct is string => typeof ct === "string" && ct.length > 0)
       : [];
+
+  if ("bodyKind" in body && body.bodyKind === "file") {
+    const filenameParameter = op.parameters.parameters.find((parameter) =>
+      propertiesShareSource(parameter.param, body.filename),
+    );
+    const bodyPlan = getRequestInputPlan(ctx, op).body;
+    const fileBodyProperty = bodyPlan?.placement === "wrapped" ? bodyPlan.propertyName : undefined;
+    return {
+      decoderKinds: ["file"],
+      contentTypes: declared,
+      allowMissingContentType: body.contentTypeProperty.optional,
+      fileNameProperty: filenameParameter?.param.name,
+      fileBodyProperty: filenameParameter ? fileBodyProperty : undefined,
+      optional: body.property?.optional === true,
+    };
+  }
 
   if ("bodyKind" in body && body.bodyKind === "multipart") {
     return {
@@ -315,15 +361,15 @@ function requestDecoderLocalNames(
 ): string[] {
   const used = new Set<string>();
   return entries.map((entry, index) => {
-    const candidate = isTsIdentifier(entry.name) ? entry.name : `v${index}`;
-    if (!used.has(candidate)) {
-      used.add(candidate);
-      return candidate;
+    const base = isTsIdentifier(entry.name) ? entry.name : `v${index}`;
+    let candidate = base;
+    let suffix = 2;
+    while (used.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
     }
-
-    const fallback = `v${index}`;
-    used.add(fallback);
-    return fallback;
+    used.add(candidate);
+    return candidate;
   });
 }
 
@@ -338,17 +384,15 @@ function emitBodyDecoderEntry(
   dec: DecoderEmitContext,
   op: HttpOperation,
   emission: BodyEmission,
-  options: { readonly wrapNonFlattenedBody?: boolean } = {},
+  plan?: RequestBodyInputPlan,
 ): InputDecoderEntry {
   const lines: string[] = [];
   lines.push(`  ${tsObjectKey(name)}: {`);
   for (const kind of emission.decoderKinds) {
     const decoderExpr = emitBodyDecoderExpression(ctx, dec, op, kind);
     const expr =
-      options.wrapNonFlattenedBody &&
-      !isMultipartBody(op) &&
-      !shouldFlattenBodyType(ctx, op.parameters.body!.type)
-        ? `${decoderExpr}.map((body) => ({ body }))`
+      plan?.placement === "wrapped"
+        ? `${decoderExpr}.map((body) => ({ ${emitObjectAssignment(plan.propertyName, "body")} }))`
         : decoderExpr;
     lines.push(`    ${kind}: ${expr},`);
   }
@@ -363,50 +407,125 @@ function emitBodyDecoderExpression(
   kind: BodyMediaKind,
 ): string {
   const body = op.parameters.body!;
-  if (kind === "multipart" && isMultipartBody(op)) {
-    return emitMultipartDecoderExpression(ctx, dec, body as any);
+  if (kind === "file" && body.bodyKind === "file") {
+    return "Decoders.file";
+  }
+  if (kind === "multipart" && body.bodyKind === "multipart") {
+    return emitMultipartDecoderExpression(ctx, dec, body);
   }
 
   const mode: DecoderMode =
-    kind === "form" || kind === "multipart" ? "form" : kind === "text" ? "text" : kind;
-  return emitDecoderExpression(ctx, dec, body.type, mode);
-}
-
-function isMultipartBody(op: HttpOperation): boolean {
-  const body = op.parameters.body;
-  return body != null && "bodyKind" in body && body.bodyKind === "multipart" && "parts" in body;
+    kind === "form" || kind === "multipart"
+      ? "form"
+      : kind === "text"
+        ? "text"
+        : kind === "file"
+          ? "binary"
+          : kind;
+  return emitDecoderExpression(
+    ctx,
+    dec,
+    body.type,
+    mode,
+    new Set(),
+    undefined,
+    getEffectiveRequestBodyProjection(ctx, op),
+  );
 }
 
 function emitMultipartDecoderExpression(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
-  body: {
-    parts: ReadonlyArray<{
-      name?: string;
-      body: { bodyKind: string; type: Type };
-      optional: boolean;
-      multi: boolean;
-    }>;
-  },
+  body: HttpOperationMultipartBody,
 ): string {
-  const fields: string[] = [];
+  const bodyType = multipartBodyTypeToTs(ctx, body);
+  const combinator =
+    body.multipartKind === "tuple" ? "Decoders.multipartTuple" : "Decoders.multipartFormData";
+  const descriptors = body.parts.map((part) =>
+    emitMultipartPartDescriptor(ctx, dec, part, body.multipartKind),
+  );
+  return `${combinator}<${bodyType}>([${descriptors.join(", ")}])`;
+}
 
-  for (const part of body.parts) {
-    if (!part.name) continue;
-    const isFile = part.body.bodyKind === "file";
-    let partDecoder = isFile
-      ? "Decoders.file"
-      : emitDecoderExpression(ctx, dec, part.body.type, "text");
-    if (part.multi) {
-      partDecoder = `Decoders.oneOrMany(${partDecoder})`;
-    }
-    if (part.optional) {
-      partDecoder = `Decoders.optional(${partDecoder})`;
-    }
-    fields.push(`${tsObjectKey(part.name)}: ${partDecoder}`);
+type MultipartPartKind = "text" | "binary" | "json" | "file";
+
+function emitMultipartPartDescriptor(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  part: HttpOperationPart,
+  multipartKind: HttpOperationMultipartBody["multipartKind"],
+): string {
+  const kinds = multipartPartKinds(part);
+  const fields: string[] = [];
+  if (kinds.length === 1) {
+    const [kind] = kinds;
+    fields.push(`decoder: ${emitMultipartPartDecoder(ctx, dec, part, kind)}`);
+    fields.push(`kind: ${JSON.stringify(kind)}`);
+  } else {
+    const decoders = kinds.map(
+      (kind) => `${kind}: ${emitMultipartPartDecoder(ctx, dec, part, kind)}`,
+    );
+    fields.push(`decoders: { ${decoders.join(", ")} }`);
   }
 
-  return `Decoders.object({ ${fields.join(", ")} })`;
+  if (part.body.contentTypes.length > 0) {
+    fields.push(`contentTypes: ${JSON.stringify(part.body.contentTypes)}`);
+  }
+  if (part.body.contentTypeProperty?.optional === false) {
+    fields.push("requireContentType: true");
+  }
+  if (part.optional) fields.push("optional: true");
+  if (part.multi) fields.push("multi: true");
+
+  if (part.name !== undefined) {
+    fields.push(`name: ${JSON.stringify(part.name)}`);
+  }
+  if (multipartKind === "model" && part.partKind === "model") {
+    fields.push(`property: ${JSON.stringify(part.property.name)}`);
+  }
+
+  if (part.body.bodyKind === "file") {
+    const fileName = part.filename;
+    const fileNameHeader = fileName
+      ? part.headers.find((header) => propertiesShareSource(header.property, fileName))
+      : undefined;
+    if (fileNameHeader) {
+      fields.push(`fileNameHeader: ${JSON.stringify(fileNameHeader.options.name)}`);
+    }
+    if (fileName?.optional === false) {
+      fields.push("requireFileName: true");
+    }
+  }
+
+  return `{ ${fields.join(", ")} }`;
+}
+
+function emitMultipartPartDecoder(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  part: HttpOperationPart,
+  kind: MultipartPartKind,
+): string {
+  return kind === "file"
+    ? "Decoders.file"
+    : emitDecoderExpression(ctx, dec, part.body.type, kind, new Set());
+}
+
+function multipartPartKinds(part: HttpOperationPart): readonly MultipartPartKind[] {
+  if (part.body.bodyKind === "file") return ["file"];
+
+  const kinds = getBodyMediaKinds(part.body.contentTypes);
+  const supported: MultipartPartKind[] = [];
+  for (const kind of kinds) {
+    if ((kind === "json" || kind === "text" || kind === "binary") && !supported.includes(kind)) {
+      supported.push(kind);
+    }
+  }
+  if (supported.length > 0) return supported;
+  // TypeSpec normally resolves a default media type for every part. An absent
+  // list is the sole safe text default; unsupported resolved kinds are
+  // diagnosed during request preflight and intentionally stay empty here.
+  return part.body.contentTypes.length === 0 ? ["text"] : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -416,45 +535,41 @@ function emitMultipartDecoderExpression(
 function buildBodyInputType(ctx: EmitterCtx, op: HttpOperation): string {
   const body = op.parameters.body;
   if (!body) return "Record<string, never>";
+  const plan = getRequestInputPlan(ctx, op).body;
   if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
-    return buildMultipartBodyType(ctx, body as any, body.property?.optional === true);
+    const bodyType = multipartBodyTypeToTs(
+      ctx,
+      body,
+      plan?.placement === "wrapped" ? false : body.property?.optional === true,
+    );
+    return plan?.placement === "wrapped"
+      ? `{ ${tsPropertyDeclaration(plan.propertyName!, bodyType)} }`
+      : bodyType;
   }
-  return shouldFlattenBodyType(ctx, body.type)
-    ? typeToTs(ctx, body.type)
-    : `{ body: ${typeToTs(ctx, body.type)} }`;
+  const projection = getEffectiveRequestBodyProjection(ctx, op);
+  const bodyType = payloadTypeToTs(ctx, body.type, projection);
+  return plan?.placement === "wrapped"
+    ? `{ ${tsPropertyDeclaration(plan.propertyName, bodyType)} }`
+    : bodyType;
 }
 
 function buildBodyOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
   const body = op.parameters.body;
   if (!body) return "Record<string, never>";
-  if (isMultipartBody(op)) return buildMultipartBodyType(ctx, body as any, false);
-  return typeToTs(ctx, body.type);
+  if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
+    return multipartBodyTypeToTs(ctx, body);
+  }
+  return payloadTypeToTs(ctx, body.type, getEffectiveRequestBodyProjection(ctx, op));
 }
 
-function buildMultipartBodyType(
+function getEffectiveRequestBodyProjection(
   ctx: EmitterCtx,
-  body: {
-    parts: ReadonlyArray<{
-      name?: string;
-      body: { type: Type };
-      optional: boolean;
-      multi: boolean;
-    }>;
-  },
-  allOptional: boolean,
-): string {
-  const parts: string[] = [];
-  for (const part of body.parts) {
-    if (!part.name) continue;
-    let tsType = typeToTs(ctx, part.body.type);
-    if (part.multi) tsType = `${tsType}[]`;
-    parts.push(
-      tsPropertyDeclaration(part.name, tsType, {
-        optional: allOptional || part.optional,
-      }),
-    );
-  }
-  return parts.length > 0 ? `{ ${parts.join("; ")} }` : "Record<string, never>";
+  op: HttpOperation,
+): PayloadProjection | undefined {
+  const body = op.parameters.body;
+  if (!body) return undefined;
+  const projection = getRequestBodyProjection(ctx, op);
+  return payloadProjectionChangesType(ctx, body.type, projection) ? projection : undefined;
 }
 
 function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
@@ -475,8 +590,9 @@ function emitDecoderExpression(
   dec: DecoderEmitContext,
   type: Type,
   mode: DecoderMode,
-  seenModels: ReadonlySet<string> = new Set(),
+  seenTypes: ReadonlySet<Type> = new Set(),
   target?: ModelProperty,
+  projection?: PayloadProjection,
 ): string {
   let expression: string;
   switch (type.kind) {
@@ -485,21 +601,38 @@ function emitDecoderExpression(
       break;
 
     case "Model":
-      if (isArrayModelType(ctx.program, type)) {
+      const collection = getPayloadCollection(ctx, type);
+      if (collection?.kind === "array") {
         const arrayFn =
           mode === "json" || mode === "binary" ? "Decoders.strictArray" : "Decoders.array";
-        expression = `${arrayFn}(${emitDecoderExpression(ctx, dec, type.indexer!.value, mode, seenModels)})`;
+        expression = `${arrayFn}(${emitDecoderExpression(
+          ctx,
+          dec,
+          collection.value,
+          mode,
+          seenTypes,
+          undefined,
+          payloadItemProjection(projection),
+        )})`;
         break;
       }
-      if (isRecordModelType(ctx.program, type)) {
-        expression = `Decoders.record(${emitDecoderExpression(ctx, dec, type.indexer!.value, mode, seenModels)})`;
+      if (collection?.kind === "record") {
+        expression = `Decoders.record(${emitDecoderExpression(
+          ctx,
+          dec,
+          collection.value,
+          mode,
+          seenTypes,
+          undefined,
+          payloadItemProjection(projection),
+        )})`;
         break;
       }
-      expression = emitObjectDecoder(ctx, dec, type, mode, seenModels);
+      expression = emitObjectDecoder(ctx, dec, type, mode, seenTypes, projection);
       break;
 
     case "Union":
-      expression = emitUnionDecoder(ctx, dec, type, mode, seenModels);
+      expression = emitUnionDecoder(ctx, dec, type, mode, seenTypes, projection);
       break;
 
     case "Enum":
@@ -531,6 +664,9 @@ function emitDecoderExpression(
           expression = `${lit}(null)`;
           break;
         }
+        case "never":
+          expression = "Decoders.never";
+          break;
         case "unknown":
           expression = "Decoders.unknown";
           break;
@@ -541,17 +677,35 @@ function emitDecoderExpression(
       break;
 
     case "Tuple":
-      expression = `Decoders.tuple<${typeToTs(ctx, type)}>([${type.values
-        .map((value) => emitDecoderExpression(ctx, dec, value, mode, seenModels))
+      expression = `Decoders.tuple<${payloadTypeToTs(ctx, type, projection)}>([${type.values
+        .map((value) =>
+          emitDecoderExpression(
+            ctx,
+            dec,
+            value,
+            mode,
+            seenTypes,
+            undefined,
+            payloadItemProjection(projection),
+          ),
+        )
         .join(", ")}])`;
       break;
 
     case "UnionVariant":
-      expression = emitDecoderExpression(ctx, dec, type.type, mode, seenModels);
+      expression = emitDecoderExpression(
+        ctx,
+        dec,
+        type.type,
+        mode,
+        seenTypes,
+        undefined,
+        projection,
+      );
       break;
 
     case "ModelProperty":
-      return emitDecoderExpression(ctx, dec, type.type, mode, seenModels, type);
+      return emitDecoderExpression(ctx, dec, type.type, mode, seenTypes, type, projection);
 
     default:
       expression = "Decoders.unknown";
@@ -631,37 +785,81 @@ function emitObjectDecoder(
   dec: DecoderEmitContext,
   model: Model,
   mode: DecoderMode,
-  seenModels: ReadonlySet<string>,
+  seenTypes: ReadonlySet<Type>,
+  projection?: PayloadProjection,
 ): string {
   if (mode === "text") return "Decoders.unknown";
 
-  const modelName = model.name ? getGeneratedTypeName(ctx, model, "Model") : undefined;
+  const typeName = model.name ? getGeneratedTypeName(ctx, model, "Model") : undefined;
 
-  if (modelName && seenModels.has(modelName)) {
-    const key = `${mode}:${modelName}`;
-    if (!dec.lazyDecoders.has(key)) {
-      const modeSuffix = mode === "json" ? "" : `${mode[0]!.toUpperCase()}${mode.slice(1)}`;
-      dec.lazyDecoders.set(key, {
-        model,
-        modelName,
-        mode,
-        varName: `_lazy${dec.scopeName.length}_${dec.scopeName}_${modelName.length}_${modelName}_${modeSuffix || "json"}`,
-      });
-    }
-    return dec.lazyDecoders.get(key)!.varName;
+  if (typeName && seenTypes.has(model)) {
+    return getOrCreateLazyDecoder(dec, model, typeName, mode, projection).varName;
   }
 
-  const nextSeen = modelName ? new Set([...seenModels, modelName]) : seenModels;
+  const nextSeen = typeName ? new Set([...seenTypes, model]) : seenTypes;
+  return emitObjectDecoderBody(ctx, dec, model, mode, nextSeen, projection);
+}
 
-  const fields = modelDecoderProperties(model)
+function emitObjectDecoderBody(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  model: Model,
+  mode: DecoderMode,
+  seenTypes: ReadonlySet<Type>,
+  projection?: PayloadProjection,
+): string {
+  const properties = payloadModelProperties(model, projection);
+  const fields = properties
     .map((prop) => {
-      const propertyDecoder = emitDecoderExpression(ctx, dec, prop.type, mode, nextSeen, prop);
-      const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
+      const propertyDecoder = emitDecoderExpression(
+        ctx,
+        dec,
+        prop.type,
+        mode,
+        seenTypes,
+        prop,
+        projection,
+      );
+      const expr = payloadPropertyOptional(prop, projection)
+        ? `Decoders.optional(${propertyDecoder})`
+        : propertyDecoder;
       return `${tsObjectKey(prop.name)}: ${expr}`;
     })
     .join(", ");
 
-  return `Decoders.object<${typeToTs(ctx, model)}>({ ${fields} })`;
+  const options: string[] = [];
+  const additionalProperties = getAdditionalPropertiesValue(model);
+  if (additionalProperties === undefined) {
+    // TypeSpec/OpenAPI object schemas are open unless explicitly sealed. The
+    // typed handler contract still contains only declared properties, so
+    // unmodeled values are accepted and intentionally omitted.
+    options.push("allowUnknown: true");
+  } else if (!isNeverAdditionalProperties(model)) {
+    options.push(
+      `additionalProperties: ${emitDecoderExpression(
+        ctx,
+        dec,
+        additionalProperties,
+        mode,
+        seenTypes,
+        undefined,
+        payloadItemProjection(projection),
+      )}`,
+    );
+  }
+
+  if (projection) {
+    const included = new Set(properties.map((property) => property.name));
+    const forbidden = [...walkPropertiesInherited(model)]
+      .filter((property) => !included.has(property.name))
+      .map((property) => property.name);
+    if (forbidden.length > 0) {
+      options.push(`forbiddenProperties: ${JSON.stringify(forbidden)}`);
+    }
+  }
+
+  const optionsArg = options.length > 0 ? `, { ${options.join(", ")} }` : "";
+  return `Decoders.object<${payloadTypeToTs(ctx, model, projection)}>({ ${fields} }${optionsArg})`;
 }
 
 function emitUnionDecoder(
@@ -669,16 +867,79 @@ function emitUnionDecoder(
   dec: DecoderEmitContext,
   union: Union,
   mode: DecoderMode,
-  seenModels: ReadonlySet<string>,
+  seenTypes: ReadonlySet<Type>,
+  projection?: PayloadProjection,
 ): string {
-  if (mode === "json") {
-    const discriminated = emitDiscriminatedUnionDecoder(ctx, dec, union, seenModels);
+  const typeName = union.name ? getGeneratedTypeName(ctx, union, "Union") : undefined;
+  if (typeName && seenTypes.has(union)) {
+    return getOrCreateLazyDecoder(dec, union, typeName, mode, projection).varName;
+  }
+
+  const nextSeen = typeName ? new Set([...seenTypes, union]) : seenTypes;
+  return emitUnionDecoderBody(ctx, dec, union, mode, nextSeen, projection);
+}
+
+function emitUnionDecoderBody(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  union: Union,
+  mode: DecoderMode,
+  seenTypes: ReadonlySet<Type>,
+  projection?: PayloadProjection,
+): string {
+  if (mode === "json" && !payloadProjectionChangesType(ctx, union, projection)) {
+    const discriminated = emitDiscriminatedUnionDecoder(ctx, dec, union, seenTypes);
     if (discriminated) return discriminated;
   }
   const variants = [...union.variants.values()]
-    .map((variant) => emitDecoderExpression(ctx, dec, variant.type, mode, seenModels))
+    .map((variant) =>
+      emitDecoderExpression(ctx, dec, variant.type, mode, seenTypes, undefined, projection),
+    )
     .join(", ");
-  return `Decoders.union<${typeToTs(ctx, union)}>([${variants}])`;
+  return `Decoders.union<${payloadTypeToTs(ctx, union, projection)}>([${variants}])`;
+}
+
+function getOrCreateLazyDecoder(
+  dec: DecoderEmitContext,
+  type: Model | Union,
+  typeName: string,
+  mode: DecoderMode,
+  projection?: PayloadProjection,
+): LazyDecoderEmission {
+  let modes = dec.lazyDecoders.get(type);
+  if (!modes) {
+    modes = new Map();
+    dec.lazyDecoders.set(type, modes);
+  }
+
+  const cacheKey = `${mode}:${projection?.cacheKey ?? "raw"}`;
+  const existing = modes.get(cacheKey);
+  if (existing) return existing;
+
+  const modeName = mode === "json" ? "json" : `${mode[0]!.toUpperCase()}${mode.slice(1)}`;
+  const modeSuffix = projection
+    ? `${modeName}_${tsIdentifier(projection.cacheKey, "payload")}`
+    : modeName;
+  const baseVarName = `_lazy${dec.scopeName.length}_${dec.scopeName}_${typeName.length}_${typeName}_${modeSuffix}`;
+  let varName = baseVarName;
+  let suffix = 2;
+  while (hasLazyDecoderVariable(dec, varName)) {
+    varName = `${baseVarName}_${suffix}`;
+    suffix += 1;
+  }
+
+  const emission: LazyDecoderEmission = { type, mode, projection, varName };
+  modes.set(cacheKey, emission);
+  return emission;
+}
+
+function hasLazyDecoderVariable(dec: DecoderEmitContext, varName: string): boolean {
+  for (const modes of dec.lazyDecoders.values()) {
+    for (const emission of modes.values()) {
+      if (emission.varName === varName) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -695,7 +956,7 @@ function emitDiscriminatedUnionDecoder(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
   union: Union,
-  seenModels: ReadonlySet<string>,
+  seenTypes: ReadonlySet<Type>,
 ): string | undefined {
   const models = discriminatableModels(ctx, union);
   if (!models) return undefined;
@@ -711,22 +972,20 @@ function emitDiscriminatedUnionDecoder(
     if (tag === undefined || tags.has(tag)) return undefined;
     tags.add(tag);
     entries.push(
-      `${JSON.stringify(tag)}: ${emitDecoderExpression(ctx, dec, model, "json", seenModels)}`,
+      `${tsObjectKey(tag)}: ${emitDecoderExpression(ctx, dec, model, "json", seenTypes)}`,
     );
   }
 
   return `Decoders.discriminated<${typeToTs(ctx, union)}>(${JSON.stringify(field)}, { ${entries.join(", ")} })`;
 }
 
-/** All variants as plain (non-array, non-record) models, or undefined. */
+/** All variants as plain (non-array, non-pure-record) models, or undefined. */
 function discriminatableModels(ctx: EmitterCtx, union: Union): Model[] | undefined {
   const types = [...union.variants.values()].map((variant) => variant.type);
   if (types.length < 2) return undefined;
   const models = types.filter(
     (type): type is Model =>
-      type.kind === "Model" &&
-      !isArrayModelType(ctx.program, type) &&
-      !isRecordModelType(ctx.program, type),
+      type.kind === "Model" && !isArrayModelType(ctx.program, type) && !isPureRecordModel(type),
   );
   return models.length === types.length ? models : undefined;
 }
@@ -764,41 +1023,42 @@ function literalTagValue(model: Model, field: string): string | undefined {
 }
 
 /**
- * Builds hoisted `Decoders.lazy(() => ...)` declarations for any recursive models
- * that were detected during decoder emission.
+ * Builds hoisted `Decoders.lazy(() => ...)` declarations for any recursive named
+ * types that were detected during decoder emission.
  */
 export function buildHoistedDecoders(ctx: EmitterCtx, dec: DecoderEmitContext): string[] {
-  // We need to emit each lazy decoder with a full object decoder inside.
-  // The model was seen during emission but its decoder was deferred — emit it now.
-  for (const [key, lazy] of dec.lazyDecoders) {
-    if (dec.emittedLazy.has(key)) continue;
-    dec.emittedLazy.add(key);
-
-    const fields = modelDecoderProperties(lazy.model)
-      .map((prop) => {
-        const propertyDecoder = emitDecoderExpression(
-          ctx,
-          dec,
-          prop.type,
-          lazy.mode,
-          new Set([lazy.modelName]),
-          prop,
-        );
-        const expr = prop.optional ? `Decoders.optional(${propertyDecoder})` : propertyDecoder;
-        return `${tsObjectKey(prop.name)}: ${expr}`;
-      })
-      .join(", ");
-
-    const tsType = typeToTs(ctx, lazy.model);
-    dec.hoistedDecoderLines.push(
-      `const ${lazy.varName}: Decoder<${tsType}> = Decoders.lazy(() => Decoders.object<${tsType}>({ ${fields} }));`,
+  // Expanding a lazy type from an empty traversal set emits its complete root
+  // decoder while recursive edges resolve back to the already registered lazy
+  // declaration. Expansion can discover additional cycles, so continue until
+  // every registered semantic type/mode pair has been emitted.
+  let lazy = nextUnemittedLazyDecoder(dec);
+  while (lazy) {
+    dec.emittedLazy.add(lazy);
+    const tsType = payloadTypeToTs(ctx, lazy.type, lazy.projection);
+    const expression = emitDecoderExpression(
+      ctx,
+      dec,
+      lazy.type,
+      lazy.mode,
+      new Set(),
+      undefined,
+      lazy.projection,
     );
+    dec.hoistedDecoderLines.push(
+      `const ${lazy.varName}: Decoder<${tsType}> = Decoders.lazy(() => ${expression});`,
+    );
+    lazy = nextUnemittedLazyDecoder(dec);
   }
   return [...dec.hoistedDecoderLines];
 }
 
-function modelDecoderProperties(model: Model): ModelProperty[] {
-  return [...walkPropertiesInherited(model)];
+function nextUnemittedLazyDecoder(dec: DecoderEmitContext): LazyDecoderEmission | undefined {
+  for (const modes of dec.lazyDecoders.values()) {
+    for (const emission of modes.values()) {
+      if (!dec.emittedLazy.has(emission)) return emission;
+    }
+  }
+  return undefined;
 }
 
 function emitEnumDecoder(enumType: Enum, mode: DecoderMode): string {

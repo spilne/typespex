@@ -23,6 +23,10 @@ import type {
   UploadResult,
 } from "./models.js";
 
+type _TypespexPayload_ConflictError_response_1_payload = { code: "CONFLICT"; message: string };
+type _TypespexPayload_ForbiddenError_response_1_payload = { code: "FORBIDDEN"; message: string };
+type _TypespexPayload_NotFoundError_response_1_payload = { code: "NOT_FOUND"; message: string };
+
 const PetsInput = {
   list: RequestDecoders.combine(
     [
@@ -44,14 +48,17 @@ const PetsInput = {
     (limit, offset) => ({ limit, offset }),
   ),
   create: {
-    json: Decoders.object<CreatePetInput>({
-      name: Decoders.string.validate(
-        Validators.minLength(1),
-        Validators.maxLength(80),
-        Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
-      ),
-      tag: Decoders.optional(Decoders.string.validate(Validators.maxLength(40))),
-    }),
+    json: Decoders.object<CreatePetInput>(
+      {
+        name: Decoders.string.validate(
+          Validators.minLength(1),
+          Validators.maxLength(80),
+          Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
+        ),
+        tag: Decoders.optional(Decoders.string.validate(Validators.maxLength(40))),
+      },
+      { allowUnknown: true },
+    ),
   },
   read: RequestDecoders.path("petId", Decoders.string.validate(Validators.minLength(1))).map(
     (petId) => ({ petId }),
@@ -61,78 +68,97 @@ const PetsInput = {
   ),
   uploadPhotoRequest: RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId })),
   uploadPhotoBody: {
-    multipart: Decoders.object({
-      caption: Decoders.optional(Decoders.string),
-      photo: Decoders.file,
-    }),
+    multipart: Decoders.multipartFormData<{ caption?: string; photo: File }>([
+      {
+        decoder: Decoders.string,
+        kind: "text",
+        contentTypes: ["text/plain"],
+        optional: true,
+        name: "caption",
+        property: "caption",
+      },
+      {
+        decoder: Decoders.file,
+        kind: "file",
+        contentTypes: ["*/*"],
+        name: "photo",
+        property: "photo",
+      },
+    ]),
   },
 };
 
 const PetsOutput = {
   list: ResponseEncoders.json<Pet[]>(200),
-  create: ResponseEncoders.matchVariant<Pet | ConflictError>([
+  create: ResponseEncoders.matchVariant<Pet | _TypespexPayload_ConflictError_response_1_payload>([
     {
       when: (result): result is Pet =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
     },
     {
-      when: (result): result is ConflictError =>
+      when: (result): result is _TypespexPayload_ConflictError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.variant<ConflictError>({
+      encoder: ResponseEncoders.variant<_TypespexPayload_ConflictError_response_1_payload>({
         status: 409,
         contentType: "application/json",
         omit: ["_"],
       }),
     },
   ]),
-  read: ResponseEncoders.matchVariant<Pet | NotFoundError>([
+  read: ResponseEncoders.matchVariant<Pet | _TypespexPayload_NotFoundError_response_1_payload>([
     {
       when: (result): result is Pet =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
       encoder: ResponseEncoders.variant<Pet>({ status: 200, contentType: "application/json" }),
     },
     {
-      when: (result): result is NotFoundError =>
+      when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.variant<NotFoundError>({
+      encoder: ResponseEncoders.variant<_TypespexPayload_NotFoundError_response_1_payload>({
         status: 404,
         contentType: "application/json",
         omit: ["_"],
       }),
     },
   ]),
-  delete: ResponseEncoders.matchVariant<void | NotFoundError | ForbiddenError>([
+  delete: ResponseEncoders.matchVariant<
+    | void
+    | _TypespexPayload_NotFoundError_response_1_payload
+    | _TypespexPayload_ForbiddenError_response_1_payload
+  >([
     {
       when: (result): result is void => result === undefined,
       encoder: ResponseEncoders.variant<void>({ status: 204, kind: "empty" }),
     },
     {
-      when: (result): result is NotFoundError =>
+      when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" &&
         result !== null &&
         "code" in result &&
         result["code"] === "NOT_FOUND",
-      encoder: ResponseEncoders.variant<NotFoundError>({
+      encoder: ResponseEncoders.variant<_TypespexPayload_NotFoundError_response_1_payload>({
         status: 404,
         contentType: "application/json",
         omit: ["_"],
       }),
     },
     {
-      when: (result): result is ForbiddenError =>
+      when: (result): result is _TypespexPayload_ForbiddenError_response_1_payload =>
         typeof result === "object" &&
         result !== null &&
         "code" in result &&
         result["code"] === "FORBIDDEN",
-      encoder: ResponseEncoders.variant<ForbiddenError>({
+      encoder: ResponseEncoders.variant<_TypespexPayload_ForbiddenError_response_1_payload>({
         status: 403,
         contentType: "application/json",
         omit: ["_"],
       }),
     },
   ]),
-  uploadPhoto: ResponseEncoders.matchVariant<UploadResult | NotFoundError>([
+  uploadPhoto: ResponseEncoders.matchVariant<
+    UploadResult | _TypespexPayload_NotFoundError_response_1_payload
+  >([
     {
       when: (result): result is UploadResult =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
@@ -142,9 +168,9 @@ const PetsOutput = {
       }),
     },
     {
-      when: (result): result is NotFoundError =>
+      when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.variant<NotFoundError>({
+      encoder: ResponseEncoders.variant<_TypespexPayload_NotFoundError_response_1_payload>({
         status: 404,
         contentType: "application/json",
         omit: ["_"],
@@ -163,6 +189,7 @@ export const PetsOperations = {
         operationId: "Pets.list",
         method: "GET" as const,
         path: "/pets",
+        routePattern: { segments: [[{ kind: "literal", value: "pets" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -180,13 +207,18 @@ export const PetsOperations = {
         operationId: "Pets.create",
         method: "POST" as const,
         path: "/pets",
+        routePattern: { segments: [[{ kind: "literal", value: "pets" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
     decodeInput: async (request) =>
       decodeBody<CreatePetInput>(request, PetsInput.create, { contentTypes: ["application/json"] }),
-    encodeResult: (result: Pet | ConflictError) => PetsOutput.create.encode(result),
-  } satisfies ServerOperation<CreatePetInput, Pet | ConflictError>,
+    encodeResult: (result: Pet | _TypespexPayload_ConflictError_response_1_payload) =>
+      PetsOutput.create.encode(result),
+  } satisfies ServerOperation<
+    CreatePetInput,
+    Pet | _TypespexPayload_ConflictError_response_1_payload
+  >,
 
   read: {
     endpoint: {
@@ -196,14 +228,22 @@ export const PetsOperations = {
         name: "read",
         operationId: "Pets.read",
         method: "GET" as const,
-        path: "/pets/:petId",
+        path: "/pets/{petId}",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "pets" }], [{ kind: "parameter", name: "petId" }]],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.read, request, pathParams),
-    encodeResult: (result: Pet | NotFoundError) => PetsOutput.read.encode(result),
-  } satisfies ServerOperation<{ petId: string }, Pet | NotFoundError>,
+    encodeResult: (result: Pet | _TypespexPayload_NotFoundError_response_1_payload) =>
+      PetsOutput.read.encode(result),
+  } satisfies ServerOperation<
+    { petId: string },
+    Pet | _TypespexPayload_NotFoundError_response_1_payload
+  >,
 
   delete: {
     endpoint: {
@@ -213,15 +253,28 @@ export const PetsOperations = {
         name: "delete",
         operationId: "Pets.delete",
         method: "DELETE" as const,
-        path: "/pets/:petId",
+        path: "/pets/{petId}",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "pets" }], [{ kind: "parameter", name: "petId" }]],
+          trailingSlash: false,
+        },
         hints: createHints([[ServerHints.authHint, "admin"]]),
       },
     },
     decodeInput: (request, pathParams) =>
       decodeRequestInput<{ petId: string }>(PetsInput.delete, request, pathParams),
-    encodeResult: (result: void | NotFoundError | ForbiddenError) =>
-      PetsOutput.delete.encode(result),
-  } satisfies ServerOperation<{ petId: string }, void | NotFoundError | ForbiddenError>,
+    encodeResult: (
+      result:
+        | void
+        | _TypespexPayload_NotFoundError_response_1_payload
+        | _TypespexPayload_ForbiddenError_response_1_payload,
+    ) => PetsOutput.delete.encode(result),
+  } satisfies ServerOperation<
+    { petId: string },
+    | void
+    | _TypespexPayload_NotFoundError_response_1_payload
+    | _TypespexPayload_ForbiddenError_response_1_payload
+  >,
 
   uploadPhoto: {
     endpoint: {
@@ -231,7 +284,15 @@ export const PetsOperations = {
         name: "uploadPhoto",
         operationId: "Pets.uploadPhoto",
         method: "POST" as const,
-        path: "/pets/:petId/photo",
+        path: "/pets/{petId}/photo",
+        routePattern: {
+          segments: [
+            [{ kind: "literal", value: "pets" }],
+            [{ kind: "parameter", name: "petId" }],
+            [{ kind: "literal", value: "photo" }],
+          ],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -243,9 +304,10 @@ export const PetsOperations = {
         pathParams,
         { contentTypes: ["multipart/form-data"] },
       ),
-    encodeResult: (result: UploadResult | NotFoundError) => PetsOutput.uploadPhoto.encode(result),
+    encodeResult: (result: UploadResult | _TypespexPayload_NotFoundError_response_1_payload) =>
+      PetsOutput.uploadPhoto.encode(result),
   } satisfies ServerOperation<
     { petId: string; caption?: string; photo: File },
-    UploadResult | NotFoundError
+    UploadResult | _TypespexPayload_NotFoundError_response_1_payload
   >,
 } as const;

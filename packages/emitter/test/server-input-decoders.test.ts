@@ -10,7 +10,6 @@ describe("server input decoder emission", () => {
     const host = await createTestHost({ libraries: [HttpTestLibrary] });
     const runner = await createTestRunner(host);
     const [, diagnostics] = await runner.compileAndDiagnose(`
-      import "@typespec/http";
       using TypeSpec.Http;
 
       @service(#{ title: "RecursiveInputsApi" })
@@ -40,32 +39,34 @@ describe("server input decoder emission", () => {
     if (!service || !queryNode || !bodyNode) throw new Error("Expected recursive input models");
 
     const ctx = createEmitterContext(runner.program, service, {});
+    const queryLazy = {
+      type: queryNode,
+      mode: "json" as const,
+      varName: "_lazyQueryNode",
+    };
     const decoderContext = {
       scopeName: "Both",
-      lazyDecoders: new Map([
-        [
-          "json:QueryNode",
-          {
-            model: queryNode,
-            modelName: "QueryNode",
-            mode: "json" as const,
-            varName: "_lazyQueryNode",
-          },
-        ],
-      ]),
-      emittedLazy: new Set<string>(),
+      lazyDecoders: new Map([[queryNode, new Map([["json:raw" as const, queryLazy]])]]),
+      emittedLazy: new Set<typeof queryLazy>(),
       hoistedDecoderLines: [] as string[],
     };
 
     const firstPass = buildHoistedDecoders(ctx, decoderContext);
     expect(firstPass).toHaveLength(1);
 
-    decoderContext.lazyDecoders.set("json:BodyNode", {
-      model: bodyNode,
-      modelName: "BodyNode",
-      mode: "json",
-      varName: "_lazyBodyNode",
-    });
+    decoderContext.lazyDecoders.set(
+      bodyNode,
+      new Map([
+        [
+          "json:raw",
+          {
+            type: bodyNode,
+            mode: "json",
+            varName: "_lazyBodyNode",
+          },
+        ],
+      ]),
+    );
     const secondPass = buildHoistedDecoders(ctx, decoderContext);
     const thirdPass = buildHoistedDecoders(ctx, decoderContext);
     const declarations = secondPass.join("\n");

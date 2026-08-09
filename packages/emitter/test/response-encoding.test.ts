@@ -403,12 +403,13 @@ describe("response encoding", () => {
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
   });
 
-  test("@error models without @statusCode encode as 500, not 200", () => {
-    const r = compileFixture("implicit-error-status", implicitErrorStatusSpec);
-    const operations = r.readFile("implicit-error-api", "server-operations.ts");
+  test("@error models without @statusCode fail instead of collapsing wildcard status", () => {
+    const r = compileFixtureExpectingDiagnostics("implicit-error-status", implicitErrorStatusSpec);
+    const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
 
-    expect(operations).toContain("ResponseEncoders.variant<Item>({ status: 200");
-    expect(operations).toContain("ResponseEncoders.variant<Oops>({ status: 500");
+    expect(combined).toContain("unsupported-response-status-code");
+    expect(combined).toContain('wildcard status "*"');
+    expect(r.listFiles("implicit-error-api")).toEqual([]);
   });
 
   test("multiple success types generate matchVariant result encoders", () => {
@@ -418,16 +419,13 @@ describe("response encoding", () => {
     expect(r.readFile("multi-success-api", "server.ts")).toMatchSnapshot();
   });
 
-  test("same-status union responses keep each variant's own type", () => {
+  test("same-status union responses preserve the complete body union", () => {
     const r = compileFixture("same-status-union", sameStatusUnionSpec);
     const operations = r.readFile("same-status-api", "server-operations.ts");
 
-    // TypeSpec collapses same-status variants into one response with a
-    // content entry per body; each variant must surface its own model, not
-    // the first variant's type repeated.
-    expect(operations).toContain("ResponseEncoders.matchVariant<Circle | Square>(");
-    expect(operations).toContain("result is Circle");
-    expect(operations).toContain("result is Square");
+    // TypeSpec exposes same-status, same-media responses as one union body.
+    // The generated encoder and handler must retain every union member.
+    expect(operations).toContain("ResponseEncoders.json<Circle | Square>(200)");
     expect(operations).toContain("(result: Circle | Square)");
     expect(operations).toMatchSnapshot();
     r.typecheck("same-status-api");
@@ -463,10 +461,7 @@ describe("response encoding", () => {
   });
 
   test("union-typed contentType with the same body fires the undifferentiable diagnostic", () => {
-    const r = compileFixtureExpectingDiagnostics(
-      "union-ct",
-      unionContentTypeOnOneResponseSpec,
-    );
+    const r = compileFixtureExpectingDiagnostics("union-ct", unionContentTypeOnOneResponseSpec);
     const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
 
     // The server can't pick between identical-shape variants at the

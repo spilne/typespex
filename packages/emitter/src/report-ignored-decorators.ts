@@ -4,16 +4,31 @@ import {
   getDiscriminatedUnion,
   getEncode,
   isArrayModelType,
-  isRecordModelType,
   resolveEncodedName,
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
-import { getAuthenticationForOperation, isMetadata } from "@typespec/http";
-import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
+import { getAuthenticationForOperation } from "@typespec/http";
+import {
+  getBodyMediaKinds,
+  normalizeMediaType,
+  type BodyMediaKind,
+} from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
+import { propertiesShareSource } from "./http-models.js";
 import { $lib } from "./lib.js";
+import {
+  getAdditionalPropertiesValue,
+  isNeverAdditionalProperties,
+  isPureRecordModel,
+} from "./model-indexer.js";
+import {
+  getRequestBodyProjection,
+  payloadModelProperties,
+  type PayloadProjection,
+} from "./payload-context.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
+import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 
 const VISIBILITY_DECORATOR_NAMES = new Set(["@visibility", "@invisible", "@removeVisibility"]);
 
@@ -87,25 +102,117 @@ function checkRequestBody(
   if (body.property) {
     checkProperty(ctx, reported, traversal, body.property, body.property.name);
   }
+  if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
 
-  if (body.bodyKind === "multipart") {
-    for (const part of body.parts) {
-      if (part.body.bodyKind === "file" || isWireScalarType(ctx, part.body.type)) continue;
+  if (body.bodyKind === "file") {
+    const constraintReason = unsupportedFileContentsReason(ctx.program, body);
+    if (constraintReason) {
       reportUnsupportedBody(
         ctx,
         traversal.operation,
-        "multipart/form-data",
-        "non-file parts may contain only scalar, literal, or enum values",
+        body.contentTypes.join(", ") || "*/*",
+        constraintReason,
       );
-      return;
+    }
+
+    const hasFilenameInput = traversal.operation.parameters.parameters.some((parameter) =>
+      propertiesShareSource(parameter.param, body.filename),
+    );
+    if (!body.filename.optional && !hasFilenameInput) {
+      reportUnsupportedBody(
+        ctx,
+        traversal.operation,
+        body.contentTypes.join(", ") || "*/*",
+        "a required File.filename needs an explicit path, query, or header location in requests",
+      );
+    }
+    return;
+  }
+
+  if (body.bodyKind === "multipart") {
+    if (body.multipartKind === "model") {
+      const wireNames = new Map<string, string>();
+      for (const part of body.parts) {
+        const previous = wireNames.get(part.name);
+        if (previous !== undefined) {
+          reportUnsupportedBody(
+            ctx,
+            traversal.operation,
+            body.contentTypes.join(", ") || "multipart/form-data",
+            `multipart properties "${previous}" and "${part.property.name}" share wire part name "${part.name}"`,
+          );
+          return;
+        }
+        wireNames.set(part.name, part.property.name);
+      }
+    }
+
+    for (const [index, part] of body.parts.entries()) {
+      const partLabel = part.name ?? `#${index + 1}`;
+      const fileName = part.body.bodyKind === "file" ? part.filename : undefined;
+      const unsupportedHeader = part.headers.find(
+        (header) => !fileName || !propertiesShareSource(header.property, fileName),
+      );
+      if (unsupportedHeader) {
+        reportUnsupportedBody(
+          ctx,
+          traversal.operation,
+          body.contentTypes.join(", ") || "multipart/form-data",
+          `multipart part "${partLabel}" declares header "${unsupportedHeader.options.name}", but only a File filename header can currently be represented`,
+        );
+        return;
+      }
+      if (
+        !requestBodyContentTypesAreValid(
+          ctx,
+          traversal.operation,
+          part.body.contentTypes,
+          `multipart part "${partLabel}"`,
+        )
+      ) {
+        return;
+      }
+
+      if (part.body.bodyKind === "file") {
+        const constraintReason = unsupportedFileContentsReason(ctx.program, part.body);
+        if (constraintReason) {
+          reportUnsupportedBody(
+            ctx,
+            traversal.operation,
+            body.contentTypes.join(", ") || "multipart/form-data",
+            constraintReason,
+          );
+          return;
+        }
+        continue;
+      }
+
+      for (const contentType of part.body.contentTypes) {
+        for (const kind of getBodyMediaKinds([contentType])) {
+          const reason =
+            kind === "form" || kind === "multipart" || kind === "file"
+              ? "multipart parts support JSON, text, binary, or File content"
+              : unsupportedBodyKindReason(ctx, part.body.type, kind);
+          if (reason) {
+            reportUnsupportedBody(
+              ctx,
+              traversal.operation,
+              contentType,
+              `multipart part "${partLabel}": ${reason}`,
+            );
+            return;
+          }
+        }
+      }
     }
     return;
   }
 
   const contentTypes = body.contentTypes.length > 0 ? body.contentTypes : ["application/json"];
+  const projection = getRequestBodyProjection(ctx, traversal.operation);
   for (const contentType of contentTypes) {
     for (const kind of getBodyMediaKinds([contentType])) {
-      const reason = unsupportedBodyKindReason(ctx, body.type, kind);
+      const reason = unsupportedBodyKindReason(ctx, body.type, kind, projection);
       if (reason) {
         reportUnsupportedBody(ctx, traversal.operation, contentType, reason);
         break;
@@ -114,16 +221,37 @@ function checkRequestBody(
   }
 }
 
+function requestBodyContentTypesAreValid(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+  contentTypes: readonly string[],
+  context?: string,
+): boolean {
+  for (const contentType of contentTypes) {
+    if (normalizeMediaType(contentType)) continue;
+    const prefix = context ? `${context}: ` : "";
+    reportUnsupportedBody(
+      ctx,
+      operation,
+      contentType,
+      `${prefix}content type must be a valid type/subtype media type`,
+    );
+    return false;
+  }
+  return true;
+}
+
 function unsupportedBodyKindReason(
   ctx: EmitterCtx,
   type: Type,
   kind: BodyMediaKind,
+  projection?: PayloadProjection,
 ): string | undefined {
   switch (kind) {
     case "json":
       return undefined;
     case "form":
-      return isFlatFormBodyType(ctx, type)
+      return isFlatFormBodyType(ctx, type, projection)
         ? undefined
         : "URL-encoded forms require a flat model or record with scalar or scalar-array fields";
     case "text":
@@ -132,18 +260,25 @@ function unsupportedBodyKindReason(
         : "text bodies require a scalar, literal, or enum type";
     case "binary":
       return isBytesScalar(type) ? undefined : "binary bodies require the TypeSpec bytes scalar";
+    case "file":
+      return "raw file content requires a resolved TypeSpec HTTP File body";
     case "multipart":
       return "multipart content requires @multipartBody so parts can be decoded safely";
   }
 }
 
-function isFlatFormBodyType(ctx: EmitterCtx, type: Type): boolean {
+function isFlatFormBodyType(ctx: EmitterCtx, type: Type, projection?: PayloadProjection): boolean {
   if (type.kind !== "Model" || isArrayModelType(ctx.program, type)) return false;
-  if (isRecordModelType(ctx.program, type)) {
-    return type.indexer !== undefined && isWireScalarOrArrayType(ctx, type.indexer.value);
+  const additionalProperties = getAdditionalPropertiesValue(type);
+  if (
+    additionalProperties !== undefined &&
+    !isNeverAdditionalProperties(type) &&
+    !isWireScalarOrArrayType(ctx, additionalProperties)
+  ) {
+    return false;
   }
-  return [...walkPropertiesInherited(type)].every(
-    (property) => isMetadata(ctx.program, property) || isWireScalarOrArrayType(ctx, property.type),
+  return payloadModelProperties(type, projection).every((property) =>
+    isWireScalarOrArrayType(ctx, property.type),
   );
 }
 
@@ -155,16 +290,6 @@ function isWireScalarOrArrayType(ctx: EmitterCtx, type: Type): boolean {
     type.indexer !== undefined &&
     isWireScalarType(ctx, type.indexer.value)
   );
-}
-
-function isBytesScalar(type: Type): boolean {
-  if (type.kind !== "Scalar") return false;
-  let current: Scalar | undefined = type;
-  while (current) {
-    if (current.namespace?.name === "TypeSpec") return current.name === "bytes";
-    current = current.baseScalar;
-  }
-  return false;
 }
 
 function reportUnsupportedBody(
@@ -311,12 +436,16 @@ function walkModel(
   propertyPath: string,
 ): void {
   if (isTypeSpecNamespaceModel(model)) return;
-  if (isArrayModelType(ctx.program, model) || isRecordModelType(ctx.program, model)) {
+  if (isArrayModelType(ctx.program, model)) {
     if (model.indexer) {
-      const elementPath = isArrayModelType(ctx.program, model)
-        ? `${propertyPath}[]`
-        : `${propertyPath}.*`;
-      walkType(ctx, reported, traversal, model.indexer.value, elementPath);
+      walkType(ctx, reported, traversal, model.indexer.value, `${propertyPath}[]`);
+    }
+    return;
+  }
+  const additionalProperties = getAdditionalPropertiesValue(model);
+  if (isPureRecordModel(model)) {
+    if (additionalProperties) {
+      walkType(ctx, reported, traversal, additionalProperties, `${propertyPath}.*`);
     }
     return;
   }
@@ -324,6 +453,9 @@ function walkModel(
     const nestedPath = `${propertyPath}.${property.name}`;
     checkProperty(ctx, reported, traversal, property, nestedPath);
     walkType(ctx, reported, traversal, property.type, nestedPath);
+  }
+  if (additionalProperties && !isNeverAdditionalProperties(model)) {
+    walkType(ctx, reported, traversal, additionalProperties, `${propertyPath}.*`);
   }
 }
 

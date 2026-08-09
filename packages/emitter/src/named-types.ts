@@ -8,9 +8,10 @@ import type {
   Union,
   Value,
 } from "@typespec/compiler";
-import { isArrayModelType, isRecordModelType, isType, isValue } from "@typespec/compiler";
+import { isArrayModelType, isType, isValue } from "@typespec/compiler";
 import type { HttpService } from "@typespec/http";
 import { getHttpPartType, isHttpFileModel, isHttpPartModel } from "./http-models.js";
+import { getAdditionalPropertiesValues, isPureRecordModel } from "./model-indexer.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import { isEntityLike } from "./type-guards.js";
 
@@ -68,11 +69,11 @@ export function collectEmittedNamedTypes(
     switch (type.kind) {
       case "Model": {
         for (const argument of type.templateMapper?.args ?? []) visitEntity(argument);
-        if (
-          isArrayModelType(program, type) ||
-          isRecordModelType(program, type) ||
-          isTypeSpecCollectionModel(type)
-        ) {
+        if (isPureRecordModel(type)) {
+          for (const value of getAdditionalPropertiesValues(type)) visitType(value);
+          return;
+        }
+        if (isArrayModelType(program, type) || isTypeSpecCollectionModel(type)) {
           if (type.indexer) visitType(type.indexer.value);
           return;
         }
@@ -85,6 +86,9 @@ export function collectEmittedNamedTypes(
         if (!type.name) {
           if (type.baseModel) visitType(type.baseModel);
           for (const property of type.properties.values()) visitType(property.type);
+          for (const additionalType of getAdditionalPropertiesValues(type)) {
+            visitType(additionalType);
+          }
           return;
         }
         const declaration = addDeclaration(type);
@@ -138,6 +142,11 @@ export function collectEmittedNamedTypes(
       case "Model":
         if (type.baseModel) visitType(type.baseModel);
         for (const property of type.properties.values()) visitType(property.type);
+        {
+          for (const additionalType of getAdditionalPropertiesValues(type)) {
+            visitType(additionalType);
+          }
+        }
         break;
       case "Scalar":
         if (type.baseScalar) visitType(type.baseScalar);
@@ -182,7 +191,7 @@ function shouldEmitNamedType(program: Program, type: EmittedNamedType): boolean 
   if (type.kind !== "Model") return true;
   return (
     !isArrayModelType(program, type) &&
-    !isRecordModelType(program, type) &&
+    !isPureRecordModel(type) &&
     !isHttpPartModel(program, type) &&
     !isHttpFileModel(program, type)
   );

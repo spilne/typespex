@@ -323,6 +323,21 @@ interface Shapes {
 }
 `;
 
+const prototypeDiscriminatorSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "PrototypeDiscriminatorApi" })
+namespace PrototypeDiscriminatorApi;
+
+model PrototypeVariant { kind: "__proto__"; value: string; }
+model ConstructorVariant { kind: "constructor"; count: int32; }
+union SpecialValue { prototype: PrototypeVariant, constructor: ConstructorVariant }
+
+@route("/special")
+@post op create(@body body: SpecialValue): void;
+`;
+
 const inheritedBodyImportSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -389,11 +404,13 @@ describe("input decoding", () => {
     expect(r.readFile("tree-api", "server-operations.ts")).toMatchSnapshot();
   });
 
-  test("shared recursive models emit one lazy decoder declaration", () => {
+  test("same-named recursive operations use module-unique lazy declarations", () => {
     const r = compileFixture("shared-recursive", sharedRecursiveSpec);
     const operations = r.readFile("shared-tree-api", "server-operations.ts");
+    const declarations = operations.match(/const (_lazy[^:]+): Decoder<TreeNode>/g);
 
-    expect(operations.match(/const _lazy[^:]+: Decoder<TreeNode>/g)).toHaveLength(1);
+    expect(declarations).toHaveLength(2);
+    expect(new Set(declarations).size).toBe(2);
     r.typecheck("shared-tree-api");
   });
 
@@ -419,14 +436,23 @@ describe("input decoding", () => {
 
     // Dispatch field is inferred from a common required literal field
     // present in every variant with distinct values.
-    expect(operations).toContain(`Decoders.discriminated<Circle | Square>("kind"`);
-    expect(operations).toContain(`Decoders.discriminated<Cat | Dog>("species"`);
+    expect(operations).toContain(`Decoders.discriminated<Shape>("kind"`);
+    expect(operations).toContain(`Decoders.discriminated<Pet>("species"`);
     // No shared literal field — falls back to the linear-scan union decoder.
-    expect(operations).toContain("Decoders.union<Left | Right>(");
-    expect(operations).not.toContain("Decoders.union<Circle | Square>(");
-    expect(operations).not.toContain("Decoders.union<Cat | Dog>(");
+    expect(operations).toContain("Decoders.union<Mixed>(");
+    expect(operations).not.toContain("Decoders.union<Shape>(");
+    expect(operations).not.toContain("Decoders.union<Pet>(");
     expect(operations).toMatchSnapshot();
     r.typecheck("shapes-api");
+  });
+
+  test("prototype-named discriminator variants emit safe own properties", () => {
+    const r = compileFixture("prototype-discriminator", prototypeDiscriminatorSpec);
+    const operations = r.readFile("prototype-discriminator-api", "server-operations.ts");
+
+    expect(operations).toContain('["__proto__"]: Decoders.object<PrototypeVariant>');
+    expect(operations).toContain("constructor: Decoders.object<ConstructorVariant>");
+    r.typecheck("prototype-discriminator-api");
   });
 
   test("inherited body properties pull in imported model types", () => {

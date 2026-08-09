@@ -51,7 +51,19 @@ export const $lib = createTypeSpecLibrary({
     "unsupported-response-content-type": {
       severity: "error",
       messages: {
-        default: paramMessage`Unsupported HTTP response content type "${"contentType"}" for operation "${"operationName"}". Supported types: application/json, text/*, application/octet-stream.`,
+        default: paramMessage`Unsupported HTTP response content type "${"contentType"}" for operation "${"operationName"}". Supported types: application/json, structured +json, text/*, application/octet-stream.`,
+      },
+    },
+    "unsupported-response-status-code": {
+      severity: "error",
+      messages: {
+        default: paramMessage`HTTP response status contract for operation "${"operationName"}" is not supported: ${"reason"}.`,
+      },
+    },
+    "unsupported-response-body": {
+      severity: "error",
+      messages: {
+        default: paramMessage`HTTP response body for operation "${"operationName"}" cannot be encoded as "${"contentType"}": ${"reason"}.`,
       },
     },
     "ignored-encode": {
@@ -95,6 +107,18 @@ export const $lib = createTypeSpecLibrary({
       severity: "error",
       messages: {
         default: paramMessage`Request body for operation "${"operation"}" cannot be decoded as "${"contentType"}": ${"reason"}.`,
+      },
+    },
+    "request-input-property-collision": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Operation "${"operation"}" has multiple HTTP inputs (${"locations"}) that resolve to handler property "${"property"}". Rename one of the source properties so every wire input has a distinct handler property.`,
+      },
+    },
+    "unsupported-uri-template": {
+      severity: "error",
+      messages: {
+        default: paramMessage`URI template "${"template"}" for operation "${"operation"}" cannot be lowered safely: ${"reason"}.`,
       },
     },
   },

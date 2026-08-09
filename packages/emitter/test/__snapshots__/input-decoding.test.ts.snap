@@ -54,6 +54,7 @@ export const ItemsOperations = {
         operationId: "Items.list",
         method: "GET" as const,
         path: "/items",
+        routePattern: { segments: [[{ kind: "literal", value: "items" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -134,20 +135,23 @@ const ItemsInput = {
       .validate(Validators.minValue(1n)),
   ).map((itemId) => ({ itemId })),
   create: {
-    json: Decoders.object<CreateItem>({
-      name: Decoders.string.validate(
-        Validators.minLength(1),
-        Validators.maxLength(20),
-        Validators.pattern("^[A-Z].*", "Must start with uppercase."),
-      ),
-      tags: Decoders.strictArray(Decoders.string).validate(
-        Validators.minItems(1),
-        Validators.maxItems(3),
-      ),
-      count: Decoders.strictInteger
-        .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
-        .validate(Validators.minValue(0)),
-    }),
+    json: Decoders.object<CreateItem>(
+      {
+        name: Decoders.string.validate(
+          Validators.minLength(1),
+          Validators.maxLength(20),
+          Validators.pattern("^[A-Z].*", "Must start with uppercase."),
+        ),
+        tags: Decoders.strictArray(Decoders.string).validate(
+          Validators.minItems(1),
+          Validators.maxItems(3),
+        ),
+        count: Decoders.strictInteger
+          .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+          .validate(Validators.minValue(0)),
+      },
+      { allowUnknown: true },
+    ),
   },
 };
 
@@ -167,6 +171,7 @@ export const ItemsOperations = {
         operationId: "Items.list",
         method: "GET" as const,
         path: "/items",
+        routePattern: { segments: [[{ kind: "literal", value: "items" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -183,7 +188,14 @@ export const ItemsOperations = {
         name: "read",
         operationId: "Items.read",
         method: "GET" as const,
-        path: "/items/:itemId",
+        path: "/items/{itemId}",
+        routePattern: {
+          segments: [
+            [{ kind: "literal", value: "items" }],
+            [{ kind: "parameter", name: "itemId" }],
+          ],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -201,6 +213,7 @@ export const ItemsOperations = {
         operationId: "Items.create",
         method: "POST" as const,
         path: "/items",
+        routePattern: { segments: [[{ kind: "literal", value: "items" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -240,10 +253,10 @@ const ItemsInput = {
     (itemId, dryRun) => ({ itemId, dryRun }),
   ),
   updateBody: {
-    json: Decoders.object<UpdatePayload>({
-      name: Decoders.string,
-      tags: Decoders.optional(Decoders.strictArray(Decoders.string)),
-    }),
+    json: Decoders.object<UpdatePayload>(
+      { name: Decoders.string, tags: Decoders.optional(Decoders.strictArray(Decoders.string)) },
+      { allowUnknown: true },
+    ),
   },
 };
 
@@ -260,7 +273,14 @@ export const ItemsOperations = {
         name: "update",
         operationId: "Items.update",
         method: "PUT" as const,
-        path: "/items/:itemId",
+        path: "/items/{itemId}",
+        routePattern: {
+          segments: [
+            [{ kind: "literal", value: "items" }],
+            [{ kind: "parameter", name: "itemId" }],
+          ],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -324,6 +344,7 @@ export const UsersOperations = {
         operationId: "Users.me",
         method: "GET" as const,
         path: "/profile",
+        routePattern: { segments: [[{ kind: "literal", value: "profile" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -370,19 +391,25 @@ import {
 import * as ServerHints from "./server-hints.js";
 import type { TreeNode } from "./models.js";
 
-const _lazy6_Create_8_TreeNode_json: Decoder<TreeNode> = Decoders.lazy(() =>
-  Decoders.object<TreeNode>({
-    value: Decoders.string,
-    children: Decoders.optional(Decoders.strictArray(_lazy6_Create_8_TreeNode_json)),
-  }),
+const _lazy16_TreeInput_create_8_TreeNode_json: Decoder<TreeNode> = Decoders.lazy(() =>
+  Decoders.object<TreeNode>(
+    {
+      value: Decoders.string,
+      children: Decoders.optional(Decoders.strictArray(_lazy16_TreeInput_create_8_TreeNode_json)),
+    },
+    { allowUnknown: true },
+  ),
 );
 
 const TreeInput = {
   create: {
-    json: Decoders.object<TreeNode>({
-      value: Decoders.string,
-      children: Decoders.optional(Decoders.strictArray(_lazy6_Create_8_TreeNode_json)),
-    }),
+    json: Decoders.object<TreeNode>(
+      {
+        value: Decoders.string,
+        children: Decoders.optional(Decoders.strictArray(_lazy16_TreeInput_create_8_TreeNode_json)),
+      },
+      { allowUnknown: true },
+    ),
   },
 };
 
@@ -400,6 +427,7 @@ export const TreeOperations = {
         operationId: "Tree.create",
         method: "POST" as const,
         path: "/tree",
+        routePattern: { segments: [[{ kind: "literal", value: "tree" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -432,19 +460,60 @@ import type { UploadResult } from "./models.js";
 
 const UploadsInput = {
   single: {
-    multipart: Decoders.object({ name: Decoders.string, file: Decoders.file }),
+    multipart: Decoders.multipartFormData<{ name: string; file: File }>([
+      {
+        decoder: Decoders.string,
+        kind: "text",
+        contentTypes: ["text/plain"],
+        name: "name",
+        property: "name",
+      },
+      {
+        decoder: Decoders.file,
+        kind: "file",
+        contentTypes: ["*/*"],
+        name: "file",
+        property: "file",
+      },
+    ]),
   },
   multi: {
-    multipart: Decoders.object({
-      label: Decoders.string,
-      files: Decoders.oneOrMany(Decoders.file),
-    }),
+    multipart: Decoders.multipartFormData<{ label: string; files: File[] }>([
+      {
+        decoder: Decoders.string,
+        kind: "text",
+        contentTypes: ["text/plain"],
+        name: "label",
+        property: "label",
+      },
+      {
+        decoder: Decoders.file,
+        kind: "file",
+        contentTypes: ["*/*"],
+        multi: true,
+        name: "files",
+        property: "files",
+      },
+    ]),
   },
   optional: {
-    multipart: Decoders.object({
-      name: Decoders.string,
-      description: Decoders.optional(Decoders.string),
-    }),
+    multipart: Decoders.multipartFormData<{ name: string; description?: string }>([
+      {
+        decoder: Decoders.string,
+        kind: "text",
+        contentTypes: ["text/plain"],
+        name: "name",
+        property: "name",
+      },
+      {
+        decoder: Decoders.string,
+        kind: "text",
+        contentTypes: ["text/plain"],
+        optional: true,
+        name: "description",
+        property: "description",
+      },
+    ]),
   },
 };
 
@@ -464,6 +533,13 @@ export const UploadsOperations = {
         operationId: "Uploads.single",
         method: "POST" as const,
         path: "/upload/single",
+        routePattern: {
+          segments: [
+            [{ kind: "literal", value: "upload" }],
+            [{ kind: "literal", value: "single" }],
+          ],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -483,6 +559,10 @@ export const UploadsOperations = {
         operationId: "Uploads.multi",
         method: "POST" as const,
         path: "/upload/multi",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "upload" }], [{ kind: "literal", value: "multi" }]],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -502,6 +582,13 @@ export const UploadsOperations = {
         operationId: "Uploads.optional",
         method: "POST" as const,
         path: "/upload/optional",
+        routePattern: {
+          segments: [
+            [{ kind: "literal", value: "upload" }],
+            [{ kind: "literal", value: "optional" }],
+          ],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
@@ -550,42 +637,45 @@ import {
   decodeBody,
 } from "@typespex/runtime/server";
 import * as ServerHints from "./server-hints.js";
-import type { Cat, Circle, Dog, Left, Right, Square } from "./models.js";
+import type { Cat, Circle, Dog, Left, Mixed, Pet, Right, Shape, Square } from "./models.js";
 
 const ShapesInput = {
   create: {
-    json: Decoders.discriminated<Circle | Square>("kind", {
-      circle: Decoders.object<Circle>({
-        kind: Decoders.strictLiteral("circle"),
-        radius: Decoders.strictNumber,
-      }),
-      square: Decoders.object<Square>({
-        kind: Decoders.strictLiteral("square"),
-        size: Decoders.strictNumber,
-      }),
+    json: Decoders.discriminated<Shape>("kind", {
+      circle: Decoders.object<Circle>(
+        { kind: Decoders.strictLiteral("circle"), radius: Decoders.strictNumber },
+        { allowUnknown: true },
+      ),
+      square: Decoders.object<Square>(
+        { kind: Decoders.strictLiteral("square"), size: Decoders.strictNumber },
+        { allowUnknown: true },
+      ),
     }),
   },
   adopt: {
-    json: Decoders.discriminated<Cat | Dog>("species", {
-      cat: Decoders.object<Cat>({
-        species: Decoders.strictLiteral("cat"),
-        meows: Decoders.strictBoolean,
-      }),
-      dog: Decoders.object<Dog>({
-        species: Decoders.strictLiteral("dog"),
-        barks: Decoders.strictBoolean,
-      }),
+    json: Decoders.discriminated<Pet>("species", {
+      cat: Decoders.object<Cat>(
+        { species: Decoders.strictLiteral("cat"), meows: Decoders.strictBoolean },
+        { allowUnknown: true },
+      ),
+      dog: Decoders.object<Dog>(
+        { species: Decoders.strictLiteral("dog"), barks: Decoders.strictBoolean },
+        { allowUnknown: true },
+      ),
     }),
   },
   mix: {
-    json: Decoders.union<Left | Right>([
-      Decoders.object<Left>({ value: Decoders.string }),
-      Decoders.object<Right>({
-        count: Decoders.strictInteger.validate(
-          Validators.minValue(-2147483648),
-          Validators.maxValue(2147483647),
-        ),
-      }),
+    json: Decoders.union<Mixed>([
+      Decoders.object<Left>({ value: Decoders.string }, { allowUnknown: true }),
+      Decoders.object<Right>(
+        {
+          count: Decoders.strictInteger.validate(
+            Validators.minValue(-2147483648),
+            Validators.maxValue(2147483647),
+          ),
+        },
+        { allowUnknown: true },
+      ),
     ]),
   },
 };
@@ -606,15 +696,14 @@ export const ShapesOperations = {
         operationId: "Shapes.create",
         method: "POST" as const,
         path: "/shapes",
+        routePattern: { segments: [[{ kind: "literal", value: "shapes" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
     decodeInput: async (request) =>
-      decodeBody<Circle | Square>(request, ShapesInput.create, {
-        contentTypes: ["application/json"],
-      }),
+      decodeBody<Shape>(request, ShapesInput.create, { contentTypes: ["application/json"] }),
     encodeResult: (result: Circle) => ShapesOutput.create.encode(result),
-  } satisfies ServerOperation<Circle | Square, Circle>,
+  } satisfies ServerOperation<Shape, Circle>,
 
   adopt: {
     endpoint: {
@@ -625,13 +714,17 @@ export const ShapesOperations = {
         operationId: "Shapes.adopt",
         method: "POST" as const,
         path: "/shapes/pets",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "shapes" }], [{ kind: "literal", value: "pets" }]],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
     decodeInput: async (request) =>
-      decodeBody<Cat | Dog>(request, ShapesInput.adopt, { contentTypes: ["application/json"] }),
+      decodeBody<Pet>(request, ShapesInput.adopt, { contentTypes: ["application/json"] }),
     encodeResult: (result: Cat) => ShapesOutput.adopt.encode(result),
-  } satisfies ServerOperation<Cat | Dog, Cat>,
+  } satisfies ServerOperation<Pet, Cat>,
 
   mix: {
     endpoint: {
@@ -642,13 +735,17 @@ export const ShapesOperations = {
         operationId: "Shapes.mix",
         method: "POST" as const,
         path: "/shapes/mixed",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "shapes" }], [{ kind: "literal", value: "mixed" }]],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },
     decodeInput: async (request) =>
-      decodeBody<Left | Right>(request, ShapesInput.mix, { contentTypes: ["application/json"] }),
+      decodeBody<Mixed>(request, ShapesInput.mix, { contentTypes: ["application/json"] }),
     encodeResult: (result: Left) => ShapesOutput.mix.encode(result),
-  } satisfies ServerOperation<Left | Right, Left>,
+  } satisfies ServerOperation<Mixed, Left>,
 } as const;
 "
 `;

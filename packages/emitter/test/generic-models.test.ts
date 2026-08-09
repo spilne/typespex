@@ -288,23 +288,25 @@ describe("generic models", () => {
     expect(serverOperations).toContain("ResponseEncoders.json<Page<Pet>>(200)");
     expect(serverOperations).toContain("Decoders.object<Page<Pet>>");
     expect(serverOperations).toContain(
-      "items: Decoders.strictArray(Decoders.object<Pet>({ id: Decoders.string }))",
+      "Decoders.object<Pet>({ id: Decoders.string }, { allowUnknown: true })",
     );
     r.typecheck("generic-api");
   });
 
   test("reuses one generic declaration for multiple concrete instantiations", () => {
     const r = compileFixture("generic-multi", multiInstantiationSpec);
+    const operations = r.readFile("multi-generic-api", "server-operations.ts");
+    const server = r.readFile("multi-generic-api", "server.ts");
 
     expect(r.readFile("multi-generic-api", "models.ts")).toContain("export interface Page<T>");
-    expect(r.readFile("multi-generic-api", "server-operations.ts")).toContain("Page<Pet> | Accepted");
-    expect(r.readFile("multi-generic-api", "server-operations.ts")).toContain("Page<User>");
-    expect(r.readFile("multi-generic-api", "server.ts")).toContain(
-      "OperationHandler<Record<string, never>, Page<Pet> | Accepted, Ctx>",
+    expect(operations).toMatch(
+      /type _TypespexPayload_Accepted_response_[A-Za-z0-9_]+ = \{ operationId: string \};/,
     );
-    expect(r.readFile("multi-generic-api", "server.ts")).toContain(
-      "OperationHandler<Record<string, never>, Page<User>, Ctx>",
-    );
+    expect(operations).toContain("Page<Pet>");
+    expect(operations).toContain("Page<User>");
+    expect(server).toContain("Page<Pet>");
+    expect(server).toContain("_TypespexPayload_Accepted_response_");
+    expect(server).toContain("OperationHandler<Record<string, never>, Page<User>, Ctx>");
     r.typecheck("multi-generic-api");
   });
 
@@ -319,12 +321,8 @@ describe("generic models", () => {
     expect(models).toContain("byId: Record<string, T>;");
     expect(models).toContain("tuple: [T, string];");
     expect(models).toContain("export interface Pair<L, R>");
-    expect(server).toContain(
-      "OperationHandler<Record<string, never>, Page<Pair<Pet, User>>, Ctx>",
-    );
-    expect(server).toContain(
-      "OperationHandler<Page<Pair<Pet, User>>, Page<Pair<Pet, User>>, Ctx>",
-    );
+    expect(server).toContain("OperationHandler<Record<string, never>, Page<Pair<Pet, User>>, Ctx>");
+    expect(server).toContain("OperationHandler<Page<Pair<Pet, User>>, Page<Pair<Pet, User>>, Ctx>");
     expect(operations).toContain("data: Decoders.object<Pair<Pet, User>>");
     expect(operations).toContain("Decoders.record(");
     expect(operations).toContain("Decoders.tuple<[Pair<Pet, User>, string]>");
@@ -371,11 +369,9 @@ export const handlers: NestedGenericApiServer = {
     const server = r.readFile("value-generic-api", "server.ts");
 
     expect(models).toContain("export interface Resource<Name extends string, T = string>");
+    expect(server).toContain('OperationHandler<Record<string, never>, Resource<"pets", Pet>, Ctx>');
     expect(server).toContain(
-      "OperationHandler<Record<string, never>, Resource<\"pets\", Pet>, Ctx>",
-    );
-    expect(server).toContain(
-      "OperationHandler<Record<string, never>, Resource<\"default\", string>, Ctx>",
+      'OperationHandler<Record<string, never>, Resource<"default", string>, Ctx>',
     );
     r.typecheck("value-generic-api");
   });
@@ -396,7 +392,9 @@ export const handlers: NestedGenericApiServer = {
     expect(operations).not.toContain("OptionalProperties");
     expect(operations).not.toContain("PickProperties");
     expect(operations).not.toContain("OmitProperties");
-    expect(operations).toContain("owner: Decoders.optional(Decoders.object<Owner>({ id: Decoders.string }))");
+    expect(operations).toContain(
+      "Decoders.object<Owner>({ id: Decoders.string }, { allowUnknown: true })",
+    );
     r.typecheck("standard-template-api");
   });
 
@@ -429,45 +427,44 @@ export const handlers: NestedGenericApiServer = {
     expect(models).toContain("export interface QualifiedPetBox extends Box<Pet>");
     expect(models).toContain("export type Qualified<T> = Box<T> | Accepted<T>;");
     expect(models).not.toContain("Shared.Box");
-    expect(models).toContain("id: Tagged<\"pet\">;");
+    expect(models).toContain('id: Tagged<"pet">;');
     expect(models).toContain("maybe: Maybe<Pet>;");
     expect(server).toContain(
       "readonly readMaybe: OperationHandler<Record<string, never>, Maybe<Pet>, Ctx>",
     );
+    expect(server).toMatch(
+      /type _TypespexPayload_Accepted_response_[A-Za-z0-9_]+ = \{ value: Pet \};/,
+    );
+    expect(server).toContain("Pet | _TypespexPayload_Accepted_response_");
+    expect(server).toContain("Box<Pet> | _TypespexPayload_Accepted_response_");
+    expect(server).toContain("readonly createMaybe: OperationHandler<Maybe<Pet>, TaggedPet, Ctx>");
     expect(server).toContain(
-      "readonly readResult: OperationHandler<Record<string, never>, Pet | Accepted<Pet>, Ctx>",
+      'readonly createTagged: OperationHandler<TaggedPet, Tagged<"pet">, Ctx>',
     );
     expect(server).toContain(
-      "readonly readQualified: OperationHandler<Record<string, never>, Box<Pet> | Accepted<Pet>, Ctx>",
-    );
-    expect(server).toContain(
-      "readonly createMaybe: OperationHandler<Maybe<Pet>, TaggedPet, Ctx>",
-    );
-    expect(server).toContain(
-      "readonly createTagged: OperationHandler<TaggedPet, Tagged<\"pet\">, Ctx>",
-    );
-    expect(server).toContain(
-      "readonly echoTagged: OperationHandler<Tagged<\"pet\">, Tagged<\"pet\">, Ctx>",
+      'readonly echoTagged: OperationHandler<Tagged<"pet">, Tagged<"pet">, Ctx>',
     );
     expect(server).toContain(
       "readonly createScoped: OperationHandler<{ ownerId: string; body: Maybe<Pet> }, TaggedPet, Ctx>",
     );
     expect(server).toContain(
-      "readonly search: OperationHandler<{ tag: Tagged<\"pet\"> }, TaggedPet, Ctx>",
+      'readonly search: OperationHandler<{ tag: Tagged<"pet"> }, TaggedPet, Ctx>',
     );
     expect(operations).toContain("ResponseEncoders.json<Maybe<Pet>>(200)");
-    expect(operations).toContain("ResponseEncoders.matchVariant<Pet | Accepted<Pet>>");
-    expect(operations).toContain("ResponseEncoders.matchVariant<Box<Pet> | Accepted<Pet>>");
+    expect(operations).toContain("Pet | _TypespexPayload_Accepted_response_");
+    expect(operations).toContain("Box<Pet> | _TypespexPayload_Accepted_response_");
     expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("echoTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("Decoders.union<Maybe<Pet>>");
     expect(operations).toContain("decodeBody<Maybe<Pet>>(request, TypesInput.createMaybe, {");
-    expect(operations).toContain("decodeBody<Tagged<\"pet\">>(request, TypesInput.echoTagged, {");
-    expect(operations).toContain("Decoders.object<TaggedPet>({");
+    expect(operations).toContain('decodeBody<Tagged<"pet">>(request, TypesInput.echoTagged, {');
+    expect(operations).toContain("Decoders.object<TaggedPet>(");
     expect(operations).toContain("maybe: Decoders.union<Maybe<Pet>>");
     expect(operations).toContain(".map((body) => ({ body }))");
-    expect(operations).toContain("decodeRequestInputAndBody<{ ownerId: string }, { body: Maybe<Pet> }>");
-    expect(operations).toContain("RequestDecoders.query(\"tag\", Decoders.string)");
+    expect(operations).toContain(
+      "decodeRequestInputAndBody<{ ownerId: string }, { body: Maybe<Pet> }>",
+    );
+    expect(operations).toContain('RequestDecoders.query("tag", Decoders.string)');
     r.typecheck("template-type-api");
   });
 

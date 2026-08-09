@@ -307,6 +307,44 @@ describe("unsupported request body serialization", () => {
     expect(result.listFiles("object-text-body-api")).toEqual([]);
   });
 
+  test("rejects malformed request and multipart-part content types", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "malformed-request-content-types",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      model InvalidPart {
+        @header contentType: "not-a-media-type";
+        @body value: string;
+      }
+
+      @service namespace MalformedRequestContentTypesApi {
+        @route("/direct") @post
+        op direct(
+          @header contentType: "also-invalid",
+          @body body: string,
+        ): void;
+
+        @route("/multipart") @post
+        op multipart(
+          @multipartBody body: {
+            part: HttpPart<InvalidPart>;
+          },
+        ): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain("unsupported-request-body");
+    expect(diagnostics).toContain("also-invalid");
+    expect(diagnostics).toContain("not-a-media-type");
+    expect(diagnostics).toContain("content type must be a valid type/subtype media type");
+    expect(diagnostics).toContain('multipart part "part"');
+    expect(result.listFiles("malformed-request-content-types-api")).toEqual([]);
+  });
+
   test("rejects nested URL-encoded form bodies", () => {
     const result = compileFixtureExpectingDiagnostics(
       "nested-form-body",

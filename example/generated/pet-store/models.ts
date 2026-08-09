@@ -12,16 +12,19 @@ export interface CreatePetInput {
 }
 
 export interface NotFoundError {
+  _: 404;
   code: "NOT_FOUND";
   message: string;
 }
 
 export interface ForbiddenError {
+  _: 403;
   code: "FORBIDDEN";
   message: string;
 }
 
 export interface ConflictError {
+  _: 409;
   code: "CONFLICT";
   message: string;
 }
