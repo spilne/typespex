@@ -17,9 +17,9 @@ export interface NotFoundError {
   message: string;
 }
 
-export interface ForbiddenError {
-  _: 403;
-  code: "FORBIDDEN";
+export interface UnauthorizedError {
+  _: 401;
+  code: "UNAUTHORIZED";
   message: string;
 }
 

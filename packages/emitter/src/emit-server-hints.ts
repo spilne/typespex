@@ -6,7 +6,13 @@ import {
   type Namespace,
   type Type,
 } from "@typespec/compiler";
-import type { HttpOperation } from "@typespec/http";
+import {
+  getAuthenticationForOperation,
+  type Authentication,
+  type HttpAuth,
+  type HttpOperation,
+  type OAuth2Flow,
+} from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
@@ -28,6 +34,43 @@ const BUILTIN_HINTS: readonly HintDefinition[] = [
   { id: "TypeSpec.tags", exportName: "typeSpecTagsHint", typeText: "readonly string[]" },
 ] as const;
 
+const AUTH_HINT: HintDefinition = {
+  id: "TypeSpec.Http.useAuth",
+  exportName: "typeSpecAuthHint",
+  typeText: "TypeSpecAuthentication",
+};
+
+const AUTH_TYPE_DECLARATIONS = `export interface TypeSpecAuthentication {
+  readonly options: readonly {
+    readonly schemes: readonly TypeSpecAuthScheme[];
+  }[];
+}
+
+export interface TypeSpecAuthSchemeBase {
+  readonly id: string;
+  readonly description?: string;
+}
+
+export type TypeSpecOAuth2Flow =
+  | { readonly type: "authorizationCode"; readonly authorizationUrl: string; readonly tokenUrl: string; readonly refreshUrl?: string; readonly scopes: readonly TypeSpecOAuth2Scope[] }
+  | { readonly type: "implicit"; readonly authorizationUrl: string; readonly refreshUrl?: string; readonly scopes: readonly TypeSpecOAuth2Scope[] }
+  | { readonly type: "password"; readonly tokenUrl: string; readonly refreshUrl?: string; readonly scopes: readonly TypeSpecOAuth2Scope[] }
+  | { readonly type: "clientCredentials"; readonly tokenUrl: string; readonly refreshUrl?: string; readonly scopes: readonly TypeSpecOAuth2Scope[] };
+
+export interface TypeSpecOAuth2Scope {
+  readonly value: string;
+  readonly description?: string;
+}
+
+export type TypeSpecAuthScheme = TypeSpecAuthSchemeBase &
+  (
+    | { readonly type: "http"; readonly scheme: string }
+    | { readonly type: "apiKey"; readonly in: "header" | "query" | "cookie"; readonly name: string }
+    | { readonly type: "oauth2"; readonly flows: readonly TypeSpecOAuth2Flow[] }
+    | { readonly type: "openIdConnect"; readonly openIdConnectUrl: string; readonly scopes?: readonly string[] }
+    | { readonly type: "noAuth" }
+  );`.split("\n");
+
 export function emitServerHints(
   ctx: EmitterCtx,
   httpOperations: HttpOperation[],
@@ -39,6 +82,11 @@ export function emitServerHints(
   lines.push("");
   lines.push('import { createHintKey } from "@typespex/runtime/server";');
   lines.push("");
+
+  if (definitions.some((definition) => definition.id === AUTH_HINT.id)) {
+    lines.push(...AUTH_TYPE_DECLARATIONS);
+    lines.push("");
+  }
 
   for (const definition of definitions) {
     const exportName = tsIdentifier(definition.exportName, "hint");
@@ -92,6 +140,21 @@ export function emitHintEntries(
   return dedupeHintEntries(entries);
 }
 
+export function emitOperationHintEntries(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+): EmittedHintEntry[] {
+  const entries = emitHintEntries(ctx, operation.operation);
+  const authentication = getAuthenticationForOperation(ctx.program, operation.operation);
+  if (authentication) {
+    entries.push({
+      keyExportName: AUTH_HINT.exportName,
+      valueExpression: valueToTs(authenticationValue(authentication)),
+    });
+  }
+  return dedupeHintEntries(entries);
+}
+
 function collectHintDefinitions(
   ctx: EmitterCtx,
   httpOperations: HttpOperation[],
@@ -99,6 +162,13 @@ function collectHintDefinitions(
   const definitions = new Map<string, HintDefinition>();
   for (const builtin of BUILTIN_HINTS) {
     definitions.set(builtin.id, builtin);
+  }
+  if (
+    httpOperations.some((operation) =>
+      getAuthenticationForOperation(ctx.program, operation.operation),
+    )
+  ) {
+    definitions.set(AUTH_HINT.id, AUTH_HINT);
   }
 
   const addFromTarget = (target: Type) => {
@@ -110,7 +180,10 @@ function collectHintDefinitions(
       if (!existing) {
         definitions.set(custom.id, custom);
       } else if (existing.typeText !== custom.typeText) {
-        definitions.set(custom.id, { ...existing, typeText: `${existing.typeText} | ${custom.typeText}` });
+        definitions.set(custom.id, {
+          ...existing,
+          typeText: `${existing.typeText} | ${custom.typeText}`,
+        });
       }
     }
   };
@@ -124,6 +197,62 @@ function collectHintDefinitions(
   }
 
   return [...definitions.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function authenticationValue(authentication: Authentication): JsonLike {
+  return {
+    options: authentication.options.map((option) => ({
+      schemes: option.schemes.map(authSchemeValue),
+    })),
+  };
+}
+
+function authSchemeValue(scheme: HttpAuth): JsonLike {
+  const value: Record<string, JsonLike> = {
+    id: scheme.id,
+    type: scheme.type,
+  };
+  if (scheme.description !== undefined) value.description = scheme.description;
+
+  switch (scheme.type) {
+    case "http":
+      value.scheme = scheme.scheme;
+      break;
+    case "apiKey":
+      value.in = scheme.in;
+      value.name = scheme.name;
+      break;
+    case "oauth2":
+      value.flows = scheme.flows.map(oauth2FlowValue);
+      break;
+    case "openIdConnect": {
+      value.openIdConnectUrl = scheme.openIdConnectUrl;
+      const scopes = (scheme as HttpAuth & { readonly scopes?: readonly string[] }).scopes;
+      if (scopes !== undefined) value.scopes = [...scopes];
+      break;
+    }
+    case "noAuth":
+      break;
+  }
+
+  return value;
+}
+
+function oauth2FlowValue(flow: OAuth2Flow): JsonLike {
+  const raw = flow as OAuth2Flow & Readonly<Record<string, unknown>>;
+  const value: Record<string, JsonLike> = {
+    type: flow.type,
+    scopes: flow.scopes.map((scope) => {
+      const emitted: Record<string, JsonLike> = { value: scope.value };
+      if (scope.description !== undefined) emitted.description = scope.description;
+      return emitted;
+    }),
+  };
+
+  for (const field of ["authorizationUrl", "tokenUrl", "refreshUrl"] as const) {
+    if (typeof raw[field] === "string") value[field] = raw[field];
+  }
+  return value;
 }
 
 export function getOperationNamespaces(

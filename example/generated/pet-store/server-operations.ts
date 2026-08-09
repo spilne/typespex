@@ -18,15 +18,18 @@ import * as ServerHints from "./server-hints.js";
 import type {
   ConflictError,
   CreatePetInput,
-  ForbiddenError,
   NotFoundError,
   Pet,
+  UnauthorizedError,
   UploadResult,
 } from "./models.js";
 
 type _TypespexPayload_ConflictError_response_1_payload = { code: "CONFLICT"; message: string };
-type _TypespexPayload_ForbiddenError_response_1_payload = { code: "FORBIDDEN"; message: string };
 type _TypespexPayload_NotFoundError_response_1_payload = { code: "NOT_FOUND"; message: string };
+type _TypespexPayload_UnauthorizedError_response_1_payload = {
+  code: "UNAUTHORIZED";
+  message: string;
+};
 
 const _jsonSerializer_ConflictError_response_1_payload: JsonSerializer<_TypespexPayload_ConflictError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_ConflictError_response_1_payload>(() =>
@@ -35,17 +38,21 @@ const _jsonSerializer_ConflictError_response_1_payload: JsonSerializer<_Typespex
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
-const _jsonSerializer_ForbiddenError_response_1_payload: JsonSerializer<_TypespexPayload_ForbiddenError_response_1_payload> =
-  JsonSerializers.lazy<_TypespexPayload_ForbiddenError_response_1_payload>(() =>
-    JsonSerializers.object<_TypespexPayload_ForbiddenError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"FORBIDDEN">() },
-      { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
-    ]),
-  );
 const _jsonSerializer_NotFoundError_response_1_payload: JsonSerializer<_TypespexPayload_NotFoundError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_NotFoundError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_NotFoundError_response_1_payload>([
       { property: "code", wireName: "code", serializer: JsonSerializers.identity<"NOT_FOUND">() },
+      { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
+    ]),
+  );
+const _jsonSerializer_UnauthorizedError_response_1_payload: JsonSerializer<_TypespexPayload_UnauthorizedError_response_1_payload> =
+  JsonSerializers.lazy<_TypespexPayload_UnauthorizedError_response_1_payload>(() =>
+    JsonSerializers.object<_TypespexPayload_UnauthorizedError_response_1_payload>([
+      {
+        property: "code",
+        wireName: "code",
+        serializer: JsonSerializers.identity<"UNAUTHORIZED">(),
+      },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
@@ -158,7 +165,7 @@ const PetsOutput = {
   delete: ResponseEncoders.matchVariant<
     | void
     | _TypespexPayload_NotFoundError_response_1_payload
-    | _TypespexPayload_ForbiddenError_response_1_payload
+    | _TypespexPayload_UnauthorizedError_response_1_payload
   >([
     {
       when: (result): result is void => result === undefined,
@@ -182,18 +189,18 @@ const PetsOutput = {
       }),
     },
     {
-      when: (result): result is _TypespexPayload_ForbiddenError_response_1_payload =>
+      when: (result): result is _TypespexPayload_UnauthorizedError_response_1_payload =>
         typeof result === "object" &&
         result !== null &&
         "code" in result &&
-        result["code"] === "FORBIDDEN",
-      encoder: ResponseEncoders.variant<_TypespexPayload_ForbiddenError_response_1_payload>({
-        status: 403,
+        result["code"] === "UNAUTHORIZED",
+      encoder: ResponseEncoders.variant<_TypespexPayload_UnauthorizedError_response_1_payload>({
+        status: 401,
         contentType: "application/json",
         omit: ["_"],
         transformBody: (body) =>
-          _jsonSerializer_ForbiddenError_response_1_payload.serialize(
-            body as _TypespexPayload_ForbiddenError_response_1_payload,
+          _jsonSerializer_UnauthorizedError_response_1_payload.serialize(
+            body as _TypespexPayload_UnauthorizedError_response_1_payload,
             "$response",
           ),
       }),
@@ -306,7 +313,12 @@ export const PetsOperations = {
           segments: [[{ kind: "literal", value: "pets" }], [{ kind: "parameter", name: "petId" }]],
           trailingSlash: false,
         },
-        hints: createHints([[ServerHints.authHint, "admin"]]),
+        hints: createHints([
+          [
+            ServerHints.typeSpecAuthHint,
+            { options: [{ schemes: [{ id: "BearerAuth", type: "http", scheme: "Bearer" }] }] },
+          ],
+        ]),
       },
     },
     decodeInput: (request, pathParams) =>
@@ -315,13 +327,13 @@ export const PetsOperations = {
       result:
         | void
         | _TypespexPayload_NotFoundError_response_1_payload
-        | _TypespexPayload_ForbiddenError_response_1_payload,
+        | _TypespexPayload_UnauthorizedError_response_1_payload,
     ) => PetsOutput.delete.encode(result),
   } satisfies ServerOperation<
     { petId: string },
     | void
     | _TypespexPayload_NotFoundError_response_1_payload
-    | _TypespexPayload_ForbiddenError_response_1_payload
+    | _TypespexPayload_UnauthorizedError_response_1_payload
   >,
 
   uploadPhoto: {

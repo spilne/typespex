@@ -96,13 +96,6 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`@discriminated union "${"name"}" cannot be represented safely: ${"reason"}.`,
       },
     },
-    "ignored-auth": {
-      severity: "error",
-      messages: {
-        default:
-          "@useAuth is not supported by @typespex/emitter; generating this service would omit required authentication metadata.",
-      },
-    },
     "unsupported-visibility-filter": {
       severity: "error",
       messages: {

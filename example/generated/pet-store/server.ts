@@ -4,8 +4,11 @@ import type { MatchedRequestContext, OperationHandler } from "@typespex/runtime/
 import type { CreatePetInput, Pet, UploadResult } from "./models.js";
 
 type _TypespexPayload_ConflictError_response_1_payload = { code: "CONFLICT"; message: string };
-type _TypespexPayload_ForbiddenError_response_1_payload = { code: "FORBIDDEN"; message: string };
 type _TypespexPayload_NotFoundError_response_1_payload = { code: "NOT_FOUND"; message: string };
+type _TypespexPayload_UnauthorizedError_response_1_payload = {
+  code: "UNAUTHORIZED";
+  message: string;
+};
 
 export interface PetsServer<Ctx = MatchedRequestContext> {
   readonly list: OperationHandler<{ limit?: number; offset?: number }, Pet[], Ctx>;
@@ -23,7 +26,7 @@ export interface PetsServer<Ctx = MatchedRequestContext> {
     { petId: string },
     | void
     | _TypespexPayload_NotFoundError_response_1_payload
-    | _TypespexPayload_ForbiddenError_response_1_payload,
+    | _TypespexPayload_UnauthorizedError_response_1_payload,
     Ctx
   >;
   readonly uploadPhoto: OperationHandler<

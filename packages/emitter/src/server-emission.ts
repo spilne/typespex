@@ -14,6 +14,7 @@ import {
 import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import {
   emitHintEntries,
+  emitOperationHintEntries,
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
@@ -124,7 +125,7 @@ function buildOperationEmission(
         hints: emitHintEntries(ctx, namespace),
       }),
     ),
-    operationHints: emitHintEntries(ctx, operation.operation),
+    operationHints: emitOperationHintEntries(ctx, operation),
     httpOperation: operation,
   };
 }

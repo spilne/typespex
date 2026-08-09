@@ -365,6 +365,30 @@ injects the required discriminator into every model variant. Request decoding di
 field, response serialization transforms the selected payload recursively, and unnamed default
 variants handle discriminator values that are not mapped explicitly.
 
+Standard `@useAuth` requirements are exposed to middleware through the generated
+`typeSpecAuthHint`. Each operation carries its fully resolved requirement after service,
+namespace, interface, and operation overrides. The `options` array represents alternatives (OR),
+while the `schemes` within an option must be satisfied together (AND); `NoAuth`, API keys, HTTP
+schemes, OAuth 2.0 flows and scopes, and OpenID Connect metadata retain their declared details.
+The runtime does not enforce a policy itself. Applications can import the generated key and apply
+their own middleware:
+
+```ts
+import type { MatchedRequestContext, Middleware } from "@typespex/runtime/server";
+import { typeSpecAuthHint } from "./generated/pet-store/server-hints.js";
+
+export const authMiddleware: Middleware<MatchedRequestContext> = (next) => async (ctx) => {
+  const auth = ctx.match?.endpoint.operation.hints.get(typeSpecAuthHint);
+  // Interpret auth.options for the schemes supported by this application.
+  if (auth && !requestSatisfies(auth, ctx.request)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return next(ctx);
+};
+```
+
+A complete bearer-policy example is available in [`example/auth.ts`](./example/auth.ts).
+
 Raw file responses accept a Web `File`, validate its media type, and use its name for a safe
 `Content-Disposition` filename. Empty optional media types and names omit those response headers;
 a filename relocated to a modeled response header suppresses the default `Content-Disposition`.
@@ -378,12 +402,11 @@ configured.
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
 diagnostics cover custom or location-incompatible scalar encodings, non-JSON encoded property
-names, unsupported `@discriminated` configurations, and standard `@useAuth` metadata.
-They also reject ambiguous nested response unions that require different JSON transforms,
-parameter serialization styles, media/body shape combinations, and output layouts that the
-generated runtime cannot represent
-safely. Authentication and authorization enforcement should currently be implemented in
-application middleware. Supported response bodies are JSON, `text/*`,
+names, and unsupported `@discriminated` configurations. They also reject ambiguous nested response
+unions that require different JSON transforms, parameter serialization styles, media/body shape
+combinations, and output layouts that the generated runtime cannot represent safely.
+Authentication and authorization enforcement belongs in application middleware. Supported
+response bodies are JSON, `text/*`,
 `application/octet-stream`, resolved raw `File` media types, and empty responses. Multipart
 response bodies remain unsupported.
 

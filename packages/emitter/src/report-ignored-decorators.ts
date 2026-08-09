@@ -8,7 +8,6 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
-import { getAuthenticationForOperation } from "@typespec/http";
 import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
@@ -49,22 +48,12 @@ export function reportIgnoredDecorators(
     encodedNames: new Set(),
     discriminated: new Set(),
   };
-  let authReported = false;
-
   for (const operation of operations) {
     const traversal: OperationTraversal = {
       operation,
       seen: new Set(),
       encodes: new Set(),
     };
-
-    if (!authReported && getAuthenticationForOperation(ctx.program, operation.operation)) {
-      $lib.reportDiagnostic(ctx.program, {
-        code: "ignored-auth",
-        target: ctx.service.namespace,
-      });
-      authReported = true;
-    }
 
     for (const parameter of operation.parameters.parameters) {
       checkHttpParameter(ctx, parameter);
