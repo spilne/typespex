@@ -1,11 +1,6 @@
 import "@typespec/http";
-import "./lib.js";
 
 using TypeSpec.Http;
-using TypeSpec.Reflection;
-
-extern dec auth(target: Operation, scope: valueof string);
-
 
 model PetNoContentResponse {
   ...NoContentResponse;
@@ -43,9 +38,9 @@ namespace PetStore {
   }
 
   @error
-  model ForbiddenError {
-    @statusCode _: 403;
-    code: "FORBIDDEN";
+  model UnauthorizedError {
+    @statusCode _: 401;
+    code: "UNAUTHORIZED";
     message: string;
   }
 
@@ -78,11 +73,11 @@ namespace PetStore {
         @minLength(1)
         @path petId: string
     ): Pet | NotFoundError;
-    @auth("admin")
+    @useAuth(BearerAuth)
     @delete delete(
         @minLength(1)
         @path petId: string
-    ): void | NotFoundError | ForbiddenError;
+    ): void | NotFoundError | UnauthorizedError;
 
     @route("/{petId}/photo")
     @post uploadPhoto(

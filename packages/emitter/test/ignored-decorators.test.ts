@@ -28,14 +28,6 @@ model Event {
 }
 `;
 
-const authSpec = `${header("AuthApi")}
-model Item { id: string; }
-@useAuth(BearerAuth)
-@route("/items") interface Items {
-  @get list(): Item[];
-}
-`;
-
 const cleanSpec = `${header("CleanApi")}
 model Item { id: string; createdAt: utcDateTime; }
 @route("/items") interface Items {
@@ -95,7 +87,6 @@ describe("unsupported decorator diagnostics", () => {
       "createdAt",
       "encode-api",
     ],
-    ["@useAuth", "diag-auth", authSpec, "ignored-auth", "authentication", "auth-api"],
   ] as const) {
     test(`${decorator} fails generation`, () => {
       const result = compileFixtureExpectingDiagnostics(fixture, source);

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bearerAuthMiddleware } from "./auth.js";
 import type { PetStoreServer } from "./generated/pet-store/server.js";
 import type { Pet, UploadResult } from "./generated/pet-store/models.js";
 import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
@@ -34,17 +35,7 @@ function createTestServer() {
         return item;
       },
 
-      delete: async ({ petId }, ctx) => {
-        const authScope = ctx.match?.endpoint.operation.hints.get(
-          (await import("./generated/pet-store/server-hints.js")).authHint,
-        );
-        if (authScope === "admin") {
-          const isAdmin = ctx.request.headers.get("x-role") === "admin";
-          if (!isAdmin) {
-            return { code: "FORBIDDEN" as const, message: "admin only" };
-          }
-        }
-
+      delete: async ({ petId }) => {
         const item = [...store.values()].find((i) => i.id === petId);
         if (!item) return { code: "NOT_FOUND" as const, message: "not found" };
         store.delete(item.name);
@@ -63,7 +54,9 @@ function createTestServer() {
     },
   };
 
-  const router = createPetStoreServerRouter(impl);
+  const router = createPetStoreServerRouter(impl, {
+    middleware: [bearerAuthMiddleware],
+  });
   return { router, store };
 }
 
@@ -381,7 +374,9 @@ describe("e2e: full request pipeline", () => {
       const { router } = createTestServer();
       const created = await createItem(router, "Temp");
       const res = await router.handle(
-        req("DELETE", `/pets/${created.id}`, undefined, { "x-role": "admin" }),
+        req("DELETE", `/pets/${created.id}`, undefined, {
+          authorization: "Bearer example-token",
+        }),
       );
 
       expect(res.status).toBe(204);
@@ -391,7 +386,9 @@ describe("e2e: full request pipeline", () => {
     test("returns 404 NotFoundError for unknown id", async () => {
       const { router } = createTestServer();
       const res = await router.handle(
-        req("DELETE", "/pets/unknown", undefined, { "x-role": "admin" }),
+        req("DELETE", "/pets/unknown", undefined, {
+          authorization: "Bearer example-token",
+        }),
       );
 
       expect(res.status).toBe(404);
@@ -401,22 +398,26 @@ describe("e2e: full request pipeline", () => {
       });
     });
 
-    test("returns 403 ForbiddenError when not admin (discriminated error)", async () => {
+    test("returns 401 UnauthorizedError without a bearer credential", async () => {
       const { router } = createTestServer();
       const created = await createItem(router, "Protected");
       const res = await router.handle(req("DELETE", `/pets/${created.id}`));
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
       expect(await res.json()).toEqual({
-        code: "FORBIDDEN",
-        message: "admin only",
+        code: "UNAUTHORIZED",
+        message: "A bearer token is required.",
       });
     });
 
     test("item is removed from store after delete", async () => {
       const { router } = createTestServer();
       const created = await createItem(router, "Bye");
-      await router.handle(req("DELETE", `/pets/${created.id}`, undefined, { "x-role": "admin" }));
+      await router.handle(
+        req("DELETE", `/pets/${created.id}`, undefined, {
+          authorization: "Bearer example-token",
+        }),
+      );
 
       const res = await router.handle(req("GET", `/pets/${created.id}`));
       expect(res.status).toBe(404);
@@ -529,21 +530,23 @@ describe("e2e: full request pipeline", () => {
   // -------------------------------------------------------------------
 
   describe("operation metadata", () => {
-    test("auth hint is accessible and enforced by handler", async () => {
+    test("standard auth hint is enforced by middleware", async () => {
       const { router } = createTestServer();
       const created = await createItem(router, "Guarded");
 
-      // No x-role header → handler reads auth hint → returns 403
-      const forbidden = await router.handle(req("DELETE", `/pets/${created.id}`));
-      expect(forbidden.status).toBe(403);
-      expect(await forbidden.json()).toEqual({
-        code: "FORBIDDEN",
-        message: "admin only",
+      // No Authorization header → middleware reads the resolved auth hint.
+      const unauthorized = await router.handle(req("DELETE", `/pets/${created.id}`));
+      expect(unauthorized.status).toBe(401);
+      expect(await unauthorized.json()).toEqual({
+        code: "UNAUTHORIZED",
+        message: "A bearer token is required.",
       });
 
-      // With x-role: admin → succeeds
+      // A bearer credential satisfies this application's example policy.
       const ok = await router.handle(
-        req("DELETE", `/pets/${created.id}`, undefined, { "x-role": "admin" }),
+        req("DELETE", `/pets/${created.id}`, undefined, {
+          authorization: "Bearer example-token",
+        }),
       );
       expect(ok.status).toBe(204);
     });

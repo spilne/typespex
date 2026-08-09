@@ -2,7 +2,63 @@
 
 import { createHintKey } from "@typespex/runtime/server";
 
-export const authHint = createHintKey<string>("auth");
+export interface TypeSpecAuthentication {
+  readonly options: readonly {
+    readonly schemes: readonly TypeSpecAuthScheme[];
+  }[];
+}
+
+export interface TypeSpecAuthSchemeBase {
+  readonly id: string;
+  readonly description?: string;
+}
+
+export type TypeSpecOAuth2Flow =
+  | {
+      readonly type: "authorizationCode";
+      readonly authorizationUrl: string;
+      readonly tokenUrl: string;
+      readonly refreshUrl?: string;
+      readonly scopes: readonly TypeSpecOAuth2Scope[];
+    }
+  | {
+      readonly type: "implicit";
+      readonly authorizationUrl: string;
+      readonly refreshUrl?: string;
+      readonly scopes: readonly TypeSpecOAuth2Scope[];
+    }
+  | {
+      readonly type: "password";
+      readonly tokenUrl: string;
+      readonly refreshUrl?: string;
+      readonly scopes: readonly TypeSpecOAuth2Scope[];
+    }
+  | {
+      readonly type: "clientCredentials";
+      readonly tokenUrl: string;
+      readonly refreshUrl?: string;
+      readonly scopes: readonly TypeSpecOAuth2Scope[];
+    };
+
+export interface TypeSpecOAuth2Scope {
+  readonly value: string;
+  readonly description?: string;
+}
+
+export type TypeSpecAuthScheme = TypeSpecAuthSchemeBase &
+  (
+    | { readonly type: "http"; readonly scheme: string }
+    | { readonly type: "apiKey"; readonly in: "header" | "query" | "cookie"; readonly name: string }
+    | { readonly type: "oauth2"; readonly flows: readonly TypeSpecOAuth2Flow[] }
+    | {
+        readonly type: "openIdConnect";
+        readonly openIdConnectUrl: string;
+        readonly scopes?: readonly string[];
+      }
+    | { readonly type: "noAuth" }
+  );
+
 export const typeSpecDocHint = createHintKey<string>("TypeSpec.doc");
+export const typeSpecAuthHint = createHintKey<TypeSpecAuthentication>("TypeSpec.Http.useAuth");
 export const typeSpecSummaryHint = createHintKey<string>("TypeSpec.summary");
 export const typeSpecTagsHint = createHintKey<readonly string[]>("TypeSpec.tags");

@@ -1,5 +1,6 @@
 import type { MatchedRequestContext } from "@typespex/runtime/server";
 import { toBunHandler } from "@typespex/shim-bun";
+import { bearerAuthMiddleware } from "./auth.js";
 import type { PetStoreServer } from "./generated/pet-store/server.js";
 import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
 
@@ -72,7 +73,9 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
   },
 };
 
-const router = createPetStoreServerRouter(serverImpl);
+const router = createPetStoreServerRouter(serverImpl, {
+  middleware: [bearerAuthMiddleware],
+});
 const handler = toBunHandler(router);
 
 const server = Bun.serve({
