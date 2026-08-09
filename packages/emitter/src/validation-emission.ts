@@ -95,6 +95,7 @@ export function decodedTypeKind(ctx: EmitterCtx, type: Type): DecodedTypeKind {
     case "ModelProperty":
       return decodedTypeKind(ctx, type.type);
     case "String":
+    case "StringTemplate":
       return "string";
     case "Number":
       return "number";

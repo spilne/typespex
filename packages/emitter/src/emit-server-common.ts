@@ -45,6 +45,11 @@ import {
 import { multipartBodyTypeToTs, multipartModelPropertyDeclarations } from "./multipart-input.js";
 import { numericLiteralExpression, resolveNumericLiteral } from "./numeric-literals.js";
 import {
+  getStringLiteralValue,
+  isStringLikeLiteral,
+  stringLiteralExpression,
+} from "./string-template-literals.js";
+import {
   getPayloadCollection,
   getPayloadBodyContext,
   getRequestBodyProjection,
@@ -1471,7 +1476,7 @@ function resolveImplicitLiteralBranches(
   for (const response of responses) {
     for (const prop of getResponseProperties(response)) {
       if (isResponseDispatchMetadata(ctx, response, prop.name)) continue;
-      if (prop.type.kind === "String" || prop.type.kind === "Number") {
+      if (isStringLikeLiteral(prop.type) || prop.type.kind === "Number") {
         candidateFields.add(prop.name);
       }
     }
@@ -1500,10 +1505,14 @@ function emitLiteralFieldBranches(
     if (!prop || prop.optional || isResponseDispatchMetadata(ctx, response, prop.name)) {
       return undefined;
     }
-    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
+    if (!isStringLikeLiteral(prop.type) && prop.type.kind !== "Number") return undefined;
     const numericValue = prop.type.kind === "Number" ? resolveNumericLiteral(prop.type) : undefined;
     if (numericValue && !numericValue.supported) return undefined;
-    const valueKey = numericValue ? numericValue.key : `string:${prop.type.value}`;
+    const stringValue = isStringLikeLiteral(prop.type)
+      ? getStringLiteralValue(prop.type)
+      : undefined;
+    if (!numericValue && stringValue === undefined) return undefined;
+    const valueKey = numericValue ? numericValue.key : `string:${stringValue}`;
     if (values.has(valueKey)) return undefined;
     values.add(valueKey);
     const subject = subjectExpr(response);
@@ -1512,7 +1521,7 @@ function emitLiteralFieldBranches(
     const literal =
       prop.type.kind === "Number"
         ? numericLiteralExpression(prop.type)
-        : JSON.stringify(prop.type.value);
+        : stringLiteralExpression(prop.type);
     const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${literal}`;
     const guarded =
       response.bodyProperty === undefined

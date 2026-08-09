@@ -152,6 +152,8 @@ function finiteStringValues(type: Type): readonly string[] | undefined {
   switch (type.kind) {
     case "String":
       return [type.value];
+    case "StringTemplate":
+      return type.stringValue === undefined ? undefined : [type.stringValue];
     case "Enum": {
       const values = [...type.members.values()].map((member) => member.value ?? member.name);
       return values.every((value): value is string => typeof value === "string")
