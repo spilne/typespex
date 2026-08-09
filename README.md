@@ -549,7 +549,7 @@ Run the same primary checks used by CI:
 ```sh
 bun run build
 bun run typecheck
-bun test
+bun run test
 bun run check:generated
 ```
 

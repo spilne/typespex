@@ -52,7 +52,7 @@ jobs:
         run: bun run check:generated
 
       - name: Test
-        run: bun test
+        run: bun run test
 
   typespec-compatibility:
     runs-on: ubuntu-latest

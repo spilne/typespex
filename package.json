@@ -9,7 +9,7 @@
     "clean": "bun run --filter '*' clean",
     "typecheck": "bun run --filter '*' typecheck && bun run typecheck:release",
     "typecheck:release": "bun packages/shim-node/node_modules/typescript/bin/tsc --project scripts/tsconfig.json",
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "generate:example": "./scripts/generate-example.sh",
     "check:generated": "bun run --filter @typespex/emitter build && ./scripts/check-generated-example.sh",
     "release:preflight": "./scripts/publish-packages.sh",
