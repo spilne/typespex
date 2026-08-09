@@ -1,202 +1,192 @@
 /**
- * Compressed radix tree matcher — one tree per HTTP method.
- * O(m) matching where m = number of path segments, fewer hops due to compression.
+ * Segment radix matcher — one precedence-aware tree per HTTP method.
+ *
+ * Each node checks exact static segments, then embedded-parameter mixed
+ * segments, then a whole-segment parameter. Branches of equal rank backtrack
+ * so later-segment specificity remains deterministic.
  */
 
-import type { RouteMatch, RouteMatcher } from "./matcher.js";
-import { routeSegments, routeStructure } from "./match-common.js";
+import type {
+  RouteMatch,
+  RouteMatcher,
+  RouteMatcherInput,
+  RoutePatternSegment,
+} from "./matcher.js";
+import {
+  type NormalizedRouteInput,
+  normalizeRouteInputs,
+  routePatternSegmentKind,
+} from "./match-common.js";
+import { type CanonicalPathSegment, canonicalizePathname, rawSegmentSlice } from "./match-path.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
-// ── Build (uncompressed trie) ──
-
 interface StoredRoute<R> {
-  value: R;
-  paramNames: string[];
+  readonly value: R;
+  readonly paramNames: readonly string[];
 }
 
-interface BuildNode<R> {
-  children: Map<string, BuildNode<R>>;
-  param?: BuildNode<R>;
-  route?: StoredRoute<R>;
+interface MixedEdge<R> {
+  readonly matcher: RegExp;
+  readonly child: RadixNode<R>;
 }
-
-// ── Runtime (compressed, multi-segment static edges) ──
 
 interface RadixNode<R> {
-  children: Map<string, { tail: string[]; child: RadixNode<R> }>;
+  readonly staticChildren: Map<string, RadixNode<R>>;
+  readonly mixedChildren: Map<string, MixedEdge<R>>;
   param?: RadixNode<R>;
-  route?: StoredRoute<R>;
+  readonly routes: Map<boolean, StoredRoute<R>>;
 }
 
-function createBuildNode<R>(): BuildNode<R> {
-  return { children: new Map() };
+interface RankedMatch<R> {
+  readonly match: RouteMatch<R>;
+  readonly ranks: readonly number[];
 }
 
-function trieInsert<R>(root: BuildNode<R>, pattern: string, route: R): void {
-  const segments = routeSegments(pattern);
-  const paramNames: string[] = [];
+function createNode<R>(): RadixNode<R> {
+  return {
+    staticChildren: new Map(),
+    mixedChildren: new Map(),
+    routes: new Map(),
+  };
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mixedSegmentKey(segment: RoutePatternSegment): string {
+  return JSON.stringify(
+    segment.map((token) => (token.kind === "literal" ? ["literal", token.value] : ["parameter"])),
+  );
+}
+
+function compileMixedSegment(segment: RoutePatternSegment): RegExp {
+  let source = "";
+  for (const token of segment) {
+    source += token.kind === "literal" ? escapeRegex(token.value) : "([^\\/]*?)";
+  }
+  return new RegExp(`^${source}$`, "du");
+}
+
+function insertRoute<R>(root: RadixNode<R>, input: NormalizedRouteInput<R>): void {
   let node = root;
-
-  for (const seg of segments) {
-    if (seg.startsWith(":")) {
-      paramNames.push(seg.slice(1));
-      if (!node.param) {
-        node.param = createBuildNode();
-      }
-      node = node.param;
-    } else {
-      let child = node.children.get(seg);
+  for (const segment of input.pattern.segments) {
+    const kind = routePatternSegmentKind(segment);
+    if (kind === "static") {
+      const literal = segment[0]!;
+      const value = literal.kind === "literal" ? literal.value : "";
+      let child = node.staticChildren.get(value);
       if (!child) {
-        child = createBuildNode();
-        node.children.set(seg, child);
+        child = createNode();
+        node.staticChildren.set(value, child);
       }
       node = child;
+    } else if (kind === "parameter") {
+      node.param ??= createNode();
+      node = node.param;
+    } else {
+      const key = mixedSegmentKey(segment);
+      let edge = node.mixedChildren.get(key);
+      if (!edge) {
+        edge = { matcher: compileMixedSegment(segment), child: createNode() };
+        node.mixedChildren.set(key, edge);
+      }
+      node = edge.child;
     }
   }
-
-  node.route = { value: route, paramNames };
+  node.routes.set(input.pattern.trailingSlash, {
+    value: input.route,
+    paramNames: input.parameterNames,
+  });
 }
 
-function compress<R>(build: BuildNode<R>): RadixNode<R> {
-  const node: RadixNode<R> = {
-    children: new Map(),
-    route: build.route,
-  };
-
-  if (build.param) {
-    node.param = compress(build.param);
+function finishMatch<R>(stored: StoredRoute<R>, captured: readonly string[]): RouteMatch<R> {
+  if (stored.paramNames.length === 0) {
+    return { route: stored.value, pathParams: EMPTY_PARAMS };
   }
-
-  for (const [seg, child] of build.children) {
-    const tail: string[] = [];
-    let cur = child;
-    while (cur.route === undefined && cur.param === undefined && cur.children.size === 1) {
-      const entry = cur.children.entries().next().value;
-      if (!entry) break;
-      const [nextSeg, nextChild] = entry;
-      tail.push(nextSeg);
-      cur = nextChild;
-    }
-    node.children.set(seg, { tail, child: compress(cur) });
+  const pathParams: Record<string, string> = Object.create(null);
+  for (let index = 0; index < stored.paramNames.length; index++) {
+    pathParams[stored.paramNames[index]!] = captured[index]!;
   }
-
-  return node;
+  return { route: stored.value, pathParams };
 }
 
-function nextSegment(path: string, i: number, len: number): number {
-  let j = i;
-  while (j < len && path.charCodeAt(j) !== 0x2f) j++;
-  return j;
+function compareRanks(left: readonly number[], right: readonly number[]): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index++) {
+    if (left[index] !== right[index]) return left[index]! - right[index]!;
+  }
+  return left.length - right.length;
 }
 
-function radixSearch<R>(
+function search<R>(
   node: RadixNode<R>,
-  pathname: string,
-  i: number,
-  len: number,
-  captured?: string[],
-): RouteMatch<R> | null {
-  if (i === len) {
-    if (!node.route) return null;
-
-    const { value, paramNames } = node.route;
-    if (paramNames.length === 0) {
-      return { route: value, pathParams: EMPTY_PARAMS };
-    }
-
-    const pathParams: Record<string, string> = Object.create(null);
-    for (let p = 0; p < paramNames.length; p++) {
-      pathParams[paramNames[p]] = captured![p];
-    }
-    return { route: value, pathParams };
+  segments: readonly CanonicalPathSegment[],
+  segmentIndex: number,
+  trailingSlash: boolean,
+  captured: string[],
+): RankedMatch<R> | undefined {
+  if (segmentIndex === segments.length) {
+    const stored = node.routes.get(trailingSlash);
+    return stored ? { match: finishMatch(stored, captured), ranks: [] } : undefined;
   }
 
-  const j = nextSegment(pathname, i, len);
-  if (j === i) return null;
+  const segment = segments[segmentIndex]!;
+  const staticChild = node.staticChildren.get(segment.value);
+  if (staticChild) {
+    const result = search(staticChild, segments, segmentIndex + 1, trailingSlash, captured);
+    if (result) return { match: result.match, ranks: [0, ...result.ranks] };
+  }
 
-  const seg = pathname.substring(i, j);
-  const edge = node.children.get(seg);
-  if (edge) {
-    let pos = j < len ? j + 1 : len;
-    let matched = true;
-
-    for (const tailSegment of edge.tail) {
-      if (pos >= len) {
-        matched = false;
-        break;
-      }
-
-      const end = nextSegment(pathname, pos, len);
-      if (end === pos || pathname.substring(pos, end) !== tailSegment) {
-        matched = false;
-        break;
-      }
-      pos = end < len ? end + 1 : len;
+  let bestMixed: RankedMatch<R> | undefined;
+  for (const edge of node.mixedChildren.values()) {
+    const matched = edge.matcher.exec(segment.value);
+    if (!matched) continue;
+    const capturedLength = captured.length;
+    for (let captureIndex = 1; captureIndex < matched.indices!.length; captureIndex++) {
+      const range = matched.indices![captureIndex];
+      const [start, end] = range!;
+      captured.push(rawSegmentSlice(segment, start, end));
     }
-
-    if (matched) {
-      const match = radixSearch(edge.child, pathname, pos, len, captured);
-      if (match) return match;
+    const result = search(edge.child, segments, segmentIndex + 1, trailingSlash, captured);
+    captured.length = capturedLength;
+    if (!result) continue;
+    const ranked = { match: result.match, ranks: [1, ...result.ranks] };
+    if (!bestMixed || compareRanks(ranked.ranks, bestMixed.ranks) < 0) {
+      bestMixed = ranked;
     }
   }
+  if (bestMixed) return bestMixed;
 
   if (node.param) {
-    const values = captured ?? [];
-    values.push(seg);
-    const match = radixSearch(node.param, pathname, j < len ? j + 1 : len, len, values);
-    if (match) return match;
-    values.pop();
+    captured.push(segment.raw);
+    const result = search(node.param, segments, segmentIndex + 1, trailingSlash, captured);
+    captured.pop();
+    if (result) return { match: result.match, ranks: [2, ...result.ranks] };
   }
-
-  return null;
-}
-
-function radixLookup<R>(root: RadixNode<R>, pathname: string): RouteMatch<R> | null {
-  const len = pathname.length;
-  if (len === 0 || pathname.charCodeAt(0) !== 0x2f) return null;
-  if (len > 1 && pathname.charCodeAt(len - 1) === 0x2f) return null;
-
-  return radixSearch(root, pathname, 1, len);
+  return undefined;
 }
 
 export function createRadixMatcher<R>(
-  routes: Array<{ method: string; path: string; route: R }>,
+  routes: ReadonlyArray<RouteMatcherInput<R>>,
 ): RouteMatcher<R> {
-  const buildTrees = new Map<string, BuildNode<R>>();
-  const seenByMethod = new Map<string, Set<string>>();
-
-  for (const { method, path, route } of routes) {
-    let seen = seenByMethod.get(method);
-    if (!seen) {
-      seen = new Set();
-      seenByMethod.set(method, seen);
-    }
-
-    const structure = routeStructure(path);
-    if (seen.has(structure)) {
-      throw new Error(`Duplicate route: ${method} ${path}`);
-    }
-    seen.add(structure);
-
-    let root = buildTrees.get(method);
+  const roots = new Map<string, RadixNode<R>>();
+  for (const route of normalizeRouteInputs(routes)) {
+    let root = roots.get(route.method);
     if (!root) {
-      root = createBuildNode();
-      buildTrees.set(method, root);
+      root = createNode();
+      roots.set(route.method, root);
     }
-    trieInsert(root, path, route);
-  }
-
-  const trees = new Map<string, RadixNode<R>>();
-  for (const [method, build] of buildTrees) {
-    trees.set(method, compress(build));
+    insertRoute(root, route);
   }
 
   return {
     match(method, pathname) {
-      const root = trees.get(method);
-      if (!root) return null;
-      return radixLookup(root, pathname);
+      const root = roots.get(method);
+      const parsed = canonicalizePathname(pathname);
+      if (!root || !parsed) return null;
+      return search(root, parsed.segments, 0, parsed.trailingSlash, [])?.match ?? null;
     },
   };
 }

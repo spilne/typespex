@@ -1,135 +1,149 @@
 /**
  * Single-regex matcher — one compiled regex per HTTP method.
- * All routes compiled into one regex; one native exec() call matches + extracts params.
+ * All routes compile into one alternative set; one native exec() call matches
+ * and extracts whole-segment or embedded path parameters.
  */
 
-import type { RouteMatch, RouteMatcher } from "./matcher.js";
-import { routeSegments, routeStructure } from "./match-common.js";
+import type {
+  RouteMatch,
+  RouteMatcher,
+  RouteMatcherInput,
+  RoutePatternSegment,
+} from "./matcher.js";
+import {
+  type NormalizedRouteInput,
+  normalizeRouteInputs,
+  type RouteSegmentKind,
+} from "./match-common.js";
+import { canonicalizePathname, rawPathSlice } from "./match-path.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
 interface RouteGroupInfo<R> {
-  route: R;
-  paramNames: string[];
-  firstGroup: number;
+  readonly route: R;
+  readonly paramNames: readonly string[];
+  readonly firstGroup: number;
 }
 
 interface CompiledMethodRouter<R> {
-  regex: RegExp;
-  /** Sparse: groupIndex → RouteGroupInfo (set only at each route's firstGroup) */
-  groupToRoute: Array<RouteGroupInfo<R> | undefined>;
+  readonly regex: RegExp;
+  /** Sparse: groupIndex → route metadata, set only at each route's first group. */
+  readonly groupToRoute: Array<RouteGroupInfo<R> | undefined>;
 }
 
-function compareSpecificity(left: { path: string }, right: { path: string }): number {
-  const leftSegments = routeSegments(left.path);
-  const rightSegments = routeSegments(right.path);
-  const length = Math.min(leftSegments.length, rightSegments.length);
+const SEGMENT_RANK: Readonly<Record<RouteSegmentKind, number>> = {
+  static: 0,
+  mixed: 1,
+  parameter: 2,
+};
 
-  for (let i = 0; i < length; i++) {
-    const leftSegment = leftSegments[i];
-    const rightSegment = rightSegments[i];
-    const leftIsParam = leftSegment.startsWith(":");
-    const rightIsParam = rightSegment.startsWith(":");
+function compareSpecificity<R>(
+  left: NormalizedRouteInput<R>,
+  right: NormalizedRouteInput<R>,
+): number {
+  const length = Math.min(left.segmentKinds.length, right.segmentKinds.length);
+  for (let index = 0; index < length; index++) {
+    const rankDifference =
+      SEGMENT_RANK[left.segmentKinds[index]!] - SEGMENT_RANK[right.segmentKinds[index]!];
+    if (rankDifference !== 0) return rankDifference;
+  }
+  if (left.segmentKinds.length !== right.segmentKinds.length) {
+    return left.segmentKinds.length - right.segmentKinds.length;
+  }
+  return left.structure < right.structure ? -1 : left.structure > right.structure ? 1 : 0;
+}
 
-    if (leftIsParam !== rightIsParam) return leftIsParam ? 1 : -1;
-    if (!leftIsParam && leftSegment !== rightSegment) {
-      return leftSegment < rightSegment ? -1 : 1;
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function compileSegment(segment: RoutePatternSegment): {
+  readonly source: string;
+  readonly parameterNames: readonly string[];
+} {
+  let source = "";
+  const parameterNames: string[] = [];
+  const parameterPattern = segment.length === 1 ? "([^\\/]+?)" : "([^\\/]*?)";
+  for (const token of segment) {
+    if (token.kind === "literal") {
+      source += escapeRegex(token.value);
+    } else {
+      source += parameterPattern;
+      parameterNames.push(token.name);
     }
   }
-
-  return leftSegments.length - rightSegments.length;
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return { source, parameterNames };
 }
 
 function compileMethodRoutes<R>(
-  routes: Array<{ path: string; route: R }>,
+  routes: ReadonlyArray<NormalizedRouteInput<R>>,
 ): CompiledMethodRouter<R> {
   const alternatives: string[] = [];
   const groupToRoute: Array<RouteGroupInfo<R> | undefined> = [];
   let nextGroup = 1;
 
-  for (const { path, route } of routes) {
+  for (const { pattern, route } of routes) {
     const paramNames: string[] = [];
     const firstGroup = nextGroup;
+    let source = pattern.segments.length === 0 ? "\\/" : "";
 
-    const segments = routeSegments(path);
-    let pattern = segments.length === 0 ? "\\/" : "";
-    for (const seg of segments) {
-      pattern += "\\/";
-      if (seg.startsWith(":")) {
-        paramNames.push(seg.slice(1));
-        pattern += "([^\\/]+)";
-        nextGroup++;
-      } else {
-        pattern += escapeRegex(seg);
-      }
+    for (const segment of pattern.segments) {
+      const compiled = compileSegment(segment);
+      source += `\\/${compiled.source}`;
+      paramNames.push(...compiled.parameterNames);
+      nextGroup += compiled.parameterNames.length;
     }
+    if (pattern.segments.length > 0 && pattern.trailingSlash) source += "\\/";
 
-    // Routes with no params need a marker group to detect the match
+    // A marker group identifies static alternatives in the combined regex.
     if (paramNames.length === 0) {
-      pattern = `(${pattern})`;
-      nextGroup++;
+      source = `(${source})`;
+      nextGroup += 1;
     }
 
-    alternatives.push(pattern);
+    alternatives.push(source);
     groupToRoute[firstGroup] = { route, paramNames, firstGroup };
   }
 
-  const regex = new RegExp(`^(?:${alternatives.join("|")})$`);
-  return { regex, groupToRoute };
+  return {
+    regex: new RegExp(`^(?:${alternatives.join("|")})$`, "du"),
+    groupToRoute,
+  };
 }
 
 function regexLookup<R>(compiled: CompiledMethodRouter<R>, pathname: string): RouteMatch<R> | null {
-  const match = compiled.regex.exec(pathname);
+  const canonical = canonicalizePathname(pathname);
+  if (!canonical) return null;
+  const match = compiled.regex.exec(canonical.value);
   if (!match) return null;
 
-  for (let i = 1; i < match.length; i++) {
-    if (match[i] === undefined) continue;
-
-    const info = compiled.groupToRoute[i];
+  for (let index = 1; index < match.length; index++) {
+    if (match[index] === undefined) continue;
+    const info = compiled.groupToRoute[index];
     if (!info) continue;
 
     if (info.paramNames.length === 0) {
       return { route: info.route, pathParams: EMPTY_PARAMS };
     }
     const pathParams: Record<string, string> = Object.create(null);
-    for (let p = 0; p < info.paramNames.length; p++) {
-      pathParams[info.paramNames[p]] = match[info.firstGroup + p];
+    const indices = match.indices!;
+    for (let parameter = 0; parameter < info.paramNames.length; parameter++) {
+      const range = indices[info.firstGroup + parameter]!;
+      pathParams[info.paramNames[parameter]!] = rawPathSlice(canonical, range[0], range[1]);
     }
     return { route: info.route, pathParams };
   }
-
   return null;
 }
 
 export function createRegexMatcher<R>(
-  routes: Array<{ method: string; path: string; route: R }>,
+  routes: ReadonlyArray<RouteMatcherInput<R>>,
 ): RouteMatcher<R> {
-  const perMethod = new Map<string, Array<{ path: string; route: R }>>();
-  const seenByMethod = new Map<string, Set<string>>();
-
-  for (const { method, path, route } of routes) {
-    let seen = seenByMethod.get(method);
-    if (!seen) {
-      seen = new Set();
-      seenByMethod.set(method, seen);
-    }
-
-    const structure = routeStructure(path);
-    if (seen.has(structure)) {
-      throw new Error(`Duplicate route: ${method} ${path}`);
-    }
-    seen.add(structure);
-
-    let group = perMethod.get(method);
-    if (!group) {
-      group = [];
-      perMethod.set(method, group);
-    }
-    group.push({ path, route });
+  const perMethod = new Map<string, NormalizedRouteInput<R>[]>();
+  for (const route of normalizeRouteInputs(routes)) {
+    const group = perMethod.get(route.method);
+    if (group) group.push(route);
+    else perMethod.set(route.method, [route]);
   }
 
   const compiled = new Map<string, CompiledMethodRouter<R>>();
@@ -140,8 +154,7 @@ export function createRegexMatcher<R>(
   return {
     match(method, pathname) {
       const router = compiled.get(method);
-      if (!router) return null;
-      return regexLookup(router, pathname);
+      return router ? regexLookup(router, pathname) : null;
     },
   };
 }

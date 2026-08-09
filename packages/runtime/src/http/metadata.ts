@@ -1,14 +1,8 @@
 import type { Hints } from "../core/hints.js";
+import type { RoutePattern } from "../matcher.js";
 
 /** HTTP methods supported by the generated server runtime. */
-export type HttpMethod =
-  | "GET"
-  | "POST"
-  | "PUT"
-  | "PATCH"
-  | "DELETE"
-  | "HEAD"
-  | "OPTIONS";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 
 /** Runtime metadata for the generated TypeSpec service. */
 export interface ServiceMeta {
@@ -29,6 +23,8 @@ export interface OperationMeta {
   readonly operationId: string;
   readonly method: HttpMethod;
   readonly path: string;
+  /** Structured matcher route. Falls back to legacy `path` when omitted. */
+  readonly routePattern?: RoutePattern;
   readonly hints: Hints;
 }
 
