@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { connect, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { toNodeHandler } from "../src/index.js";
 import type { HttpRouter } from "@typespex/runtime/server";
@@ -25,6 +26,7 @@ interface MockRequestOptions {
   readonly waitForRequestEnd?: boolean;
   readonly simulateBackpressure?: boolean;
   readonly onRequest?: (request: IncomingMessage) => void;
+  readonly onResponse?: (response: ServerResponse) => void;
 }
 
 interface MockResponse {
@@ -126,6 +128,7 @@ async function invokeHandler(
       return this;
     },
   }) as unknown as ServerResponse;
+  options.onResponse?.(res);
 
   await (handler(req, res) as unknown as Promise<void>);
   if (requestEnded) {
@@ -147,6 +150,169 @@ async function invokeHandler(
     body: Buffer.concat(chunks).toString("utf8"),
     destroyed: res.destroyed,
   };
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function withTimeout<T>(promise: Promise<T>, description: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}.`)), 2_000);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+function waitForAbort(signal: AbortSignal): Promise<unknown> {
+  if (signal.aborted) return Promise.resolve(signal.reason);
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(signal.reason), { once: true });
+  });
+}
+
+interface RealServer {
+  readonly port: number;
+  readonly close: () => Promise<void>;
+}
+
+async function startRealServer(router: HttpRouter): Promise<RealServer> {
+  const sockets = new Set<Socket>();
+  const server = createServer(toNodeHandler(router, { logger: silentLogger }));
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      server.off("listening", onListening);
+      server.off("error", onError);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    server.once("listening", onListening);
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1");
+  });
+
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected the test server to listen on an ephemeral TCP port.");
+  }
+
+  return {
+    port: address.port,
+    async close() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}
+
+async function openRawClient(port: number, request: string): Promise<Socket> {
+  const socket = connect({ host: "127.0.0.1", port });
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+    };
+    const onConnect = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+  });
+  socket.write(request);
+  return socket;
+}
+
+function waitForSocketText(socket: Socket, expected: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let received = "";
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString("utf8");
+      if (received.includes(expected)) {
+        cleanup();
+        resolve(received);
+      }
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error(`Socket closed before receiving ${JSON.stringify(expected)}.`));
+    };
+
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+  });
+}
+
+function readSocketToEnd(socket: Socket): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let received = "";
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("end", onEnd);
+      socket.off("error", onError);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString("utf8");
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(received);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.on("data", onData);
+    socket.once("end", onEnd);
+    socket.once("error", onError);
+  });
+}
+
+function disconnectClient(socket: Socket): void {
+  if (typeof socket.resetAndDestroy === "function") socket.resetAndDestroy();
+  else socket.destroy();
 }
 
 describe("toNodeHandler", () => {
@@ -400,6 +566,249 @@ describe("toNodeHandler", () => {
     });
 
     expect(JSON.parse(response.body)).toEqual({ aborted: true, hasConnectionError: true });
+  });
+
+  test("aborts a bodyless Request signal when a real client disconnects during a slow handler", async () => {
+    const requestSeen = deferred<Request>();
+    const router = mockRouter(async (request) => {
+      requestSeen.resolve(request);
+      await waitForAbort(request.signal);
+      return new Response("client already left");
+    });
+    const server = await startRealServer(router);
+    let socket: Socket | undefined;
+
+    try {
+      socket = await openRawClient(
+        server.port,
+        "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      const request = await withTimeout(requestSeen.promise, "the bodyless request handler");
+      expect(request.signal.aborted).toBe(false);
+
+      disconnectClient(socket);
+      const reason = await withTimeout(waitForAbort(request.signal), "the bodyless request abort");
+
+      expect(request.signal.aborted).toBe(true);
+      expect(reason).toBeInstanceOf(Error);
+    } finally {
+      socket?.destroy();
+      await server.close();
+    }
+  });
+
+  test("keeps disconnect tracking after the request body stream has completed", async () => {
+    const bodyRead = deferred<{ readonly request: Request; readonly body: string }>();
+    let outgoingResponse: ServerResponse | undefined;
+    const router = mockRouter(async (request) => {
+      const body = await request.text();
+      const aborted = waitForAbort(request.signal);
+      bodyRead.resolve({ request, body });
+      await aborted;
+      return new Response("client already left");
+    });
+    const handled = invokeHandler(toNodeHandler(router, { logger: silentLogger }), {
+      method: "POST",
+      url: "/upload",
+      body: "payload",
+      onResponse(response) {
+        outgoingResponse = response;
+      },
+    });
+
+    const completed = await withTimeout(bodyRead.promise, "the completed request body");
+    expect(completed.body).toBe("payload");
+    expect(completed.request.signal.aborted).toBe(false);
+
+    outgoingResponse?.emit("close");
+    await withTimeout(waitForAbort(completed.request.signal), "the post-body request abort");
+    await handled;
+    expect(completed.request.signal.aborted).toBe(true);
+  });
+
+  test("cancels an idle response stream once when a real client disconnects", async () => {
+    const requestSeen = deferred<Request>();
+    const responseCancelled = deferred<unknown>();
+    let cancellationCount = 0;
+    const router = mockRouter(async (request) => {
+      requestSeen.resolve(request);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first chunk"));
+          },
+          cancel(reason) {
+            cancellationCount++;
+            responseCancelled.resolve(reason);
+          },
+        }),
+      );
+    });
+    const server = await startRealServer(router);
+    let socket: Socket | undefined;
+
+    try {
+      socket = await openRawClient(
+        server.port,
+        "GET /events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      const responseText = waitForSocketText(socket, "first chunk");
+      const request = await withTimeout(requestSeen.promise, "the streaming request");
+      await withTimeout(responseText, "the first response chunk");
+      expect(request.signal.aborted).toBe(false);
+
+      disconnectClient(socket);
+      const cancellationReason = await withTimeout(
+        responseCancelled.promise,
+        "the idle response cancellation",
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(request.signal.aborted).toBe(true);
+      expect(cancellationReason).toBe(request.signal.reason);
+      expect(cancellationCount).toBe(1);
+    } finally {
+      socket?.destroy();
+      await server.close();
+    }
+  });
+
+  test("cancels an idle response stream and cleans up when ServerResponse emits an error", async () => {
+    const responseIdle = deferred<void>();
+    const responseCancelled = deferred<unknown>();
+    const connectionError = new Error("response connection failed");
+    let requestSignal: AbortSignal | undefined;
+    let outgoingResponse: ServerResponse | undefined;
+    let responseCloseListeners = 0;
+    let responseErrorListeners = 0;
+    let cancellationCount = 0;
+    let loggedErrors = 0;
+    const router = mockRouter(async (request) => {
+      requestSignal = request.signal;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first chunk"));
+          },
+          pull() {
+            responseIdle.resolve();
+          },
+          cancel(reason) {
+            cancellationCount++;
+            responseCancelled.resolve(reason);
+          },
+        }),
+      );
+    });
+    const handled = invokeHandler(
+      toNodeHandler(router, {
+        logger: {
+          ...silentLogger,
+          error() {
+            loggedErrors++;
+          },
+        },
+      }),
+      {
+        url: "/events",
+        onResponse(response) {
+          outgoingResponse = response;
+          responseCloseListeners = response.listenerCount("close");
+          responseErrorListeners = response.listenerCount("error");
+        },
+      },
+    );
+
+    await withTimeout(responseIdle.promise, "the idle response reader");
+    outgoingResponse?.emit("error", connectionError);
+    const cancellationReason = await withTimeout(
+      responseCancelled.promise,
+      "the failed response cancellation",
+    );
+    await handled;
+
+    expect(cancellationReason).toBe(connectionError);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(requestSignal?.reason).toBe(connectionError);
+    expect(cancellationCount).toBe(1);
+    expect(loggedErrors).toBe(0);
+    expect(outgoingResponse?.listenerCount("close")).toBe(responseCloseListeners);
+    expect(outgoingResponse?.listenerCount("error")).toBe(responseErrorListeners);
+  });
+
+  test("does not abort or cancel a normally completed real-socket request", async () => {
+    const requestSeen = deferred<Request>();
+    let abortCount = 0;
+    let cancellationCount = 0;
+    const router = mockRouter(async (request) => {
+      requestSeen.resolve(request);
+      request.signal.addEventListener("abort", () => abortCount++);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("complete"));
+            controller.close();
+          },
+          cancel() {
+            cancellationCount++;
+          },
+        }),
+      );
+    });
+    const server = await startRealServer(router);
+    let socket: Socket | undefined;
+
+    try {
+      socket = await openRawClient(
+        server.port,
+        "GET /complete HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      const request = await withTimeout(requestSeen.promise, "the completed request");
+      const response = await withTimeout(readSocketToEnd(socket), "the completed response");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(response).toContain("complete");
+      expect(request.signal.aborted).toBe(false);
+      expect(abortCount).toBe(0);
+      expect(cancellationCount).toBe(0);
+    } finally {
+      socket?.destroy();
+      await server.close();
+    }
+  });
+
+  test("removes lifecycle listeners after a completed request", async () => {
+    const socket = new EventEmitter();
+    let incomingRequest: IncomingMessage | undefined;
+    let outgoingResponse: ServerResponse | undefined;
+    let requestAbortedListeners = 0;
+    let requestErrorListeners = 0;
+    let responseCloseListeners = 0;
+    let responseErrorListeners = 0;
+    const socketCloseListeners = socket.listenerCount("close");
+    const socketErrorListeners = socket.listenerCount("error");
+
+    await invokeHandler(toNodeHandler(mockRouter(async () => new Response("ok"))), {
+      url: "/complete",
+      onRequest(request) {
+        Object.defineProperty(request, "socket", { value: socket });
+        incomingRequest = request;
+        requestAbortedListeners = request.listenerCount("aborted");
+        requestErrorListeners = request.listenerCount("error");
+      },
+      onResponse(response) {
+        outgoingResponse = response;
+        responseCloseListeners = response.listenerCount("close");
+        responseErrorListeners = response.listenerCount("error");
+      },
+    });
+
+    expect(incomingRequest?.listenerCount("aborted")).toBe(requestAbortedListeners);
+    expect(incomingRequest?.listenerCount("error")).toBe(requestErrorListeners);
+    expect(outgoingResponse?.listenerCount("close")).toBe(responseCloseListeners);
+    expect(outgoingResponse?.listenerCount("error")).toBe(responseErrorListeners);
+    expect(socket.listenerCount("close")).toBe(socketCloseListeners);
+    expect(socket.listenerCount("error")).toBe(socketErrorListeners);
   });
 
   test("preserves multiple Set-Cookie headers", async () => {
