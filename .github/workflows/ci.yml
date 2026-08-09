@@ -130,7 +130,7 @@ jobs:
 
       - name: Import package exports with Node
         run: |
-          for package in runtime emitter shim-bun shim-hono shim-node; do
+          for package in runtime emitter shim-bun shim-express shim-hono shim-node; do
             (cd "packages/$package" && node --input-type=module -e "await import('@typespex/$package')")
           done
           (cd packages/runtime && node --input-type=module -e "await import('@typespex/runtime/server')")

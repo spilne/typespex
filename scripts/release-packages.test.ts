@@ -22,6 +22,7 @@ describe("release package validation", () => {
       "@typespex/shim-bun",
       "@typespex/shim-hono",
       "@typespex/shim-node",
+      "@typespex/shim-express",
     ]);
   });
 
@@ -83,9 +84,11 @@ describe("release package validation", () => {
   test("requires every package version to match the release tag", () => {
     const packages = RELEASE_PACKAGES.map((definition, index) => ({
       definition,
-      manifest: { version: index === 4 ? "0.1.2" : "0.1.1" },
+      manifest: {
+        version: index === RELEASE_PACKAGES.length - 1 ? "0.1.2" : "0.1.1",
+      },
     }));
-    expect(() => assertTagMatches("v0.1.1", packages)).toThrow("@typespex/shim-node");
+    expect(() => assertTagMatches("v0.1.1", packages)).toThrow("@typespex/shim-express");
   });
 
   test("rejects links before extracting release tarballs", () => {
