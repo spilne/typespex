@@ -17,6 +17,16 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+    ignore:
+      # These majors change the repository's declared compatibility contract.
+      # Security updates remain eligible because update-types only filters
+      # scheduled version updates.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
