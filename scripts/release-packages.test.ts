@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   RELEASE_PACKAGES,
   assertTagMatches,
+  parseArguments,
   validatePackedManifest,
   validateSourceMapDocument,
   validateSourceMaps,
@@ -15,6 +16,19 @@ const runtime = RELEASE_PACKAGES[0]!;
 const internalVersions = new Map(RELEASE_PACKAGES.map((pkg) => [pkg.name, "0.1.1"]));
 
 describe("release package validation", () => {
+  test("keeps package-only checks incapable of publishing", () => {
+    expect(parseArguments(["--package-check"])).toEqual({
+      publish: false,
+      provenance: false,
+      packageCheckOnly: true,
+      tag: undefined,
+      outputDirectory: undefined,
+    });
+    expect(() =>
+      parseArguments(["--package-check", "--publish", "--tag", "v0.1.1"]),
+    ).toThrow("cannot be combined with --publish");
+  });
+
   test("keeps dependency order explicit", () => {
     expect(RELEASE_PACKAGES.map((pkg) => pkg.name)).toEqual([
       "@typespex/runtime",

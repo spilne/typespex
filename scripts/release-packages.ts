@@ -82,9 +82,10 @@ interface PackedPackage extends LoadedPackage {
   readonly tarball: string;
 }
 
-interface CliOptions {
+export interface CliOptions {
   readonly publish: boolean;
   readonly provenance: boolean;
+  readonly packageCheckOnly: boolean;
   readonly tag?: string;
   readonly outputDirectory?: string;
 }
@@ -210,18 +211,12 @@ function main(): void {
   const packages = loadReleasePackages();
   verifySourceManifests(packages);
   if (options.tag !== undefined) assertTagMatches(options.tag, packages);
-  if (options.publish && options.tag === undefined) {
-    throw new ReleaseError("Publishing requires --tag v<version>.");
-  }
-  if (options.provenance && !options.publish) {
-    throw new ReleaseError("--provenance is only valid together with --publish.");
-  }
 
   if (options.publish) {
     assertVersionsAreUnpublished(packages);
   }
 
-  runQualityGates();
+  if (!options.packageCheckOnly) runQualityGates();
 
   const { path: outputDirectory, removeOnSuccess } = createOutputDirectory(options.outputDirectory);
   let succeeded = false;
@@ -240,6 +235,8 @@ function main(): void {
       // Close the race between the early registry check and the first write.
       assertVersionsAreUnpublished(packages);
       publishAll(packed, options.provenance, outputDirectory);
+    } else if (options.packageCheckOnly) {
+      console.log("\nPackage checks passed. No packages were published.");
     } else {
       console.log("\nRelease preflight passed. No packages were published.");
     }
@@ -254,9 +251,10 @@ function main(): void {
   }
 }
 
-function parseArguments(args: readonly string[]): CliOptions {
+export function parseArguments(args: readonly string[]): CliOptions {
   let publish = false;
   let provenance = false;
+  let packageCheckOnly = false;
   let tag: string | undefined;
   let outputDirectory: string | undefined;
 
@@ -268,6 +266,8 @@ function parseArguments(args: readonly string[]): CliOptions {
       publish = true;
     } else if (argument === "--provenance") {
       provenance = true;
+    } else if (argument === "--package-check") {
+      packageCheckOnly = true;
     } else if (argument === "--tag") {
       tag = requiredArgument(args[++index], "--tag");
     } else if (argument.startsWith("--tag=")) {
@@ -285,6 +285,7 @@ publishing. Registry writes require --publish.
 Options:
   --tag v<version>       Validate the tag against every package version
   --output-dir <path>    Keep validated tarballs in an empty directory
+  --package-check        Run only artifact and clean-consumer checks; never publish
   --publish              Publish the validated tarballs in dependency order
   --provenance           Pass --provenance to npm publish
 `);
@@ -294,7 +295,21 @@ Options:
     }
   }
 
-  return { publish, provenance, tag, outputDirectory };
+  const options = { publish, provenance, packageCheckOnly, tag, outputDirectory };
+  validateCliOptions(options);
+  return options;
+}
+
+export function validateCliOptions(options: CliOptions): void {
+  if (options.packageCheckOnly && options.publish) {
+    throw new ReleaseError("--package-check cannot be combined with --publish.");
+  }
+  if (options.publish && options.tag === undefined) {
+    throw new ReleaseError("Publishing requires --tag v<version>.");
+  }
+  if (options.provenance && !options.publish) {
+    throw new ReleaseError("--provenance is only valid together with --publish.");
+  }
 }
 
 function verifyBunVersion(): void {
@@ -417,7 +432,7 @@ function packAll(packages: readonly LoadedPackage[], outputDirectory: string): P
     console.log(`\nPacking ${pkg.definition.name}`);
     runCommand(
       "bun",
-      ["pm", "pack", "--ignore-scripts", "--destination", outputDirectory],
+      ["pm", "pack", "--ignore-scripts", "--quiet", "--destination", outputDirectory],
       pkg.packageDirectory,
     );
 
@@ -847,7 +862,8 @@ if (import.meta.main) {
   try {
     main();
   } catch (error) {
-    console.error(`\nRelease failed: ${error instanceof Error ? error.message : String(error)}`);
+    const workflow = process.argv.includes("--package-check") ? "Package check" : "Release";
+    console.error(`\n${workflow} failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }
 }
