@@ -1,5 +1,33 @@
 import type { Scalar } from "@typespec/compiler";
 
+const INTRINSIC_SCALAR_NAMES = new Set([
+  "int8",
+  "int16",
+  "int32",
+  "int64",
+  "uint8",
+  "uint16",
+  "uint32",
+  "uint64",
+  "float32",
+  "float64",
+  "integer",
+  "float",
+  "numeric",
+  "decimal",
+  "decimal128",
+  "safeint",
+  "string",
+  "url",
+  "boolean",
+  "plainDate",
+  "plainTime",
+  "utcDateTime",
+  "offsetDateTime",
+  "duration",
+  "bytes",
+]);
+
 /**
  * Maps TypeSpec scalar types to TypeScript type strings.
  */
@@ -49,10 +77,10 @@ export function scalarToTs(scalar: Scalar): string {
   }
 }
 
-function getIntrinsicScalarName(scalar: Scalar): string {
+export function getIntrinsicScalarName(scalar: Scalar): string {
   let current: Scalar | undefined = scalar;
   while (current) {
-    if (current.namespace?.name === "TypeSpec") {
+    if (current.namespace?.name === "TypeSpec" && INTRINSIC_SCALAR_NAMES.has(current.name)) {
       return current.name;
     }
     current = current.baseScalar;

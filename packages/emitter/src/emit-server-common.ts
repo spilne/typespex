@@ -54,6 +54,7 @@ import {
   type PayloadProjection,
 } from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
+import { resolveScalarEncoding } from "./scalar-encoding.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
 import { isEntityLike } from "./type-guards.js";
 import {
@@ -63,7 +64,7 @@ import {
   isTypeSpecNamespaceModel,
   typeToTs,
 } from "./type-reference.js";
-import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+import { tsIdentifier, tsPropertyAccess, tsPropertyDeclaration } from "./typescript-names.js";
 import { isBytesScalar, isTextResponseType, unsupportedFileContentsReason } from "./wire-types.js";
 
 export interface OperationGroup {
@@ -579,24 +580,19 @@ export function emitResultResponseEncoder(
   if (kind === "unsupported") {
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
-  const jsonTransform = kind === "json" ? getJsonResponseTransform(ctx, op, response) : undefined;
+  const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
 
   if (shouldUseVariantEncoder(response)) {
-    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, jsonTransform)})`;
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
   }
 
   const headers = response.headers;
-  const encoder = encoderForKind(kind, resultType, response.statusCode, jsonTransform);
+  const encoder = encoderForKind(kind, resultType, response.statusCode, bodyTransform);
 
   if (headers.length > 0 && kind === "json") {
-    const entries = headers
-      .map(
-        (h) =>
-          `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}${h.explode ? ", true" : ""}]`,
-      )
-      .join(", ");
-    const transform = jsonTransform
-      ? `, (body) => ${emitJsonBodyTransform("body", jsonTransform)}`
+    const entries = headers.map(emitResponseHeaderEntry).join(", ");
+    const transform = bodyTransform
+      ? `, (body) => ${emitResponseBodyTransform("body", bodyTransform)}`
       : "";
     return `ResponseEncoders.jsonWithHeaders<${resultType}>(${response.statusCode}, [${entries}]${transform})`;
   }
@@ -614,43 +610,72 @@ function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
   );
 }
 
-interface JsonResponseTransform {
+interface ResponseBodyTransform {
   readonly serializer: string;
   readonly bodyType: string;
   readonly optional: boolean;
   readonly path: string;
 }
 
-function getJsonResponseTransform(
+function getResponseBodyTransform(
   ctx: EmitterCtx,
   op: HttpOperation,
   response: SuccessResponseVariant,
-): JsonResponseTransform | undefined {
+  kind: Exclude<ResponseEncoderKind, "unsupported">,
+): ResponseBodyTransform | undefined {
+  if (kind !== "json" && kind !== "text") return undefined;
+  return getResponseWireTransform(ctx, op, response, kind === "text" ? "text" : "value");
+}
+
+function getResponseWireTransform(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  response: SuccessResponseVariant,
+  encodingContext: "value" | "text",
+): ResponseBodyTransform | undefined {
   const body = response.body;
   const serializationType = response.serializationType;
   if (!body || body.bodyKind !== "single" || !serializationType) return undefined;
 
-  const reason = unsupportedJsonWireTransformReason(ctx, serializationType, response.projection);
+  const reason = unsupportedJsonWireTransformReason(
+    ctx,
+    serializationType,
+    response.projection,
+    new Set(),
+    body.property,
+  );
   if (reason) {
-    $lib.reportDiagnostic(ctx.program, {
-      code: "unsupported-json-serialization",
-      format: { operation: op.operation.name, reason },
-      target: body.property ?? op.operation,
-    });
+    if (encodingContext === "text") {
+      reportUnsupportedResponseBody(ctx, op, response, reason);
+    } else {
+      $lib.reportDiagnostic(ctx.program, {
+        code: "unsupported-json-serialization",
+        format: { operation: op.operation.name, reason },
+        target: body.property ?? op.operation,
+      });
+    }
     return undefined;
   }
 
-  const serializer = emitJsonWireSerializer(ctx, serializationType, response.projection);
+  const serializer = emitJsonWireSerializer(
+    ctx,
+    serializationType,
+    response.projection,
+    body.property,
+    encodingContext,
+  );
   if (!serializer) return undefined;
   return {
     serializer,
     bodyType: payloadTypeToTs(ctx, serializationType, response.projection),
     optional: body.property?.optional === true,
-    path: response.bodyProperty ? `$response.${response.bodyProperty}` : "$response",
+    path: response.bodyProperty
+      ? tsPropertyAccess("$response", response.bodyProperty)
+      : "$response",
   };
 }
 
-function emitJsonBodyTransform(value: string, transform: JsonResponseTransform): string {
+function emitResponseBodyTransform(value: string, transform: ResponseBodyTransform): string {
   const serialized = `${transform.serializer}.serialize(${value} as ${transform.bodyType}, ${JSON.stringify(transform.path)})`;
   return transform.optional ? `${value} === undefined ? undefined : ${serialized}` : serialized;
 }
@@ -732,7 +757,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           : body?.contentTypes.length
             ? body.contentTypes
             : [undefined];
-      const headers = collectResponseHeadersFromContent(ctx, content);
+      const headers = collectResponseHeadersFromContent(ctx, op, content);
       const metadataProperties = content.properties.filter(
         (prop) =>
           prop.kind === "header" ||
@@ -850,7 +875,8 @@ function responseHeadersEqual(
       (value, index) =>
         value.property === right[index]?.property &&
         value.header === right[index]?.header &&
-        value.explode === right[index]?.explode,
+        value.explode === right[index]?.explode &&
+        value.transform === right[index]?.transform,
     )
   );
 }
@@ -1024,6 +1050,7 @@ function getResponseBodyProperty(
 
 function collectResponseHeadersFromContent(
   ctx: EmitterCtx,
+  op: HttpOperation,
   content: HttpOperationResponse["responses"][number] | undefined,
 ): ResponseHeader[] {
   if (!content) return [];
@@ -1033,7 +1060,70 @@ function collectResponseHeadersFromContent(
       property: property.name,
       header: getHeaderFieldName(ctx.program, property).toLowerCase(),
       explode: getHeaderFieldOptions(ctx.program, property).explode === true,
+      transform: emitResponseHeaderTransform(ctx, op, property),
     }));
+}
+
+function emitResponseHeaderTransform(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  property: ModelProperty,
+): string | undefined {
+  if (!headerTypeHasScalarEncoding(ctx, property.type, property)) return undefined;
+  const reason = unsupportedJsonWireTransformReason(
+    ctx,
+    property.type,
+    undefined,
+    new Set(),
+    property,
+  );
+  if (reason) {
+    $lib.reportDiagnostic(ctx.program, {
+      code: "unsupported-response-header",
+      format: {
+        header: getHeaderFieldName(ctx.program, property).toLowerCase(),
+        operation: op.operation.name,
+        reason,
+      },
+      target: property,
+    });
+    return undefined;
+  }
+  const serializer = emitJsonWireSerializer(ctx, property.type, undefined, property, "header");
+  if (!serializer) return undefined;
+  const type = typeToTs(ctx, property.type);
+  const path = tsPropertyAccess("$response", property.name);
+  return `(value) => ${serializer}.serialize(value as ${type}, ${JSON.stringify(path)})`;
+}
+
+function headerTypeHasScalarEncoding(ctx: EmitterCtx, type: Type, target?: ModelProperty): boolean {
+  switch (type.kind) {
+    case "Scalar":
+      return resolveScalarEncoding(ctx, type, target, "header").status === "supported";
+    case "Model": {
+      const collection = getPayloadCollection(ctx, type);
+      return collection?.kind === "array"
+        ? headerTypeHasScalarEncoding(ctx, collection.value, target)
+        : false;
+    }
+    case "Tuple":
+      return type.values.some((value) => headerTypeHasScalarEncoding(ctx, value, target));
+    case "Union": {
+      const variants = [...type.variants.values()].filter(
+        (variant) => variant.type.kind !== "Intrinsic" || variant.type.name !== "null",
+      );
+      return variants.some((variant) => headerTypeHasScalarEncoding(ctx, variant.type, target));
+    }
+    default:
+      return false;
+  }
+}
+
+function emitResponseHeaderEntry(header: ResponseHeader): string {
+  const fields = [JSON.stringify(header.property), JSON.stringify(header.header)];
+  if (header.explode || header.transform) fields.push(String(header.explode));
+  if (header.transform) fields.push(header.transform);
+  return `[${fields.join(", ")}]`;
 }
 
 function responsePropertyDeclarations(
@@ -1623,7 +1713,7 @@ function emitResponseDecisionEncoder(
         : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(
             kind,
             branch.response,
-            kind === "json" ? getJsonResponseTransform(ctx, op, branch.response) : undefined,
+            getResponseBodyTransform(ctx, op, branch.response, kind),
           )})`;
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
@@ -1638,7 +1728,7 @@ function emitResponseDecisionEncoder(
 function emitResponseVariant(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   response: SuccessResponseVariant,
-  jsonTransform?: JsonResponseTransform,
+  bodyTransform?: ResponseBodyTransform,
 ): string {
   const fields = [`status: ${emitResponseStatus(response)}`];
   if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
@@ -1651,12 +1741,7 @@ function emitResponseVariant(
   if (!response.emitFileContentDisposition) fields.push("emitFileContentDisposition: false");
   if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
   if (response.headers.length > 0) {
-    const headers = response.headers
-      .map(
-        (h) =>
-          `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}${h.explode ? ", true" : ""}]`,
-      )
-      .join(", ");
+    const headers = response.headers.map(emitResponseHeaderEntry).join(", ");
     fields.push(`headers: [${headers}]`);
   }
   if (response.omitProperties.length > 0) {
@@ -1664,8 +1749,8 @@ function emitResponseVariant(
       `omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`,
     );
   }
-  if (jsonTransform) {
-    fields.push(`transformBody: (body) => ${emitJsonBodyTransform("body", jsonTransform)}`);
+  if (bodyTransform) {
+    fields.push(`transformBody: (body) => ${emitResponseBodyTransform("body", bodyTransform)}`);
   }
   return `{ ${fields.join(", ")} }`;
 }
@@ -1711,7 +1796,7 @@ function classifyResponseVariant(
   const kind = classifyResponseContentType(ctx, op, response.contentType);
   if (kind === "unsupported") return kind;
 
-  const reason = incompatibleResponseBodyReason(response, kind);
+  const reason = incompatibleResponseBodyReason(ctx, response, kind);
   if (!reason) return kind;
 
   reportUnsupportedResponseBody(ctx, op, response, reason);
@@ -1739,6 +1824,7 @@ function reportUnsupportedResponseBody(
 }
 
 function incompatibleResponseBodyReason(
+  ctx: EmitterCtx,
   response: SuccessResponseVariant,
   kind: Exclude<ResponseEncoderKind, "empty" | "unsupported">,
 ): string | undefined {
@@ -1749,11 +1835,24 @@ function incompatibleResponseBodyReason(
   switch (kind) {
     case "json":
       return undefined;
-    case "text":
+    case "text": {
+      if (body.type.kind === "Scalar") {
+        const encoding = resolveScalarEncoding(ctx, body.type, body.property, "text");
+        if (encoding.status === "supported") return undefined;
+      }
       return isTextResponseType(body.type)
         ? undefined
         : "text responses require a scalar, literal, enum, or union of those types";
+    }
     case "bytes":
+      if (body.type.kind === "Scalar") {
+        const encoding = resolveScalarEncoding(ctx, body.type, body.property, "binary");
+        if (encoding.status === "supported") {
+          return `binary responses cannot apply scalar encoding ${JSON.stringify(
+            encoding.plan.encoding,
+          )}; use a textual or JSON media type`;
+        }
+      }
       return isBytesScalar(body.type)
         ? undefined
         : "binary responses require the TypeSpec bytes scalar";
@@ -1793,20 +1892,22 @@ function encoderForKind(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   tsType: string,
   status: number,
-  jsonTransform?: JsonResponseTransform,
+  bodyTransform?: ResponseBodyTransform,
 ): string {
   switch (kind) {
     case "empty":
       return `ResponseEncoders.empty(${status})`;
     case "text":
-      return `ResponseEncoders.text(${status})`;
+      return bodyTransform
+        ? `ResponseEncoders.text(${status}).mapInput((value: ${tsType}) => String(${emitResponseBodyTransform("value", bodyTransform)}))`
+        : `ResponseEncoders.text(${status})`;
     case "bytes":
       return `ResponseEncoders.bytes(${status})`;
     case "file":
       return `ResponseEncoders.file(${status})`;
     case "json":
-      return jsonTransform
-        ? `ResponseEncoders.json<unknown>(${status}).mapInput((value: ${tsType}) => ${emitJsonBodyTransform("value", jsonTransform)})`
+      return bodyTransform
+        ? `ResponseEncoders.json<unknown>(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`
         : `ResponseEncoders.json<${tsType}>(${status})`;
   }
 }
@@ -1831,6 +1932,7 @@ interface ResponseHeader {
   readonly property: string;
   readonly header: string;
   readonly explode: boolean;
+  readonly transform?: string;
 }
 
 /**

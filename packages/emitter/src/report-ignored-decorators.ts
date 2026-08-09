@@ -1,7 +1,6 @@
 import type { Model, ModelProperty, Scalar, Type, Union } from "@typespec/compiler";
 import {
   getDiscriminatedUnion,
-  getEncode,
   isArrayModelType,
   resolveEncodedName,
   walkPropertiesInherited,
@@ -25,6 +24,7 @@ import {
 } from "./payload-context.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
+import { resolveScalarEncoding } from "./scalar-encoding.js";
 
 const VISIBILITY_DECORATOR_NAMES = new Set(["@visibility", "@invisible", "@removeVisibility"]);
 
@@ -70,17 +70,31 @@ export function reportIgnoredDecorators(
     for (const parameter of operation.parameters.parameters) {
       checkHttpParameter(ctx, parameter);
       checkProperty(ctx, reported, traversal, parameter.param, parameter.param.name);
-      walkType(ctx, reported, traversal, parameter.param.type, parameter.param.name);
+      walkType(
+        ctx,
+        reported,
+        traversal,
+        parameter.param.type,
+        parameter.param.name,
+        parameter.param,
+      );
     }
     checkRequestBody(ctx, reported, traversal);
     if (operation.parameters.body?.type) {
-      walkType(ctx, reported, traversal, operation.parameters.body.type, "body");
+      walkType(
+        ctx,
+        reported,
+        traversal,
+        operation.parameters.body.type,
+        "body",
+        operation.parameters.body.property,
+      );
     }
     for (const response of operation.responses) {
       walkType(ctx, reported, traversal, response.type, "response");
       for (const content of response.responses) {
         if (content.body?.type) {
-          walkType(ctx, reported, traversal, content.body.type, "response");
+          walkType(ctx, reported, traversal, content.body.type, "response", content.body.property);
         }
       }
     }
@@ -185,10 +199,17 @@ function checkRequestBody(
 
       for (const contentType of part.body.contentTypes) {
         for (const kind of getBodyMediaKinds([contentType])) {
+          const encodingReason = unsupportedBinaryScalarEncodingReason(
+            ctx,
+            part.body.type,
+            part.body.property,
+            kind,
+          );
           const reason =
-            kind === "form" || kind === "multipart" || kind === "file"
+            encodingReason ??
+            (kind === "form" || kind === "multipart" || kind === "file"
               ? "multipart parts support JSON, text, binary, or File content"
-              : unsupportedBodyKindReason(ctx, part.body.type, kind);
+              : unsupportedBodyKindReason(ctx, part.body.type, kind));
           if (reason) {
             reportUnsupportedBody(
               ctx,
@@ -211,13 +232,28 @@ function checkRequestBody(
       if (kind === "form") {
         reportUnsupportedEncodedNames(ctx, reported, body.type, contentType, projection, new Set());
       }
-      const reason = unsupportedBodyKindReason(ctx, body.type, kind, projection);
+      const reason =
+        unsupportedBinaryScalarEncodingReason(ctx, body.type, body.property, kind) ??
+        unsupportedBodyKindReason(ctx, body.type, kind, projection);
       if (reason) {
         reportUnsupportedBody(ctx, traversal.operation, contentType, reason);
         break;
       }
     }
   }
+}
+
+function unsupportedBinaryScalarEncodingReason(
+  ctx: EmitterCtx,
+  type: Type,
+  target: ModelProperty | undefined,
+  kind: BodyMediaKind,
+): string | undefined {
+  if (kind !== "binary" || type.kind !== "Scalar") return undefined;
+  const encoding = resolveScalarEncoding(ctx, type, target, "binary");
+  return encoding.status === "supported"
+    ? `binary bodies cannot apply scalar encoding ${JSON.stringify(encoding.plan.encoding)}; use a textual or JSON media type`
+    : undefined;
 }
 
 function requestBodyContentTypesAreValid(
@@ -396,7 +432,12 @@ function walkType(
   traversal: OperationTraversal,
   type: Type,
   propertyPath: string,
+  target?: ModelProperty,
 ): void {
+  if (type.kind === "Scalar") {
+    checkScalarEncode(ctx, traversal, type, propertyPath, target);
+    return;
+  }
   if (traversal.seen.has(type)) return;
   traversal.seen.add(type);
 
@@ -410,17 +451,16 @@ function walkType(
         walkType(ctx, reported, traversal, variant.type, propertyPath);
       }
       break;
-    case "UnionVariant":
     case "ModelProperty":
+      walkType(ctx, reported, traversal, type.type, propertyPath, type);
+      break;
+    case "UnionVariant":
       walkType(ctx, reported, traversal, type.type, propertyPath);
       break;
     case "Tuple":
       for (const [index, value] of type.values.entries()) {
         walkType(ctx, reported, traversal, value, `${propertyPath}[${index}]`);
       }
-      break;
-    case "Scalar":
-      checkScalarEncode(ctx, traversal, type, propertyPath);
       break;
     default:
       break;
@@ -451,7 +491,7 @@ function walkModel(
   for (const property of walkPropertiesInherited(model)) {
     const nestedPath = `${propertyPath}.${property.name}`;
     checkProperty(ctx, reported, traversal, property, nestedPath);
-    walkType(ctx, reported, traversal, property.type, nestedPath);
+    walkType(ctx, reported, traversal, property.type, nestedPath, property);
   }
   if (additionalProperties && !isNeverAdditionalProperties(model)) {
     walkType(ctx, reported, traversal, additionalProperties, `${propertyPath}.*`);
@@ -465,19 +505,6 @@ function checkProperty(
   property: ModelProperty,
   propertyPath: string,
 ): void {
-  if (getEncode(ctx.program, property) && !traversal.encodes.has(property)) {
-    traversal.encodes.add(property);
-    $lib.reportDiagnostic(ctx.program, {
-      code: "ignored-encode",
-      format: {
-        name: property.name,
-        operation: traversal.operation.operation.name,
-        property: propertyPath,
-      },
-      target: property,
-    });
-  }
-
   if (
     !reported.visibility.has(property) &&
     property.decorators.some((decorator) =>
@@ -583,26 +610,22 @@ function checkScalarEncode(
   traversal: OperationTraversal,
   scalar: Scalar,
   propertyPath: string,
+  target?: ModelProperty,
 ): void {
-  let current: Scalar | undefined = scalar;
-  while (current) {
-    if (getEncode(ctx.program, current)) {
-      if (!traversal.encodes.has(current)) {
-        traversal.encodes.add(current);
-        $lib.reportDiagnostic(ctx.program, {
-          code: "ignored-encode",
-          format: {
-            name: current.name,
-            operation: traversal.operation.operation.name,
-            property: propertyPath,
-          },
-          target: current,
-        });
-      }
-      return;
-    }
-    current = current.baseScalar;
-  }
+  const encoding = resolveScalarEncoding(ctx, scalar, target);
+  if (encoding.status !== "unsupported" || traversal.encodes.has(encoding.source)) return;
+  traversal.encodes.add(encoding.source);
+  $lib.reportDiagnostic(ctx.program, {
+    code: "unsupported-scalar-encoding",
+    format: {
+      encoding: encoding.encoding,
+      name: encoding.source.name,
+      reason: `${encoding.reason}; operation ${JSON.stringify(
+        traversal.operation.operation.name,
+      )} uses it at ${JSON.stringify(propertyPath)}`,
+    },
+    target: encoding.source,
+  });
 }
 
 function checkUnion(ctx: EmitterCtx, reported: ServiceDecoratorReports, union: Union): void {

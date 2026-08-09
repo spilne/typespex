@@ -15,6 +15,7 @@ import {
   parseMultipartRequest,
   validateFileName,
 } from "./multipart.js";
+import { ScalarEncodings, type DurationNumericUnit } from "./scalar-encoding.js";
 import {
   type ValidationIssue,
   type Validator,
@@ -281,6 +282,63 @@ const strictBytesDecoder: Decoder<Uint8Array> = Decoder.of((input) => {
   if (typeof input === "string") return decodeBase64(input);
   return fail("", "Expected a base64 string.");
 });
+
+function transformDecoder<A, B>(decoder: Decoder<A>, transform: (value: A) => B): Decoder<B> {
+  return Decoder.of((input) => {
+    const decoded = decoder.decode(input);
+    if (isLeft(decoded)) return decoded;
+    try {
+      return succeed(transform(decoded.right));
+    } catch (error) {
+      return fail("", error instanceof Error ? error.message : String(error));
+    }
+  });
+}
+
+function composeDecoder<A, B, Input>(
+  first: Decoder<A, Input>,
+  next: Decoder<B, A>,
+): Decoder<B, Input> {
+  return Decoder.of((input) => Either.flatMap(first.decode(input), (value) => next.decode(value)));
+}
+
+const encodedNumberStringDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeNumberString,
+);
+const encodedIntegerStringDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeIntegerString,
+);
+const encodedBigIntStringDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeBigIntString,
+);
+const encodedBooleanStringDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeBooleanString,
+);
+const rfc3339DateTimeDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeRfc3339DateTime,
+);
+const rfc7231DateTimeDecoder = transformDecoder(
+  stringDecoder,
+  ScalarEncodings.decodeRfc7231DateTime,
+);
+const isoDurationDecoder = transformDecoder(stringDecoder, ScalarEncodings.decodeIsoDuration);
+const base64UrlBytesDecoder = transformDecoder(stringDecoder, ScalarEncodings.decodeBase64Url);
+
+function unixTimestampDecoder<A extends number | bigint>(wire: Decoder<A>): Decoder<string> {
+  return transformDecoder(wire, ScalarEncodings.decodeUnixTimestamp);
+}
+
+function numericDurationDecoder<A extends number | bigint>(
+  wire: Decoder<A>,
+  unit: DurationNumericUnit,
+): Decoder<string> {
+  return transformDecoder(wire, (value) => ScalarEncodings.decodeNumericDuration(value, unit));
+}
 
 const fileDecoder: Decoder<File> = Decoder.of((input) => {
   if (input instanceof File) return succeed(input);
@@ -1165,6 +1223,17 @@ export const Decoders = {
   strictBoolean: strictBooleanDecoder,
   bytes: bytesDecoder,
   strictBytes: strictBytesDecoder,
+  compose: composeDecoder,
+  encodedNumberString: encodedNumberStringDecoder,
+  encodedIntegerString: encodedIntegerStringDecoder,
+  encodedBigIntString: encodedBigIntStringDecoder,
+  encodedBooleanString: encodedBooleanStringDecoder,
+  rfc3339DateTime: rfc3339DateTimeDecoder,
+  rfc7231DateTime: rfc7231DateTimeDecoder,
+  unixTimestamp: unixTimestampDecoder,
+  isoDuration: isoDurationDecoder,
+  numericDuration: numericDurationDecoder,
+  base64UrlBytes: base64UrlBytesDecoder,
   file: fileDecoder,
   fileWithContentTypes: fileWithContentTypesDecoder,
   unknown: unknownDecoder,

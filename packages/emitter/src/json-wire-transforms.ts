@@ -11,6 +11,11 @@ import {
   payloadTypeToTs,
   type PayloadProjection,
 } from "./payload-context.js";
+import {
+  emitScalarEncodingSerializer,
+  resolveScalarEncoding,
+  type ScalarEncodingContext,
+} from "./scalar-encoding.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { tsIdentifier } from "./typescript-names.js";
 
@@ -20,6 +25,7 @@ interface JsonSerializerEmission {
   readonly name: string;
   readonly type: Model;
   readonly projection?: PayloadProjection;
+  readonly encodingContext: ScalarEncodingContext;
   declaration?: string;
   building?: boolean;
 }
@@ -42,7 +48,19 @@ export function jsonWireTransformChangesType(
   ctx: EmitterCtx,
   type: Type,
   projection?: PayloadProjection,
+  target?: ModelProperty,
+  encodingContext: ScalarEncodingContext = "value",
 ): boolean {
+  if (target) {
+    return computeJsonWireTransformChangesType(
+      ctx,
+      type,
+      projection,
+      target,
+      encodingContext,
+      new Map(),
+    );
+  }
   const state = getState(ctx);
   let projections = state.changes.get(type);
   if (!projections) {
@@ -50,11 +68,18 @@ export function jsonWireTransformChangesType(
     state.changes.set(type, projections);
   }
 
-  const key = projection?.cacheKey ?? "raw";
+  const key = `${encodingContext}:${projection?.cacheKey ?? "raw"}`;
   const cached = projections.get(key);
   if (cached !== undefined) return cached;
 
-  const changed = computeJsonWireTransformChangesType(ctx, type, projection, new Map());
+  const changed = computeJsonWireTransformChangesType(
+    ctx,
+    type,
+    projection,
+    undefined,
+    encodingContext,
+    new Map(),
+  );
   projections.set(key, changed);
   return changed;
 }
@@ -68,6 +93,7 @@ export function unsupportedJsonWireTransformReason(
   type: Type,
   projection?: PayloadProjection,
   seen: ReadonlySet<Type> = new Set(),
+  target?: ModelProperty,
 ): string | undefined {
   if (seen.has(type)) return undefined;
   const nextSeen = new Set(seen).add(type);
@@ -81,14 +107,21 @@ export function unsupportedJsonWireTransformReason(
           collection.value,
           payloadItemProjection(projection),
           nextSeen,
+          target,
         );
       }
       const httpPartType = getHttpPartType(ctx.program, type);
       if (httpPartType) {
-        return unsupportedJsonWireTransformReason(ctx, httpPartType, projection, nextSeen);
+        return unsupportedJsonWireTransformReason(ctx, httpPartType, projection, nextSeen, target);
       }
       for (const property of payloadModelProperties(type, projection)) {
-        const reason = unsupportedJsonWireTransformReason(ctx, property.type, projection, nextSeen);
+        const reason = unsupportedJsonWireTransformReason(
+          ctx,
+          property.type,
+          projection,
+          nextSeen,
+          property,
+        );
         if (reason) return reason;
       }
       const additional = getAdditionalPropertiesValue(type);
@@ -98,28 +131,36 @@ export function unsupportedJsonWireTransformReason(
             additional,
             payloadItemProjection(projection),
             nextSeen,
+            undefined,
           )
         : undefined;
     }
     case "Union": {
-      if (!jsonWireTransformChangesType(ctx, type, projection)) return undefined;
+      if (!jsonWireTransformChangesType(ctx, type, projection, target)) return undefined;
       const nonNull = nonNullUnionVariants(type);
       if (nonNull && nonNull.length === 1) {
-        return unsupportedJsonWireTransformReason(ctx, nonNull[0]!, projection, nextSeen);
+        return unsupportedJsonWireTransformReason(ctx, nonNull[0]!, projection, nextSeen, target);
       }
       return `nested union ${JSON.stringify(type.name || "(anonymous)")} has multiple wire-transforming variants that cannot be distinguished from the handler value`;
     }
     case "Tuple": {
       const itemProjection = payloadItemProjection(projection);
       for (const value of type.values) {
-        const reason = unsupportedJsonWireTransformReason(ctx, value, itemProjection, nextSeen);
+        const reason = unsupportedJsonWireTransformReason(
+          ctx,
+          value,
+          itemProjection,
+          nextSeen,
+          target,
+        );
         if (reason) return reason;
       }
       return undefined;
     }
     case "ModelProperty":
+      return unsupportedJsonWireTransformReason(ctx, type.type, projection, nextSeen, type);
     case "UnionVariant":
-      return unsupportedJsonWireTransformReason(ctx, type.type, projection, nextSeen);
+      return unsupportedJsonWireTransformReason(ctx, type.type, projection, nextSeen, target);
     default:
       return undefined;
   }
@@ -130,9 +171,11 @@ export function emitJsonWireSerializer(
   ctx: EmitterCtx,
   type: Type,
   projection?: PayloadProjection,
+  target?: ModelProperty,
+  encodingContext: ScalarEncodingContext = "value",
 ): string | undefined {
-  return jsonWireTransformChangesType(ctx, type, projection)
-    ? emitRequiredSerializer(ctx, type, projection)
+  return jsonWireTransformChangesType(ctx, type, projection, target, encodingContext)
+    ? emitRequiredSerializer(ctx, type, projection, target, encodingContext)
     : undefined;
 }
 
@@ -143,7 +186,12 @@ export function getJsonWireSerializerDeclarations(ctx: EmitterCtx): readonly str
   while (pending) {
     pending.building = true;
     const typeTs = payloadTypeToTs(ctx, pending.type, pending.projection);
-    const body = emitObjectSerializer(ctx, pending.type, pending.projection);
+    const body = emitObjectSerializer(
+      ctx,
+      pending.type,
+      pending.projection,
+      pending.encodingContext,
+    );
     pending.declaration = `const ${pending.name}: JsonSerializer<${typeTs}> = JsonSerializers.lazy<${typeTs}>(() => ${body});`;
     pending.building = false;
     pending = nextPendingSerializer(state);
@@ -163,9 +211,14 @@ function computeJsonWireTransformChangesType(
   ctx: EmitterCtx,
   type: Type,
   projection: PayloadProjection | undefined,
+  target: ModelProperty | undefined,
+  encodingContext: ScalarEncodingContext,
   seen: Map<Type, Set<string>>,
 ): boolean {
-  const projectionKey = projection?.cacheKey ?? "raw";
+  if (type.kind === "Scalar") {
+    return resolveScalarEncoding(ctx, type, target, encodingContext).status === "supported";
+  }
+  const projectionKey = `${encodingContext}:${projection?.cacheKey ?? "raw"}`;
   const seenProjections = seen.get(type);
   if (seenProjections?.has(projectionKey)) return false;
   if (seenProjections) {
@@ -182,18 +235,34 @@ function computeJsonWireTransformChangesType(
           ctx,
           collection.value,
           payloadItemProjection(projection),
+          target,
+          encodingContext,
           seen,
         );
       }
       const httpPartType = getHttpPartType(ctx.program, type);
       if (httpPartType) {
-        return computeJsonWireTransformChangesType(ctx, httpPartType, projection, seen);
+        return computeJsonWireTransformChangesType(
+          ctx,
+          httpPartType,
+          projection,
+          target,
+          encodingContext,
+          seen,
+        );
       }
 
       for (const property of payloadModelProperties(type, projection)) {
         if (
           getJsonPropertyWireName(ctx, property) !== property.name ||
-          computeJsonWireTransformChangesType(ctx, property.type, projection, seen)
+          computeJsonWireTransformChangesType(
+            ctx,
+            property.type,
+            projection,
+            property,
+            encodingContext,
+            seen,
+          )
         ) {
           return true;
         }
@@ -206,21 +275,44 @@ function computeJsonWireTransformChangesType(
           ctx,
           additional,
           payloadItemProjection(projection),
+          undefined,
+          encodingContext,
           seen,
         ),
       );
     }
     case "Union":
       return [...type.variants.values()].some((variant) =>
-        computeJsonWireTransformChangesType(ctx, variant.type, projection, seen),
+        computeJsonWireTransformChangesType(
+          ctx,
+          variant.type,
+          projection,
+          target,
+          encodingContext,
+          seen,
+        ),
       );
     case "Tuple":
       return type.values.some((value) =>
-        computeJsonWireTransformChangesType(ctx, value, payloadItemProjection(projection), seen),
+        computeJsonWireTransformChangesType(
+          ctx,
+          value,
+          payloadItemProjection(projection),
+          target,
+          encodingContext,
+          seen,
+        ),
       );
     case "ModelProperty":
     case "UnionVariant":
-      return computeJsonWireTransformChangesType(ctx, type.type, projection, seen);
+      return computeJsonWireTransformChangesType(
+        ctx,
+        type.type,
+        projection,
+        type.kind === "ModelProperty" ? type : target,
+        encodingContext,
+        seen,
+      );
     default:
       return false;
   }
@@ -230,38 +322,56 @@ function emitRequiredSerializer(
   ctx: EmitterCtx,
   type: Type,
   projection?: PayloadProjection,
+  target?: ModelProperty,
+  encodingContext: ScalarEncodingContext = "value",
 ): string {
   switch (type.kind) {
     case "Model": {
       const collection = getPayloadCollection(ctx, type);
       if (collection?.kind === "array") {
-        return `JsonSerializers.array(${emitRequiredSerializer(ctx, collection.value, payloadItemProjection(projection))})`;
+        return `JsonSerializers.array(${emitRequiredSerializer(ctx, collection.value, payloadItemProjection(projection), target, encodingContext)})`;
       }
       if (collection?.kind === "record") {
-        return `JsonSerializers.record(${emitRequiredSerializer(ctx, collection.value, payloadItemProjection(projection))})`;
+        return `JsonSerializers.record(${emitRequiredSerializer(ctx, collection.value, payloadItemProjection(projection), target, encodingContext)})`;
       }
       const httpPartType = getHttpPartType(ctx.program, type);
-      if (httpPartType) return emitRequiredSerializer(ctx, httpPartType, projection);
+      if (httpPartType) {
+        return emitRequiredSerializer(ctx, httpPartType, projection, target, encodingContext);
+      }
 
       if (type.name && !isTypeSpecNamespaceModel(type)) {
-        return getOrCreateSerializer(ctx, type, projection).name;
+        return getOrCreateSerializer(ctx, type, projection, encodingContext).name;
       }
-      return emitObjectSerializer(ctx, type, projection);
+      return emitObjectSerializer(ctx, type, projection, encodingContext);
     }
     case "Union": {
       const nonNull = nonNullUnionVariants(type);
       if (nonNull?.length === 1) {
-        return `JsonSerializers.nullable(${emitRequiredSerializer(ctx, nonNull[0]!, projection)})`;
+        return `JsonSerializers.nullable(${emitRequiredSerializer(ctx, nonNull[0]!, projection, target, encodingContext)})`;
       }
       return identitySerializer(ctx, type, projection);
     }
     case "Tuple":
       return `JsonSerializers.tuple([${type.values
-        .map((value) => emitRequiredSerializer(ctx, value, payloadItemProjection(projection)))
+        .map((value) =>
+          emitRequiredSerializer(
+            ctx,
+            value,
+            payloadItemProjection(projection),
+            target,
+            encodingContext,
+          ),
+        )
         .join(", ")}])`;
+    case "Scalar": {
+      const encoding = resolveScalarEncoding(ctx, type, target, encodingContext);
+      return encoding.status === "supported"
+        ? emitScalarEncodingSerializer(ctx, encoding.plan)
+        : identitySerializer(ctx, type, projection);
+    }
     case "ModelProperty":
     case "UnionVariant":
-      return emitRequiredSerializer(ctx, type.type, projection);
+      return emitRequiredSerializer(ctx, type.type, projection, target, encodingContext);
     default:
       return identitySerializer(ctx, type, projection);
   }
@@ -271,13 +381,14 @@ function emitObjectSerializer(
   ctx: EmitterCtx,
   model: Model,
   projection?: PayloadProjection,
+  encodingContext: ScalarEncodingContext = "value",
 ): string {
   const typeTs = payloadTypeToTs(ctx, model, projection);
   const properties = payloadModelProperties(model, projection).map((property) => {
     const fields = [
       `property: ${JSON.stringify(property.name)}`,
       `wireName: ${JSON.stringify(getJsonPropertyWireName(ctx, property))}`,
-      `serializer: ${emitRequiredSerializer(ctx, property.type, projection)}`,
+      `serializer: ${emitRequiredSerializer(ctx, property.type, projection, property, encodingContext)}`,
     ];
     if (payloadPropertyOptional(property, projection)) fields.push("optional: true");
     return `{ ${fields.join(", ")} }`;
@@ -290,6 +401,8 @@ function emitObjectSerializer(
           ctx,
           additional,
           payloadItemProjection(projection),
+          undefined,
+          encodingContext,
         )} }`
       : "";
   return `JsonSerializers.object<${typeTs}>([${properties.join(", ")}]${options})`;
@@ -303,6 +416,7 @@ function getOrCreateSerializer(
   ctx: EmitterCtx,
   model: Model,
   projection?: PayloadProjection,
+  encodingContext: ScalarEncodingContext = "value",
 ): JsonSerializerEmission {
   const state = getState(ctx);
   let byProjection = state.serializers.get(model);
@@ -311,13 +425,14 @@ function getOrCreateSerializer(
     state.serializers.set(model, byProjection);
   }
 
-  const key = projection?.cacheKey ?? "raw";
+  const key = `${encodingContext}:${projection?.cacheKey ?? "raw"}`;
   const existing = byProjection.get(key);
   if (existing) return existing;
 
   const typeName = getGeneratedTypeName(ctx, model, "Model");
   const projectionName = projection ? tsIdentifier(projection.cacheKey, "payload") : "raw";
-  const baseName = `_jsonSerializer_${typeName}_${projectionName}`;
+  const contextName = encodingContext === "value" ? "" : `_${encodingContext}`;
+  const baseName = `_jsonSerializer_${typeName}_${projectionName}${contextName}`;
   let name = baseName;
   let suffix = 2;
   while (state.usedNames.has(name)) {
@@ -326,7 +441,12 @@ function getOrCreateSerializer(
   }
   state.usedNames.add(name);
 
-  const serializer: JsonSerializerEmission = { name, type: model, projection };
+  const serializer: JsonSerializerEmission = {
+    name,
+    type: model,
+    projection,
+    encodingContext,
+  };
   byProjection.set(key, serializer);
   return serializer;
 }

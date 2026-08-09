@@ -72,10 +72,16 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`JSON response for operation "${"operation"}" cannot be serialized safely: ${"reason"}.`,
       },
     },
-    "ignored-encode": {
+    "unsupported-response-header": {
       severity: "error",
       messages: {
-        default: paramMessage`@encode on "${"name"}" is not supported by @typespex/emitter; operation "${"operation"}" would use the wrong wire format for property "${"property"}".`,
+        default: paramMessage`HTTP response header "${"header"}" for operation "${"operation"}" cannot be serialized safely: ${"reason"}.`,
+      },
+    },
+    "unsupported-scalar-encoding": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Scalar encoding "${"encoding"}" on "${"name"}" is not supported by @typespex/emitter: ${"reason"}.`,
       },
     },
     "ignored-encoded-name": {

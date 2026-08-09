@@ -256,6 +256,17 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ display_name: "Milo" });
   });
 
+  test("jsonWithHeaders transforms header values before HTTP serialization", () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      expiresAt: string;
+      data: string;
+    }>(200, [["expiresAt", "x-expires-at", false, (value) => `wire:${String(value)}`]]);
+
+    const response = encoder.encode({ expiresAt: "semantic", data: "ok" });
+
+    expect(response.headers.get("x-expires-at")).toBe("wire:semantic");
+  });
+
   test("variant transforms only the resolved JSON body", async () => {
     const encoder = ResponseEncoders.variant<{
       requestId: string;
@@ -397,6 +408,24 @@ describe("ResponseEncoders", () => {
     expect(response.headers.get("x-request-id")).toBe("req-1");
     expect(response.headers.get("content-type")).toBe("text/plain");
     expect(await response.text()).toBe("created");
+  });
+
+  test("variant transforms text bodies and header values", async () => {
+    const encoder = ResponseEncoders.variant<{
+      sequence: number;
+      body: number;
+    }>({
+      status: 200,
+      kind: "text",
+      headers: [["sequence", "x-sequence", false, (value) => `v${String(value)}`]],
+      body: "body",
+      transformBody: (body) => `encoded:${String(body)}`,
+    });
+
+    const response = encoder.encode({ sequence: 3, body: 42 });
+
+    expect(response.headers.get("x-sequence")).toBe("v3");
+    expect(await response.text()).toBe("encoded:42");
   });
 
   test("JSON variant emits an empty body when an optional body is omitted", async () => {

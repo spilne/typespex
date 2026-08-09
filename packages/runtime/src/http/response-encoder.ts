@@ -113,11 +113,14 @@ function streamResponseEncoder(
  */
 function jsonWithHeadersResponseEncoder<A>(
   status: number,
-  headers: ReadonlyArray<readonly [property: string, header: string, explode?: boolean]>,
+  headers: ReadonlyArray<ResponseHeaderDescriptor>,
   transformBody?: (value: unknown) => unknown,
 ): ResponseEncoder<A> {
   const headerMap = new Map(
-    headers.map(([property, header, explode]) => [property, { header, explode }] as const),
+    headers.map(([property, header, explode, transform]) => [
+      property,
+      { header, explode, transform },
+    ]),
   );
   return ResponseEncoder.of((value) => {
     const src = value as Record<string, unknown>;
@@ -127,7 +130,14 @@ function jsonWithHeadersResponseEncoder<A>(
       const header = headerMap.get(key);
       if (header !== undefined) {
         const v = src[key];
-        if (v !== undefined) setResponseHeader(responseHeaders, header.header, v, header.explode);
+        if (v !== undefined) {
+          setResponseHeader(
+            responseHeaders,
+            header.header,
+            header.transform ? header.transform(v) : v,
+            header.explode,
+          );
+        }
       } else {
         body[key] = src[key];
       }
@@ -153,10 +163,17 @@ export interface DynamicResponseStatus {
   readonly allowed: readonly (number | ResponseStatusCodeRange)[];
 }
 
+export type ResponseHeaderDescriptor = readonly [
+  property: string,
+  header: string,
+  explode?: boolean,
+  transform?: (value: unknown) => unknown,
+];
+
 export interface ResponseVariant {
   readonly status: number | DynamicResponseStatus;
   readonly kind?: "json" | "text" | "bytes" | "file" | "empty";
-  readonly headers?: ReadonlyArray<readonly [property: string, header: string, explode?: boolean]>;
+  readonly headers?: ReadonlyArray<ResponseHeaderDescriptor>;
   readonly body?: string;
   readonly omit?: readonly string[];
   readonly contentType?: string;
@@ -164,7 +181,7 @@ export interface ResponseVariant {
   readonly requireFileContentType?: boolean;
   readonly requireFileName?: boolean;
   readonly emitFileContentDisposition?: boolean;
-  /** Converts the resolved handler-facing JSON body to its wire representation. */
+  /** Converts the resolved handler-facing body to its declared wire representation. */
   readonly transformBody?: (value: unknown) => unknown;
 }
 
@@ -179,9 +196,11 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   const status = resolveVariantStatus(src, isObject, variant.status);
   const responseHeaders = new Headers();
   if (isObject) {
-    for (const [property, header, explode] of variant.headers ?? []) {
+    for (const [property, header, explode, transform] of variant.headers ?? []) {
       const v = src[property];
-      if (v !== undefined) setResponseHeader(responseHeaders, header, v, explode);
+      if (v !== undefined) {
+        setResponseHeader(responseHeaders, header, transform ? transform(v) : v, explode);
+      }
     }
   }
 
@@ -194,10 +213,11 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     responseHeaders.set("content-type", contentType);
   }
 
-  const body =
+  const resolvedBody =
     variant.kind === "file" && variant.body === undefined
       ? value
       : resolveVariantBody(value, src, isObject, variant);
+  const body = variant.transformBody ? variant.transformBody(resolvedBody) : resolvedBody;
 
   if (variant.kind === "text") {
     return new Response(String(body ?? ""), {
@@ -222,8 +242,7 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     });
   }
 
-  const wireBody = variant.transformBody ? variant.transformBody(body) : body;
-  return new Response(wireBody === undefined ? null : stringifyJson(wireBody), {
+  return new Response(body === undefined ? null : stringifyJson(body), {
     status,
     headers: responseHeaders,
   });

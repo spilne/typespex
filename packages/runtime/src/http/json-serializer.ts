@@ -1,3 +1,10 @@
+import {
+  ScalarEncodings,
+  type DurationNumericUnit,
+  type NumericWireEncoding,
+} from "./scalar-encoding.js";
+import type { Validator } from "./validation.js";
+
 /** Error raised when a handler result cannot be converted to its declared JSON wire shape. */
 export class JsonSerializationError extends TypeError {
   constructor(
@@ -184,6 +191,74 @@ function lazyJsonSerializer<A>(resolve: () => JsonSerializer<A>): JsonSerializer
   });
 }
 
+function scalarJsonSerializer<A>(transform: (value: A) => unknown): JsonSerializer<A> {
+  return JsonSerializer.of((value, path) => {
+    try {
+      return transform(value);
+    } catch (error) {
+      if (error instanceof JsonSerializationError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new JsonSerializationError(path, message, { cause: error });
+    }
+  });
+}
+
+function validatedJsonSerializer<A, Wire>(
+  serializer: JsonSerializer<A>,
+  ...validators: readonly Validator<Wire>[]
+): JsonSerializer<A> {
+  return JsonSerializer.of((value, path) => {
+    const wireValue = serializer.serialize(value, path);
+    const messages = validators.flatMap((validator) =>
+      validator.validate(wireValue as Wire).map((issue) => issue.message),
+    );
+    if (messages.length > 0) {
+      throw new JsonSerializationError(path, messages.join(" "));
+    }
+    return wireValue;
+  });
+}
+
+function encodedNumberStringJsonSerializer(options?: NumericWireEncoding): JsonSerializer<number> {
+  return scalarJsonSerializer((value) => ScalarEncodings.encodeNumberString(value, options));
+}
+
+function encodedBigIntStringJsonSerializer(options?: NumericWireEncoding): JsonSerializer<bigint> {
+  return scalarJsonSerializer((value) => ScalarEncodings.encodeBigIntString(value, options));
+}
+
+const encodedBooleanStringJsonSerializer: JsonSerializer<boolean> = scalarJsonSerializer(
+  ScalarEncodings.encodeBooleanString,
+);
+const rfc3339DateTimeJsonSerializer: JsonSerializer<string> = scalarJsonSerializer(
+  ScalarEncodings.encodeRfc3339DateTime,
+);
+const rfc7231DateTimeJsonSerializer: JsonSerializer<string> = scalarJsonSerializer(
+  ScalarEncodings.encodeRfc7231DateTime,
+);
+const isoDurationJsonSerializer: JsonSerializer<string> = scalarJsonSerializer(
+  ScalarEncodings.encodeIsoDuration,
+);
+const base64BytesJsonSerializer: JsonSerializer<Uint8Array> = scalarJsonSerializer(
+  ScalarEncodings.encodeBase64,
+);
+const base64UrlBytesJsonSerializer: JsonSerializer<Uint8Array> = scalarJsonSerializer(
+  ScalarEncodings.encodeBase64Url,
+);
+
+function unixTimestampJsonSerializer(options?: NumericWireEncoding): JsonSerializer<string> {
+  return scalarJsonSerializer((value) => ScalarEncodings.encodeUnixTimestamp(value, options));
+}
+
+function numericDurationJsonSerializer(
+  unit: DurationNumericUnit,
+  options?: NumericWireEncoding,
+): JsonSerializer<string> {
+  return scalarJsonSerializer((value) =>
+    ScalarEncodings.encodeNumericDuration(value, unit, options),
+  );
+}
+
 function serializeNested<A>(serializer: JsonSerializer<A>, value: A, path: string): unknown {
   try {
     return serializer.serialize(value, path);
@@ -243,4 +318,15 @@ export const JsonSerializers = {
   object: objectJsonSerializer,
   nullable: nullableJsonSerializer,
   lazy: lazyJsonSerializer,
+  validate: validatedJsonSerializer,
+  encodedNumberString: encodedNumberStringJsonSerializer,
+  encodedBigIntString: encodedBigIntStringJsonSerializer,
+  encodedBooleanString: encodedBooleanStringJsonSerializer,
+  rfc3339DateTime: rfc3339DateTimeJsonSerializer,
+  rfc7231DateTime: rfc7231DateTimeJsonSerializer,
+  unixTimestamp: unixTimestampJsonSerializer,
+  isoDuration: isoDurationJsonSerializer,
+  numericDuration: numericDurationJsonSerializer,
+  base64Bytes: base64BytesJsonSerializer,
+  base64UrlBytes: base64UrlBytesJsonSerializer,
 } as const;
