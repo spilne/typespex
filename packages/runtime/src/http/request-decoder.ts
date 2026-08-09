@@ -15,7 +15,7 @@ import {
   prefixIssues,
   traverseEither,
 } from "./decoder.js";
-import { type ValidationIssue, UnsupportedMediaTypeError, ValidationError } from "./validation.js";
+import { type ValidationIssue, ValidationError } from "./validation.js";
 
 /** Request data available to path/query/header/cookie decoders. */
 export interface RequestInputSource {
@@ -107,11 +107,13 @@ export function requiredHeader<A>(
   return createRequestDecoder((input) => {
     const raw = input.headers.get(lower);
     const value =
-      raw !== null && options.mediaType
-        ? (parseMediaType(raw) ?? raw)
-        : raw !== null && options.array
-          ? splitCommaSeparated(raw)
-          : raw;
+      raw === null
+        ? undefined
+        : options.mediaType
+          ? (parseMediaType(raw) ?? raw)
+          : options.array
+            ? splitCommaSeparated(raw)
+            : raw;
     const result = decoder.decode(value);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
   });
@@ -235,7 +237,9 @@ export async function decodeRequestInputAndBody<A extends object, B extends obje
     ? await decodeJsonBody(request, bodyDecoder, { ...options, root: "$body" })
     : await decodeBody(request, bodyDecoder, { ...options, root: "$body" });
 
-  return mergeRequestAndBodyResults(requestResult, bodyResult);
+  return Either.map(mergeRequestAndBodyResults(requestResult, bodyResult), (value) =>
+    mirrorFileNameMetadata(value, options),
+  );
 }
 
 /**
@@ -266,9 +270,9 @@ function mergeRequestAndBodyResults<A extends object, B extends object>(
   requestResult: DecoderResult<A>,
   bodyResult: EitherT<BodyDecodeError, B | undefined>,
 ): EitherT<BodyDecodeError, MergedRequestInput<A, B, boolean>> {
-  // 415 takes precedence: a wrong Content-Type means we cannot trust the body
-  // shape, so request-input errors are not merged in.
-  if (isLeft(bodyResult) && bodyResult.left instanceof UnsupportedMediaTypeError) {
+  // HTTP body-policy errors (such as 413 and 415) take precedence because the
+  // body was intentionally not decoded and cannot contribute validation issues.
+  if (isLeft(bodyResult) && !(bodyResult.left instanceof ValidationError)) {
     return Either.left(bodyResult.left);
   }
 
@@ -281,10 +285,54 @@ function mergeRequestAndBodyResults<A extends object, B extends object>(
     return Either.left(new ValidationError(issues));
   }
 
+  const body = bodyResult.right;
+  if (body !== undefined) {
+    const collisions = Object.keys(body).filter((key) =>
+      Object.prototype.hasOwnProperty.call(requestResult.right, key),
+    );
+    if (collisions.length > 0) {
+      return Either.left(
+        new ValidationError(
+          collisions.map((key) => ({
+            path: `$body.${key}`,
+            message: `Body property "${key}" conflicts with another request input.`,
+          })),
+        ),
+      );
+    }
+  }
+
   return Either.right({
     ...requestResult.right,
-    ...(bodyResult.right ?? {}),
+    ...(body ?? {}),
   } as MergedRequestInput<A, B, boolean>);
+}
+
+function mirrorFileNameMetadata<A extends object>(value: A, options: BodyDecodeOptions): A {
+  const nameProperty = options.fileNameProperty;
+  const bodyProperty = options.fileBodyProperty;
+  if (!nameProperty || !bodyProperty) return value;
+
+  const input = value as Record<string, unknown>;
+  const filename = input[nameProperty];
+  const file = input[bodyProperty];
+  if (typeof filename !== "string" || !(file instanceof File) || file.name === filename) {
+    return value;
+  }
+
+  const renamed = new File([file], filename, {
+    type: file.type,
+    lastModified: file.lastModified,
+  });
+  // Normalize runtimes that alter otherwise-valid empty names or media types.
+  if (renamed.name !== filename) {
+    Object.defineProperty(renamed, "name", { value: filename, enumerable: true });
+  }
+  if (renamed.type !== file.type) {
+    Object.defineProperty(renamed, "type", { value: file.type, enumerable: true });
+  }
+
+  return { ...input, [bodyProperty]: renamed } as A;
 }
 
 // ---------------------------------------------------------------------------

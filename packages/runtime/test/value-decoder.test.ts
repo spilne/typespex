@@ -308,6 +308,100 @@ describe("http decoder - combinators", () => {
     expect(allowUnknown.decode({ name: "ok", extra: true })).toEqual(Either.right({ name: "ok" }));
   });
 
+  test("Decoders.object validates and preserves additional properties", () => {
+    interface FlexiblePerson {
+      age: number;
+      [key: string]: string | number;
+    }
+
+    const decoder = Decoders.object<FlexiblePerson>(
+      { age: Decoders.number },
+      { additionalProperties: Decoders.string },
+    );
+
+    expect(decoder.decode({ age: "42", nickname: "Ada" })).toEqual(
+      Either.right({ age: 42, nickname: "Ada" }),
+    );
+    expectLeftIssues(decoder.decode({ nickname: "Ada" }), [
+      { path: ".age", message: "Expected a finite number." },
+    ]);
+    expectLeftIssues(decoder.decode({ age: 42, score: 100 }), [
+      { path: ".score", message: "Expected a string." },
+    ]);
+  });
+
+  test("additional-property decoding accumulates declared, nested, and forbidden issues", () => {
+    const additional = Decoders.object<{ enabled: boolean }>({
+      enabled: Decoders.strictBoolean,
+    });
+    const decoder = Decoders.object<{ id: string }>(
+      { id: Decoders.string },
+      {
+        additionalProperties: additional,
+        forbiddenProperties: ["metadata"],
+      },
+    );
+
+    expectLeftIssues(
+      decoder.decode({
+        id: 10,
+        first: { enabled: "yes" },
+        second: 42,
+        metadata: { enabled: true },
+      }),
+      [
+        { path: ".id", message: "Expected a string." },
+        { path: ".first.enabled", message: "Expected a boolean." },
+        { path: ".second", message: "Expected an object." },
+        { path: ".metadata", message: "Unexpected field." },
+      ],
+    );
+  });
+
+  test("forbidden object properties override unknown and additional-property policies", () => {
+    const dropUnknown = Decoders.object<{ name: string }>(
+      { name: Decoders.string },
+      {
+        allowUnknown: true,
+        forbiddenProperties: ["hidden"],
+      },
+    );
+    expectLeftIssues(dropUnknown.decode({ name: "ok", extra: true, hidden: "nope" }), [
+      { path: ".hidden", message: "Unexpected field." },
+    ]);
+
+    const preserveAdditional = Decoders.object<{ name: string }>(
+      { name: Decoders.string },
+      {
+        additionalProperties: Decoders.string,
+        forbiddenProperties: ["hidden"],
+      },
+    );
+    expectLeftIssues(preserveAdditional.decode({ name: "ok", extra: "yes", hidden: "nope" }), [
+      { path: ".hidden", message: "Unexpected field." },
+    ]);
+  });
+
+  test("Decoders.never rejects every value and can seal additional properties", () => {
+    expectLeftIssues(Decoders.never.decode(undefined), [
+      { path: "", message: "Expected no value." },
+    ]);
+    expectLeftIssues(Decoders.never.decode("anything"), [
+      { path: "", message: "Expected no value." },
+    ]);
+
+    const decoder = Decoders.object(
+      {},
+      {
+        additionalProperties: Decoders.never,
+      },
+    );
+    expect(decoder.decode({})).toEqual(Either.right({}));
+    expectLeftIssues(decoder.decode({ extra: true }), [
+      { path: ".extra", message: "Expected no value." },
+    ]);
+  });
+
   test("object and record decoders preserve prototype-sensitive own keys", () => {
     const input = JSON.parse('{"__proto__":"proto","constructor":"ctor"}') as Record<
       string,
@@ -333,6 +427,47 @@ describe("http decoder - combinators", () => {
       expect(object.right["__proto__"]).toBe("proto");
       expect(object.right.constructor).toBe("ctor");
     }
+  });
+
+  test("additional-property decoding safely preserves prototype-sensitive own keys", () => {
+    const input = JSON.parse(
+      '{"name":"safe","__proto__":"proto","constructor":"ctor","toString":"stringifier"}',
+    ) as Record<string, unknown>;
+    const decoded = Decoders.object<{ name: string }>(
+      { name: Decoders.string },
+      { additionalProperties: Decoders.string },
+    ).decode(input);
+
+    expect(decoded._tag).toBe("Right");
+    if (decoded._tag === "Right") {
+      const result = decoded.right as Record<string, unknown>;
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(result, "constructor")).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(result, "toString")).toBe(true);
+      expect(result["__proto__"]).toBe("proto");
+      expect(result.constructor).toBe("ctor");
+      expect(result.toString).toBe("stringifier");
+    }
+  });
+
+  test("forbidden-property checks safely match prototype-sensitive names", () => {
+    const input = JSON.parse(
+      '{"name":"safe","__proto__":"proto","constructor":"ctor","toString":"stringifier"}',
+    ) as Record<string, unknown>;
+    const decoded = Decoders.object<{ name: string }>(
+      { name: Decoders.string },
+      {
+        allowUnknown: true,
+        forbiddenProperties: ["__proto__", "constructor", "toString"],
+      },
+    ).decode(input);
+
+    expectLeftIssues(decoded, [
+      { path: ".__proto__", message: "Unexpected field." },
+      { path: ".constructor", message: "Unexpected field." },
+      { path: ".toString", message: "Unexpected field." },
+    ]);
   });
 
   test("unknown-field checks do not treat Object.prototype keys as declared", () => {
@@ -436,6 +571,30 @@ describe("http decoder - combinators", () => {
     expectLeftIssues(decoder.decode({ version: 3 }), [
       { path: ".version", message: "Unknown discriminator value: 3." },
     ]);
+  });
+
+  test("Decoders.discriminated treats prototype names as own-key variants only", () => {
+    const fallbackDecoder = Decoders.discriminated("kind", {
+      known: Decoders.object({ kind: Decoders.literal("known") }),
+    });
+
+    for (const kind of ["constructor", "toString", "__proto__"]) {
+      expectLeftIssues(fallbackDecoder.decode({ kind }), [
+        { path: ".kind", message: `Unknown discriminator value: ${JSON.stringify(kind)}.` },
+      ]);
+    }
+
+    const prototypeDecoder = Decoders.object<{ kind: "__proto__"; value: string }>({
+      kind: Decoders.literal("__proto__"),
+      value: Decoders.string,
+    });
+    const declaredDecoder = Decoders.discriminated<{ kind: "__proto__"; value: string }>("kind", {
+      ["__proto__"]: prototypeDecoder,
+    });
+
+    expect(declaredDecoder.decode({ kind: "__proto__", value: "safe" })).toEqual(
+      Either.right({ kind: "__proto__", value: "safe" }),
+    );
   });
 
   test("nested object validation reports precise relative paths", () => {
@@ -741,6 +900,20 @@ describe("http decoder - throw adapters", () => {
     expect(result._tag).toBe("Left");
   });
 
+  test("Decoders.fileWithContentTypes validates multipart file media", () => {
+    const png = new File(["png"], "image.png", { type: "image/png" });
+    const text = new File(["text"], "note.txt", { type: "text/plain" });
+    const decoder = Decoders.fileWithContentTypes(["image/*"]);
+
+    expect(decoder.decode(png)).toEqual(succeed(png));
+    expect(decoder.decode(text)._tag).toBe("Left");
+    expect(
+      Decoders.fileWithContentTypes(["image/*"], {
+        requireContentType: true,
+      }).decode(new File(["untyped"], "image.bin")),
+    ).toEqual(Either.left([{ path: "", message: "Expected a file content type." }]));
+  });
+
   test("decodeMultipartBody parses multipart form data", async () => {
     const formData = new FormData();
     formData.append("name", "Alice");
@@ -1028,6 +1201,116 @@ describe("content-type body dispatch", () => {
       { contentTypes: ["application/octet-stream"] },
     );
     expect(binaryResult).toEqual(Either.right(new Uint8Array([0, 127, 255])));
+  });
+
+  test("parses resolved file bodies independently of their media type", async () => {
+    const rawJson = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: '{"still":"raw"}',
+      }),
+      { file: Decoders.file },
+      {
+        contentTypes: ["application/json"],
+        allowMissingContentType: true,
+      },
+    );
+    expect(rawJson._tag).toBe("Right");
+    if (rawJson._tag === "Right") {
+      expect(rawJson.right).toBeInstanceOf(File);
+      expect(rawJson.right.name).toBe("");
+      expect(rawJson.right.type).toBe("application/json");
+      expect(await rawJson.right.text()).toBe('{"still":"raw"}');
+    }
+
+    const withoutContentType = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        body: new Uint8Array([1, 2]),
+      }),
+      { file: Decoders.file },
+      {
+        contentTypes: ["application/octet-stream"],
+        allowMissingContentType: true,
+      },
+    );
+    expect(withoutContentType._tag).toBe("Right");
+    if (withoutContentType._tag === "Right") {
+      expect(withoutContentType.right.type).toBe("");
+      expect(new Uint8Array(await withoutContentType.right.arrayBuffer())).toEqual(
+        new Uint8Array([1, 2]),
+      );
+    }
+
+    const wrongContentType = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "wrong",
+      }),
+      { file: Decoders.file },
+      {
+        contentTypes: ["image/png"],
+        allowMissingContentType: true,
+      },
+    );
+    expect(wrongContentType).toEqual(
+      Either.left(new UnsupportedMediaTypeError("text/plain", ["image/png"])),
+    );
+
+    const malformedContentType = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        headers: { "content-type": "garbage" },
+        body: "invalid media type",
+      }),
+      { file: Decoders.file },
+      {
+        contentTypes: ["*/*"],
+        allowMissingContentType: true,
+      },
+    );
+    expect(malformedContentType).toEqual(
+      Either.left(new UnsupportedMediaTypeError("garbage", ["*/*"])),
+    );
+  });
+
+  test("distinguishes missing file bodies from present zero-byte files", async () => {
+    const missing = await decodeBody(
+      new Request("http://localhost/file", { method: "POST" }),
+      { file: Decoders.file },
+      { allowMissingContentType: true },
+    );
+    expect(missing).toEqual(
+      Either.left(new ValidationError([{ path: "$body", message: "Required body is missing." }])),
+    );
+
+    const wrongContentTypeWithoutBody = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+      }),
+      { file: Decoders.file },
+      { contentTypes: ["image/png"] },
+    );
+    expect(wrongContentTypeWithoutBody).toEqual(
+      Either.left(new UnsupportedMediaTypeError("text/plain", ["image/png"])),
+    );
+
+    const zeroByte = await decodeBody(
+      new Request("http://localhost/file", {
+        method: "POST",
+        body: new Uint8Array(),
+      }),
+      { file: Decoders.file },
+      { optional: true, allowMissingContentType: true },
+    );
+    expect(zeroByte._tag).toBe("Right");
+    if (zeroByte._tag === "Right") {
+      expect(zeroByte.right).toBeInstanceOf(File);
+      expect(zeroByte.right?.size).toBe(0);
+    }
   });
 
   test("accepts base64 JSON bytes and rejects JSON byte arrays", async () => {

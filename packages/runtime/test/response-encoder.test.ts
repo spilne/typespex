@@ -80,6 +80,113 @@ describe("ResponseEncoders", () => {
     expect(await response.text()).toBe("AB");
   });
 
+  test("file encodes contents and safe HTTP metadata", async () => {
+    const file = new File([new Uint8Array([65, 66])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+    const response = ResponseEncoders.file(206, ["application/octet-stream"]).encode(file);
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-disposition")).toBe('attachment; filename="archive.bin"');
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([65, 66]));
+  });
+
+  test("file validates media contracts and encodes Unicode filenames", () => {
+    const unicode = new File(["hello"], "résumé.txt", { type: "text/plain" });
+    const response = ResponseEncoders.file(200, ["text/*"]).encode(unicode);
+
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="r_sum_.txt"; filename*=UTF-8''r%C3%A9sum%C3%A9.txt`,
+    );
+    expect(() => ResponseEncoders.file(200, ["image/png"]).encode(unicode)).toThrow(
+      "outside its declared contract",
+    );
+    expect(() =>
+      ResponseEncoders.file(200).encode(
+        new File(["secret"], "../secret.txt", { type: "text/plain" }),
+      ),
+    ).toThrow("path separators");
+    expect(() => ResponseEncoders.file(200).encode({} as File)).toThrow("require a Web File");
+    expect(() =>
+      ResponseEncoders.file(200, ["*/*"]).encode(
+        new File(["invalid"], "invalid.bin", { type: "garbage" }),
+      ),
+    ).toThrow("outside its declared contract");
+  });
+
+  test("file honors required and relocated metadata", () => {
+    const required = ResponseEncoders.file(200, ["image/png"], {
+      requireContentType: true,
+      requireFileName: true,
+    }).encode(new File(["png"], "", { type: "image/png" }));
+    expect(required.headers.get("content-type")).toBe("image/png");
+    expect(required.headers.get("content-disposition")).toBe('attachment; filename=""');
+
+    expect(() =>
+      ResponseEncoders.file(200, ["image/png"], {
+        requireContentType: true,
+      }).encode(new File(["missing type"], "file.bin")),
+    ).toThrow("require a content type");
+
+    const relocated = ResponseEncoders.file(200, ["text/plain"], {
+      emitContentDisposition: false,
+    }).encode(new File(["text"], "ignored.txt", { type: "text/plain" }));
+    expect(relocated.headers.get("content-disposition")).toBeNull();
+  });
+
+  test("file validates the Content-Type that the response will emit", () => {
+    const encoder = ResponseEncoders.variant<{
+      body: File;
+      contentType: string;
+    }>({
+      status: 200,
+      kind: "file",
+      body: "body",
+      headers: [["contentType", "content-type"]],
+      contentTypes: ["image/png"],
+      requireFileContentType: true,
+    });
+
+    expect(() =>
+      encoder.encode({
+        body: new File(["png"], "image.png", { type: "image/png" }),
+        contentType: "text/plain",
+      }),
+    ).toThrow("conflicts with response Content-Type");
+
+    expect(() =>
+      encoder.encode({
+        body: new File(["text"], "image.png"),
+        contentType: "text/plain",
+      }),
+    ).toThrow('File content type "text/plain" is outside its declared contract');
+
+    const response = encoder.encode({
+      body: new File(["png"], "image.png", { type: "image/png" }),
+      contentType: "Image/PNG; version=1",
+    });
+    expect(response.headers.get("content-type")).toBe("Image/PNG; version=1");
+  });
+
+  test("file preserves absent metadata and body-forbidden statuses", async () => {
+    const unnamed = new File([new Uint8Array()], "");
+    const response = ResponseEncoders.file(200, ["*/*"]).encode(unnamed);
+
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+
+    const suppressed = ResponseEncoders.file(204, ["image/png"], {
+      requireContentType: true,
+      requireFileName: true,
+    }).encode({} as File);
+    expect(suppressed.status).toBe(204);
+    expect(suppressed.headers.get("content-type")).toBeNull();
+    expect(suppressed.headers.get("content-disposition")).toBeNull();
+    expect(await suppressed.text()).toBe("");
+  });
+
   test("response passes through raw Response", () => {
     const raw = new Response("raw", { status: 209 });
     expect(ResponseEncoders.response().encode(raw)).toBe(raw);
@@ -285,6 +392,71 @@ describe("ResponseEncoders", () => {
     expect(response.headers.get("etag")).toBe('"revision-1"');
     expect(response.headers.getSetCookie()).toEqual(["session=abc; Path=/", "theme=dark; Path=/"]);
     expect(await response.text()).toBe("");
+  });
+
+  test("body encoders suppress bodies for Fetch body-forbidden statuses", async () => {
+    for (const status of [204, 205, 304]) {
+      const responses = [
+        ResponseEncoders.json(status).encode({ value: "ignored" }),
+        ResponseEncoders.text(status).encode("ignored"),
+        ResponseEncoders.bytes(status).encode(new Uint8Array([1, 2])),
+        ResponseEncoders.variant<{ body: string }>({
+          status,
+          kind: "text",
+          body: "body",
+        }).encode({ body: "ignored" }),
+      ];
+
+      for (const response of responses) {
+        expect(response.status).toBe(status);
+        expect(response.headers.get("content-type")).toBeNull();
+        expect(await response.text()).toBe("");
+      }
+    }
+  });
+
+  test("dynamic variant statuses validate and drive the response", async () => {
+    const encoder = ResponseEncoders.variant<{ status: number; body: string }>({
+      status: {
+        property: "status",
+        allowed: [201, { start: 203, end: 205 }],
+      },
+      kind: "text",
+      body: "body",
+      omit: ["status"],
+    });
+
+    const created = encoder.encode({ status: 201, body: "created" });
+    expect(created.status).toBe(201);
+    expect(await created.text()).toBe("created");
+
+    const noContent = encoder.encode({ status: 204, body: "must-not-be-sent" });
+    expect(noContent.status).toBe(204);
+    expect(noContent.headers.get("content-type")).toBeNull();
+    expect(await noContent.text()).toBe("");
+
+    expect(() => encoder.encode({ status: 202, body: "outside" })).toThrow(
+      "outside its declared contract",
+    );
+    expect(() => encoder.encode({ status: 199, body: "invalid Fetch status" })).toThrow(
+      "between 200 and 599",
+    );
+    expect(() => encoder.encode({ status: 201.5, body: "not an integer" })).toThrow(
+      "must be an integer",
+    );
+    expect(() => encoder.encode({ body: "missing" } as any)).toThrow(
+      'status property "status" is required',
+    );
+
+    const inheritedStatus = Object.assign(Object.create({ status: 201 }), {
+      body: "prototype status",
+    });
+    expect(() => encoder.encode(inheritedStatus)).toThrow('status property "status" is required');
+  });
+
+  test("fixed encoders reject statuses unsupported by Fetch Response", () => {
+    expect(() => ResponseEncoders.empty(199).encode(undefined)).toThrow("between 200 and 599");
+    expect(() => ResponseEncoders.json(600).encode({})).toThrow("between 200 and 599");
   });
 
   test("variant omits metadata properties that are not in the handler type", async () => {

@@ -1,6 +1,20 @@
 import { Either, isLeft, type Either as EitherT } from "../core/either.js";
 import { parse as parseLosslessJson } from "lossless-json";
+import {
+  enforceRequestBodyLimit,
+  inheritRequestBodyLimit,
+  releaseRequestBodyLimit,
+  type RequestBodyLimit,
+  RequestBodyTooLargeError,
+} from "./body-limit.js";
 import { isContentTypeAccepted, parseMediaType } from "./media-type.js";
+import {
+  type ParsedMultipartBody,
+  type ParsedMultipartPart,
+  MultipartSyntaxError,
+  parseMultipartRequest,
+  validateFileName,
+} from "./multipart.js";
 import {
   type ValidationIssue,
   type Validator,
@@ -80,6 +94,29 @@ type TupleDecoderItems<A extends readonly unknown[]> = {
 type ObjectDecoderFields<A extends object> = {
   readonly [K in keyof A]-?: Decoder<A[K]>;
 };
+
+export interface ObjectDecoderOptions<AdditionalProperty = unknown> {
+  /**
+   * Accept undeclared fields without preserving them in the decoded result.
+   *
+   * Ignored when `additionalProperties` is provided, because those fields are
+   * decoded and preserved instead.
+   */
+  readonly allowUnknown?: boolean;
+  /** Decoder applied to every undeclared own field. Successful values are preserved. */
+  readonly additionalProperties?: Decoder<AdditionalProperty>;
+  /**
+   * Undeclared field names that must still be rejected.
+   *
+   * This is used for named properties excluded from a payload projection, so
+   * enabling unknown or additional properties cannot reintroduce them.
+   */
+  readonly forbiddenProperties?: readonly string[];
+}
+
+type ObjectAdditionalProperty<A extends object> = string extends keyof A
+  ? A[string & keyof A]
+  : unknown;
 
 /** Decoder combinator for optional values. Accepts `undefined` (absent fields), delegates the rest. */
 export function optional<A, Input = unknown>(
@@ -243,8 +280,32 @@ const fileDecoder: Decoder<File> = Decoder.of((input) => {
   return fail("", "Expected a file.");
 });
 
+export interface FileDecoderOptions {
+  readonly requireContentType?: boolean;
+}
+
+function fileWithContentTypesDecoder(
+  contentTypes: readonly string[],
+  options: FileDecoderOptions = {},
+): Decoder<File> {
+  return Decoder.of((input) => {
+    if (!(input instanceof File)) return fail("", "Expected a file.");
+    if (!input.type && options.requireContentType) {
+      return fail("", "Expected a file content type.");
+    }
+    if (input.type && contentTypes.length > 0 && !isContentTypeAccepted(input.type, contentTypes)) {
+      return fail("", `File content type "${input.type}" is outside its declared contract.`);
+    }
+    return succeed(input);
+  });
+}
+
 const unknownDecoder: Decoder<unknown> = Decoder.of((input) => {
   return succeed(input);
+});
+
+const neverDecoder: Decoder<never> = Decoder.of(() => {
+  return fail("", "Expected no value.");
 });
 
 // ---------------------------------------------------------------------------
@@ -354,12 +415,15 @@ function recordDecoder<A>(value: Decoder<A>): Decoder<Record<string, A>> {
 
 function objectDecoder<A extends object>(
   fields: ObjectDecoderFields<A>,
-  options?: { allowUnknown?: boolean },
+  options?: ObjectDecoderOptions<ObjectAdditionalProperty<A>>,
 ): Decoder<A> {
   const fieldEntries = Object.entries(fields).map(
     ([name, decoder]) => [name, decoder as Decoder<unknown>] as const,
   );
+  const declaredProperties = new Set(fieldEntries.map(([name]) => name));
   const allowUnknown = options?.allowUnknown ?? false;
+  const additionalProperties = options?.additionalProperties;
+  const forbiddenProperties = new Set(options?.forbiddenProperties);
 
   return Decoder.of((input) => {
     const object = expectPlainObject(input);
@@ -385,11 +449,28 @@ function objectDecoder<A extends object>(
       }
     }
 
-    if (!allowUnknown) {
-      for (const key of Object.keys(object.right)) {
-        if (!Object.prototype.hasOwnProperty.call(fields, key)) {
-          (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
+    for (const key of Object.keys(object.right)) {
+      if (declaredProperties.has(key)) continue;
+
+      if (forbiddenProperties.has(key)) {
+        (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
+        continue;
+      }
+
+      if (additionalProperties) {
+        const decoded = additionalProperties.decode(object.right[key]);
+        if (isLeft(decoded)) {
+          for (const issue of decoded.left) {
+            (issues ??= []).push({
+              path: `.${key}${issue.path}`,
+              message: issue.message,
+            });
+          }
+        } else {
+          defineDataProperty(result, key, decoded.right);
         }
+      } else if (!allowUnknown) {
+        (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
       }
     }
 
@@ -451,7 +532,10 @@ function discriminatedDecoder<A>(
     if (isLeft(object)) return object;
     const tag = object.right[discriminator];
     const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
-    const variant = key !== undefined ? variants[key] : undefined;
+    const variant =
+      key !== undefined && Object.prototype.hasOwnProperty.call(variants, key)
+        ? variants[key]
+        : undefined;
     if (!variant) {
       return fail(`.${discriminator}`, `Unknown discriminator value: ${JSON.stringify(tag)}.`);
     }
@@ -472,6 +556,578 @@ function refineDecoder<A>(
   return decoder.refine(predicate, message);
 }
 
+// ---------------------------------------------------------------------------
+// Schema-aware multipart decoders
+// ---------------------------------------------------------------------------
+
+export type MultipartPartKind = "text" | "binary" | "json" | "file";
+
+export type MultipartPartDecoderMap<A = unknown> = Readonly<
+  Partial<Record<MultipartPartKind, Decoder<A>>>
+>;
+
+interface MultipartPartDescriptorOptions {
+  /** Allowed media types for this part. Parameters are ignored during matching. */
+  readonly contentTypes?: readonly string[];
+  /** Reject a part that omits Content-Type. */
+  readonly requireContentType?: boolean;
+  /** The part may be omitted. */
+  readonly optional?: boolean;
+  /** The part may occur more than once and is returned as an array. */
+  readonly multi?: boolean;
+  /** Wire Content-Disposition name. Required for named bodies and form-data tuples. */
+  readonly name?: string;
+  /** Handler property name. Required for named bodies and omitted for tuples. */
+  readonly property?: string;
+  /**
+   * For File parts, relocate File.name to this per-part header. When set,
+   * Content-Disposition's filename parameter is intentionally ignored.
+   */
+  readonly fileNameHeader?: string;
+  /** Reject a File part when its selected filename metadata is absent. */
+  readonly requireFileName?: boolean;
+}
+
+/** Schema for one logical multipart field or tuple element. */
+export type MultipartPartDescriptor<A = unknown> = MultipartPartDescriptorOptions &
+  (
+    | {
+        /** Parser used for one homogeneous wire representation. */
+        readonly kind: MultipartPartKind;
+        readonly decoder: Decoder<A>;
+        readonly decoders?: never;
+      }
+    | {
+        /** Parsers selected from the received per-part Content-Type. */
+        readonly decoders: MultipartPartDecoderMap<A>;
+        readonly kind?: never;
+        readonly decoder?: never;
+      }
+  );
+
+type MultipartOptionalDescriptorFlag<Value> = undefined extends Value
+  ? { readonly optional: true }
+  : { readonly optional?: false };
+
+type MultipartDescriptorForValue<Value> = (Exclude<Value, undefined> extends readonly (infer Item)[]
+  ? MultipartPartDescriptor<Item> & { readonly multi: true }
+  : MultipartPartDescriptor<Exclude<Value, undefined>> & { readonly multi?: false }) &
+  MultipartOptionalDescriptorFlag<Value>;
+
+/** Descriptor union keyed by the handler properties of one named multipart body. */
+export type MultipartFormDataDescriptor<A extends object> = {
+  [Key in Extract<keyof A, string>]-?: MultipartDescriptorForValue<A[Key]> & {
+    readonly name: string;
+    readonly property: Key;
+  };
+}[Extract<keyof A, string>];
+
+/** Positional descriptors corresponding to one multipart tuple handler value. */
+export type MultipartTupleDescriptors<A extends readonly unknown[]> = {
+  readonly [Key in keyof A]: MultipartDescriptorForValue<A[Key]> & {
+    readonly property?: never;
+  };
+};
+
+type MultipartSchemaMode = "form-data" | "tuple";
+
+const MULTIPART_BODY = Symbol("typespex.multipart.body");
+
+type MultipartDecoderInput = Record<string, unknown> & {
+  readonly [MULTIPART_BODY]: ParsedMultipartBody;
+};
+
+class MultipartSchemaDecoder<A> extends Decoder<A> {
+  constructor(
+    private readonly mode: MultipartSchemaMode,
+    private readonly parts: readonly MultipartPartDescriptor[],
+  ) {
+    super();
+  }
+
+  decode(input: unknown): DecoderResult<A> {
+    const body = getParsedMultipartBody(input);
+    if (!body) return fail("", "Expected a parsed multipart body.");
+    const schemaIssues = validateMultipartSchema(this.mode, this.parts);
+    if (schemaIssues.length > 0) return failMany(schemaIssues);
+    return (
+      this.mode === "form-data"
+        ? decodeMultipartFormData(this.parts, body)
+        : decodeMultipartTuple(this.parts, body)
+    ) as DecoderResult<A>;
+  }
+}
+
+/**
+ * Builds a schema-aware decoder for named multipart fields.
+ *
+ * Generated descriptors provide both `name` (wire name) and `property`
+ * (handler property), which need not be equal. This supports form-data and
+ * named model bodies carried by other multipart subtypes.
+ */
+function multipartFormDataDecoder<A extends object>(
+  parts: readonly MultipartFormDataDescriptor<A>[],
+): Decoder<A> {
+  return new MultipartSchemaDecoder("form-data", parts as readonly MultipartPartDescriptor[]);
+}
+
+/** Builds a schema-aware decoder for ordered multipart tuple parts. */
+function multipartTupleDecoder<A extends readonly unknown[]>(
+  parts: MultipartTupleDescriptors<A>,
+): Decoder<A> {
+  return new MultipartSchemaDecoder("tuple", parts as readonly MultipartPartDescriptor[]);
+}
+
+function getParsedMultipartBody(input: unknown): ParsedMultipartBody | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  return (input as Partial<MultipartDecoderInput>)[MULTIPART_BODY];
+}
+
+function validateMultipartSchema(
+  mode: MultipartSchemaMode,
+  descriptors: readonly MultipartPartDescriptor[],
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const names = new Set<string>();
+  const properties = new Set<string>();
+  if (descriptors.length > 256) {
+    issues.push({ path: "", message: "Multipart schema exceeds the 256-part limit." });
+    return issues;
+  }
+
+  for (let index = 0; index < descriptors.length; index++) {
+    const descriptor = descriptors[index]!;
+    const path = mode === "tuple" ? `[${index}]` : "";
+    const decoders = descriptorDecoders(descriptor);
+    if (Object.keys(decoders).length === 0) {
+      issues.push({ path, message: "Multipart part has no decoder." });
+    }
+    if (descriptor.fileNameHeader !== undefined) {
+      if (!isHeaderName(descriptor.fileNameHeader)) {
+        issues.push({ path, message: "Multipart filename header name is invalid." });
+      }
+      if (!decoders.file) {
+        issues.push({
+          path,
+          message: "Multipart filename metadata may only be used with a File decoder.",
+        });
+      }
+    }
+    if (descriptor.requireFileName && !decoders.file) {
+      issues.push({
+        path,
+        message: "Required filename metadata may only be used with a File decoder.",
+      });
+    }
+
+    if (mode === "form-data") {
+      if (!descriptor.name || !descriptor.property) {
+        issues.push({
+          path,
+          message: "Named multipart parts require wire and handler property names.",
+        });
+        continue;
+      }
+      if (names.has(descriptor.name)) {
+        issues.push({ path: `.${descriptor.property}`, message: "Duplicate multipart wire name." });
+      }
+      if (properties.has(descriptor.property)) {
+        issues.push({
+          path: `.${descriptor.property}`,
+          message: "Duplicate multipart handler property.",
+        });
+      }
+      names.add(descriptor.name);
+      properties.add(descriptor.property);
+    } else if (descriptor.property !== undefined) {
+      issues.push({
+        path,
+        message: "Ordered multipart tuple parts must not declare handler properties.",
+      });
+    }
+  }
+  return issues;
+}
+
+function decodeMultipartFormData(
+  descriptors: readonly MultipartPartDescriptor[],
+  body: ParsedMultipartBody,
+): DecoderResult<Record<string, unknown>> {
+  const byName = new Map<string, ParsedMultipartPart[]>();
+  const issues: ValidationIssue[] = [];
+  for (let index = 0; index < body.parts.length; index++) {
+    const part = body.parts[index]!;
+    const disposition = part.disposition;
+    if (
+      !disposition?.name ||
+      (body.mediaType === "multipart/form-data" && disposition.type !== "form-data")
+    ) {
+      issues.push({
+        path: `[${index}]`,
+        message:
+          body.mediaType === "multipart/form-data"
+            ? "Named form-data parts require Content-Disposition: form-data with a name."
+            : "Named multipart parts require Content-Disposition with a name.",
+      });
+      continue;
+    }
+    const values = byName.get(disposition.name);
+    if (values) values.push(part);
+    else byName.set(disposition.name, [part]);
+  }
+
+  const knownNames = new Set(descriptors.map((part) => part.name!));
+  for (const name of byName.keys()) {
+    if (!knownNames.has(name)) {
+      issues.push({ path: `.${name}`, message: "Unexpected multipart part." });
+    }
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const descriptor of descriptors) {
+    const property = descriptor.property!;
+    const values = byName.get(descriptor.name!) ?? [];
+    const cardinality = validateNamedPartCardinality(descriptor, values.length, property);
+    if (cardinality) {
+      issues.push(cardinality);
+      continue;
+    }
+    if (values.length === 0) continue;
+
+    if (descriptor.multi) {
+      const decoded = traverseEither(values, (part, index) =>
+        prefixIssues(decodeMultipartPart(descriptor, part), `.${property}[${index}]`),
+      );
+      if (isLeft(decoded)) issues.push(...decoded.left);
+      else defineDataProperty(output, property, decoded.right);
+    } else {
+      const decoded = prefixIssues(decodeMultipartPart(descriptor, values[0]!), `.${property}`);
+      if (isLeft(decoded)) issues.push(...decoded.left);
+      else defineDataProperty(output, property, decoded.right);
+    }
+  }
+
+  return issues.length > 0 ? failMany(issues) : succeed(output);
+}
+
+function validateNamedPartCardinality(
+  descriptor: MultipartPartDescriptor,
+  count: number,
+  property: string,
+): ValidationIssue | undefined {
+  if (count === 0 && !descriptor.optional) {
+    return { path: `.${property}`, message: "Required multipart part is missing." };
+  }
+  if (!descriptor.multi && count > 1) {
+    return { path: `.${property}`, message: "Multipart part must occur at most once." };
+  }
+  return undefined;
+}
+
+function decodeMultipartTuple(
+  descriptors: readonly MultipartPartDescriptor[],
+  body: ParsedMultipartBody,
+): DecoderResult<unknown[]> {
+  const assignment = resolveTupleCardinality(descriptors, body);
+  if (isLeft(assignment)) return assignment;
+
+  const output: unknown[] = [];
+  const issues: ValidationIssue[] = [];
+  let partIndex = 0;
+  for (let descriptorIndex = 0; descriptorIndex < descriptors.length; descriptorIndex++) {
+    const descriptor = descriptors[descriptorIndex]!;
+    const count = assignment.right[descriptorIndex]!;
+    if (count === 0 && descriptor.optional) {
+      output.push(undefined);
+    } else if (descriptor.multi) {
+      const values = body.parts.slice(partIndex, partIndex + count);
+      const decoded = traverseEither(values, (part, repeatedIndex) =>
+        prefixIssues(
+          decodeMultipartTuplePart(descriptor, part, body.mediaType),
+          `[${descriptorIndex}][${repeatedIndex}]`,
+        ),
+      );
+      if (isLeft(decoded)) issues.push(...decoded.left);
+      else output.push(decoded.right);
+    } else {
+      const decoded = prefixIssues(
+        decodeMultipartTuplePart(descriptor, body.parts[partIndex]!, body.mediaType),
+        `[${descriptorIndex}]`,
+      );
+      if (isLeft(decoded)) issues.push(...decoded.left);
+      else output.push(decoded.right);
+    }
+    partIndex += count;
+  }
+
+  return issues.length > 0 ? failMany(issues) : succeed(output);
+}
+
+function decodeMultipartTuplePart(
+  descriptor: MultipartPartDescriptor,
+  part: ParsedMultipartPart,
+  outerMediaType: string,
+): DecoderResult<unknown> {
+  const expectedName = descriptor.name;
+  const actualDisposition = part.disposition;
+  if (outerMediaType === "multipart/form-data") {
+    if (!expectedName) {
+      return fail("", "Tuple form-data parts require a declared wire name.");
+    }
+    if (actualDisposition?.type !== "form-data" || actualDisposition.name !== expectedName) {
+      return fail("", `Expected multipart form-data part named "${expectedName}".`);
+    }
+  } else if (expectedName !== undefined && actualDisposition?.name !== expectedName) {
+    return fail("", `Expected multipart part named "${expectedName}".`);
+  }
+  return decodeMultipartPart(descriptor, part);
+}
+
+function resolveTupleCardinality(
+  descriptors: readonly MultipartPartDescriptor[],
+  body: ParsedMultipartBody,
+): DecoderResult<number[]> {
+  const received = body.parts.length;
+  const minimum = descriptors.reduce(
+    (total, descriptor) => total + (descriptor.optional ? 0 : 1),
+    0,
+  );
+  const hasMulti = descriptors.some((descriptor) => descriptor.multi);
+  const maximum = hasMulti ? Number.POSITIVE_INFINITY : descriptors.length;
+  if (received < minimum) {
+    return fail("", `Expected at least ${minimum} multipart part(s), received ${received}.`);
+  }
+  if (received > maximum) {
+    return fail("", `Expected at most ${maximum} multipart part(s), received ${received}.`);
+  }
+
+  interface Match {
+    readonly ways: 0 | 1 | 2;
+    readonly counts?: readonly number[];
+  }
+  const solve = (useWireEvidence: boolean): Match => {
+    const memo = new Map<string, Match>();
+    const match = (descriptorIndex: number, partIndex: number): Match => {
+      const memoKey = `${descriptorIndex}:${partIndex}`;
+      const cached = memo.get(memoKey);
+      if (cached) return cached;
+      if (descriptorIndex === descriptors.length) {
+        const terminal: Match =
+          partIndex === body.parts.length ? { ways: 1, counts: [] } : { ways: 0 };
+        memo.set(memoKey, terminal);
+        return terminal;
+      }
+
+      const descriptor = descriptors[descriptorIndex]!;
+      const min = descriptor.optional ? 0 : 1;
+      const available = body.parts.length - partIndex;
+      const max = descriptor.multi ? available : Math.min(1, available);
+      let ways: 0 | 1 | 2 = 0;
+      let firstCounts: readonly number[] | undefined;
+      for (let count = min; count <= max; count++) {
+        if (
+          useWireEvidence &&
+          count > 0 &&
+          !tuplePartMatchesDescriptor(
+            descriptor,
+            body.parts[partIndex + count - 1]!,
+            body.mediaType,
+          )
+        ) {
+          break;
+        }
+        const suffix = match(descriptorIndex + 1, partIndex + count);
+        if (suffix.ways === 0) continue;
+        if (!firstCounts && suffix.counts) firstCounts = [count, ...suffix.counts];
+        ways = Math.min(2, ways + suffix.ways) as 1 | 2;
+        if (ways === 2) break;
+      }
+      const result: Match = firstCounts ? { ways, counts: firstCounts } : { ways: 0 };
+      memo.set(memoKey, result);
+      return result;
+    };
+    return match(0, 0);
+  };
+  let solution = solve(true);
+
+  if (solution.ways === 0 || !solution.counts) {
+    // When cardinality itself has exactly one interpretation, preserve that
+    // assignment so the regular part decoder can report the precise invalid
+    // name, media type, or filename issue.
+    const cardinalityOnly = solve(false);
+    if (cardinalityOnly.ways === 1 && cardinalityOnly.counts) {
+      solution = cardinalityOnly;
+    } else {
+      return fail("", "Multipart tuple parts do not match their declared wire contracts.");
+    }
+  }
+  if (solution.ways > 1) {
+    return fail(
+      "",
+      "Multipart tuple cardinality is ambiguous after matching part names and media types.",
+    );
+  }
+  const resolvedCounts = solution.counts;
+  return resolvedCounts
+    ? succeed([...resolvedCounts])
+    : fail("", "Multipart tuple cardinality could not be resolved.");
+}
+
+function tuplePartMatchesDescriptor(
+  descriptor: MultipartPartDescriptor,
+  part: ParsedMultipartPart,
+  outerMediaType: string,
+): boolean {
+  if (outerMediaType === "multipart/form-data") {
+    if (
+      !descriptor.name ||
+      part.disposition?.type !== "form-data" ||
+      part.disposition.name !== descriptor.name
+    ) {
+      return false;
+    }
+  } else if (descriptor.name !== undefined && part.disposition?.name !== descriptor.name) {
+    return false;
+  }
+  if (descriptor.requireContentType && !part.contentType) return false;
+  if (
+    part.contentType &&
+    descriptor.contentTypes &&
+    descriptor.contentTypes.length > 0 &&
+    !isContentTypeAccepted(part.contentType, descriptor.contentTypes)
+  ) {
+    return false;
+  }
+  const kind = selectMultipartPartKind(descriptorDecoders(descriptor), part.contentType);
+  if (isLeft(kind)) return false;
+  if (kind.right === "file" && descriptor.requireFileName) {
+    const filename =
+      descriptor.fileNameHeader === undefined
+        ? part.disposition?.filename
+        : part.headers.get(descriptor.fileNameHeader.toLowerCase());
+    if (filename === undefined) return false;
+    try {
+      validateFileName(filename);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function decodeMultipartPart(
+  descriptor: MultipartPartDescriptor,
+  part: ParsedMultipartPart,
+): DecoderResult<unknown> {
+  const declared = descriptor.contentTypes ?? [];
+  if (descriptor.requireContentType && !part.contentType) {
+    return fail("", "Expected a multipart part Content-Type.");
+  }
+  if (
+    part.contentType &&
+    declared.length > 0 &&
+    !isContentTypeAccepted(part.contentType, declared)
+  ) {
+    return fail(
+      "",
+      `Multipart part content type "${part.contentType}" is outside its declared contract.`,
+    );
+  }
+
+  const decoders = descriptorDecoders(descriptor);
+  const kind = selectMultipartPartKind(decoders, part.contentType);
+  if (isLeft(kind)) return kind;
+  const decoder = decoders[kind.right];
+  if (!decoder) {
+    return fail(
+      "",
+      `Multipart part content type ${JSON.stringify(part.contentType ?? null)} has no decoder.`,
+    );
+  }
+
+  let wireValue: unknown;
+  try {
+    switch (kind.right) {
+      case "text":
+        wireValue = strictMultipartText(part.body);
+        break;
+      case "binary":
+        wireValue = part.body;
+        break;
+      case "json":
+        wireValue = parseJsonText(strictMultipartText(part.body));
+        break;
+      case "file":
+        wireValue = multipartFile(descriptor, part);
+        break;
+    }
+  } catch (error) {
+    if (error instanceof MultipartSyntaxError) return fail("", error.message);
+    return fail(
+      "",
+      kind.right === "json"
+        ? "Multipart part must contain valid JSON."
+        : "Multipart text part must contain valid UTF-8.",
+    );
+  }
+  return decoder.decode(wireValue);
+}
+
+function descriptorDecoders(descriptor: MultipartPartDescriptor): MultipartPartDecoderMap {
+  return descriptor.decoders ?? { [descriptor.kind]: descriptor.decoder };
+}
+
+function selectMultipartPartKind(
+  decoders: MultipartPartDecoderMap,
+  contentType: string | undefined,
+): DecoderResult<MultipartPartKind> {
+  const kinds = (Object.keys(decoders) as MultipartPartKind[]).filter(
+    (kind) => decoders[kind] !== undefined,
+  );
+  if (kinds.length === 1) return succeed(kinds[0]!);
+
+  const mediaKind = multipartMediaKind(contentType);
+  if (mediaKind && decoders[mediaKind]) return succeed(mediaKind);
+  if (!contentType && decoders.text) return succeed("text");
+  if (!contentType) {
+    return fail("", "Multipart part omits Content-Type, so its representation is ambiguous.");
+  }
+  return fail("", `Multipart part content type "${contentType}" has no matching decoder.`);
+}
+
+function multipartMediaKind(contentType: string | undefined): MultipartPartKind | undefined {
+  if (!contentType) return undefined;
+  if (contentType === "application/json" || contentType.endsWith("+json")) return "json";
+  if (contentType.startsWith("text/")) return "text";
+  return "binary";
+}
+
+function multipartFile(descriptor: MultipartPartDescriptor, part: ParsedMultipartPart): File {
+  const relocated = descriptor.fileNameHeader;
+  const filename =
+    relocated === undefined
+      ? part.disposition?.filename
+      : part.headers.get(relocated.toLowerCase());
+  if (filename === undefined && descriptor.requireFileName) {
+    throw new MultipartSyntaxError(
+      relocated === undefined
+        ? "Multipart File is missing its filename parameter."
+        : `Multipart File is missing its "${relocated.toLowerCase()}" filename header.`,
+    );
+  }
+  const normalizedName = filename ?? "";
+  validateFileName(normalizedName);
+  return createFile(part.body, normalizedName, part.contentType ?? "");
+}
+
+function strictMultipartText(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function isHeaderName(name: string): boolean {
+  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
+}
+
 export const Decoders = {
   string: stringDecoder,
   number: numberDecoder,
@@ -487,7 +1143,9 @@ export const Decoders = {
   bytes: bytesDecoder,
   strictBytes: strictBytesDecoder,
   file: fileDecoder,
+  fileWithContentTypes: fileWithContentTypesDecoder,
   unknown: unknownDecoder,
+  never: neverDecoder,
   optional,
   literal: literalDecoder,
   strictLiteral: strictLiteralDecoder,
@@ -503,6 +1161,8 @@ export const Decoders = {
   lazy: lazyDecoder,
   discriminated: discriminatedDecoder,
   refine: refineDecoder,
+  multipartFormData: multipartFormDataDecoder,
+  multipartTuple: multipartTupleDecoder,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -557,16 +1217,31 @@ export function decodeOptional<A>(
  * - `root`: path prefix used in validation issue paths (default `"$body"`).
  * - `optional`: when true, a request with no body succeeds with `undefined`
  *   before Content-Type validation (default `false`).
+ * - `allowMissingContentType`: when true, an absent Content-Type is accepted
+ *   while any present value is still checked against `contentTypes`.
+ * - `maxRequestBodyBytes`: maximum streamed body bytes. `undefined` uses the
+ *   finite runtime default (or inherits an enclosing router limit); a
+ *   non-negative safe integer overrides it; `false` disables decoder-level
+ *   enforcement but cannot weaken an enclosing router policy.
+ * - `fileNameProperty` and `fileBodyProperty`: generated merge metadata used
+ *   to mirror a relocated path, query, or header filename into `File.name`.
  */
 export interface BodyDecodeOptions {
   readonly contentTypes?: readonly string[];
   readonly root?: string;
   readonly optional?: boolean;
+  readonly allowMissingContentType?: boolean;
+  readonly maxRequestBodyBytes?: RequestBodyLimit;
+  readonly fileNameProperty?: string;
+  readonly fileBodyProperty?: string;
 }
 
-export type BodyDecodeError = ValidationError | UnsupportedMediaTypeError;
+export type BodyDecodeError =
+  | ValidationError
+  | UnsupportedMediaTypeError
+  | RequestBodyTooLargeError;
 
-export type BodyMediaKind = "json" | "form" | "multipart" | "text" | "binary";
+export type BodyMediaKind = "json" | "form" | "multipart" | "file" | "text" | "binary";
 
 /** Decoders generated for the wire representations accepted by one operation. */
 export type BodyDecoderMap<A> = Readonly<Partial<Record<BodyMediaKind, Decoder<A>>>>;
@@ -596,28 +1271,55 @@ export async function decodeBody<A>(
   decoders: BodyDecoderMap<A>,
   options: BodyDecodeOptions = {},
 ): Promise<EitherT<BodyDecodeError, A | undefined>> {
+  const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
+  if (isLeft(limitedRequest)) return limitedRequest;
+  request = limitedRequest.right;
+
   const root = options.root ?? "$body";
+  const initialKind = selectBodyMediaKind(decoders, request.headers.get("content-type"));
+  if (initialKind === "file") {
+    if (options.optional && request.body === null) return Either.right(undefined);
+
+    const contentTypeError = checkContentType(
+      request,
+      options.contentTypes,
+      options.allowMissingContentType,
+    );
+    if (contentTypeError) return Either.left(contentTypeError);
+
+    if (request.body === null) {
+      return Either.left(
+        new ValidationError([{ path: root, message: "Required body is missing." }]),
+      );
+    }
+  }
+
   let bodyRequest = request;
   let abandonProbedBody: (() => void) | undefined;
-  if (options.optional) {
+  if (options.optional && initialKind !== "file") {
     try {
       const presentBody = await requestWithPresentBody(request);
       if (!presentBody) return Either.right(undefined);
       bodyRequest = presentBody.request;
       abandonProbedBody = presentBody.abandon;
-    } catch {
-      const parser = BODY_PARSERS[bodyMediaKind(request.headers.get("content-type"))];
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) return Either.left(error);
+      const parser =
+        BODY_PARSERS[selectBodyMediaKind(decoders, request.headers.get("content-type"))];
       return Either.left(new ValidationError([{ path: root, message: parser.failureMessage }]));
     }
   }
 
-  const ctError = checkContentType(bodyRequest, options.contentTypes);
+  const ctError =
+    initialKind === "file"
+      ? undefined
+      : checkContentType(bodyRequest, options.contentTypes, options.allowMissingContentType);
   if (ctError) {
     abandonProbedBody?.();
     return Either.left(ctError);
   }
 
-  const kind = bodyMediaKind(bodyRequest.headers.get("content-type"));
+  const kind = selectBodyMediaKind(decoders, bodyRequest.headers.get("content-type"));
   const decoder = decoders[kind];
   if (!decoder) {
     abandonProbedBody?.();
@@ -686,60 +1388,73 @@ async function requestWithPresentBody(request: Request): Promise<PresentBodyRequ
     released = true;
     reader.releaseLock();
   };
-  const replayBody = new ReadableStream<Uint8Array>({
-    start(controller) {
-      replayController = controller;
-    },
-    async pull(controller) {
-      if (abandoned) {
-        if (!reading) release();
-        return;
-      }
-      if (firstChunk) {
-        const chunk = firstChunk;
-        firstChunk = undefined;
-        controller.enqueue(chunk);
-        return;
-      }
-
-      try {
-        reading = true;
-        const next = await reader.read();
-        reading = false;
+  const releaseAbandonedProbe = () => {
+    release();
+    releaseRequestBodyLimit(request);
+  };
+  const replayBody = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        replayController = controller;
+      },
+      async pull(controller) {
         if (abandoned) {
-          release();
+          if (!reading) releaseAbandonedProbe();
           return;
         }
-        if (next.done) {
-          release();
-          controller.close();
-        } else {
-          controller.enqueue(next.value);
+        if (firstChunk) {
+          const chunk = firstChunk;
+          firstChunk = undefined;
+          controller.enqueue(chunk);
+          return;
         }
-      } catch (error) {
-        reading = false;
-        release();
-        if (!abandoned) controller.error(error);
-      }
+
+        try {
+          reading = true;
+          const next = await reader.read();
+          reading = false;
+          if (abandoned) {
+            releaseAbandonedProbe();
+            return;
+          }
+          if (next.done) {
+            release();
+            controller.close();
+          } else {
+            controller.enqueue(next.value);
+          }
+        } catch (error) {
+          reading = false;
+          release();
+          if (!abandoned) controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          release();
+        }
+      },
     },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        release();
-      }
+    {
+      // Only replay when the selected parser starts consuming the body.
+      highWaterMark: 0,
     },
+  );
+
+  const replayRequest = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: replayBody,
+    signal: request.signal,
+    // @ts-expect-error duplex is required for streaming bodies in Node.
+    duplex: "half",
   });
+  inheritRequestBodyLimit(request, replayRequest);
 
   return {
-    request: new Request(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: replayBody,
-      signal: request.signal,
-      // @ts-expect-error duplex is required for streaming bodies in Node.
-      duplex: "half",
-    }),
+    request: replayRequest,
     abandon() {
       if (abandoned) return;
       abandoned = true;
@@ -749,7 +1464,9 @@ async function requestWithPresentBody(request: Request): Promise<PresentBodyRequ
       } catch {
         // The parser may already have closed or errored the replay stream.
       }
-      if (!reading) release();
+      if (!reading) {
+        releaseAbandonedProbe();
+      }
     },
   };
 }
@@ -775,6 +1492,10 @@ export async function decodeJsonBody<A>(
   decoder: Decoder<A>,
   options: BodyDecodeOptions = {},
 ): Promise<EitherT<BodyDecodeError, A | undefined>> {
+  const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
+  if (isLeft(limitedRequest)) return limitedRequest;
+  request = limitedRequest.right;
+
   const root = options.root ?? "$body";
   let bodyRequest = request;
   let abandonProbedBody: (() => void) | undefined;
@@ -784,7 +1505,8 @@ export async function decodeJsonBody<A>(
       if (!presentBody) return Either.right(undefined);
       bodyRequest = presentBody.request;
       abandonProbedBody = presentBody.abandon;
-    } catch {
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) return Either.left(error);
       return Either.left(
         new ValidationError([{ path: root, message: "Body must contain valid JSON." }]),
       );
@@ -819,7 +1541,7 @@ export function decodeFormBody<A>(
   );
 }
 
-/** Parses and validates a multipart/form-data body. */
+/** Parses and validates a MIME multipart body. */
 export function decodeMultipartBody<A>(
   request: Request,
   decoder: Decoder<A>,
@@ -830,7 +1552,7 @@ export function decodeMultipartBody<A>(
     decoder,
     options,
     parseMultipartBody,
-    "Body must contain valid multipart form data.",
+    "Body must contain valid multipart MIME data.",
   );
 }
 
@@ -838,27 +1560,58 @@ async function decodeParsedBody<A>(
   request: Request,
   decoder: Decoder<A>,
   options: BodyDecodeOptions,
-  parse: (request: Request) => Promise<unknown>,
+  parse: (request: Request, options: BodyDecodeOptions) => Promise<unknown>,
   parseFailureMessage: string,
   contentTypeChecked = false,
 ): Promise<EitherT<BodyDecodeError, A>> {
+  const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
+  if (isLeft(limitedRequest)) return limitedRequest;
+  request = limitedRequest.right;
+
   const root = options.root ?? "$body";
   if (!contentTypeChecked) {
-    const ctError = checkContentType(request, options.contentTypes);
+    const ctError = checkContentType(
+      request,
+      options.contentTypes,
+      options.allowMissingContentType,
+    );
     if (ctError) return Either.left(ctError);
   }
 
   let value: unknown;
   try {
-    value = await parse(request);
-  } catch {
-    return Either.left(new ValidationError([{ path: root, message: parseFailureMessage }]));
+    value = await parse(request, options);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) return Either.left(error);
+    return Either.left(
+      new ValidationError([
+        {
+          path: root,
+          message: error instanceof MultipartSyntaxError ? error.message : parseFailureMessage,
+        },
+      ]),
+    );
   }
   return toValidationResult(decoder.decode(value), root);
 }
 
+function requestForBodyDecoding(
+  request: Request,
+  maximum: RequestBodyLimit | undefined,
+): EitherT<RequestBodyTooLargeError, Request> {
+  try {
+    return Either.right(enforceRequestBodyLimit(request, maximum));
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) return Either.left(error);
+    throw error;
+  }
+}
+
 async function parseJsonBody(request: Request): Promise<unknown> {
-  const text = await request.text();
+  return parseJsonText(await request.text());
+}
+
+function parseJsonText(text: string): unknown {
   const nativeValue = JSON.parse(text) as unknown;
   const preciseValue = parseLosslessJson(text, undefined, { parseNumber: parseJsonNumber });
   return rebuildJsonValue(nativeValue, preciseValue);
@@ -918,15 +1671,59 @@ async function parseFormBody(request: Request): Promise<Record<string, unknown>>
 }
 
 async function parseMultipartBody(request: Request): Promise<Record<string, unknown>> {
-  const formData = await request.formData();
-  return collectBodyFields(formData);
+  const parsed = await parseMultipartRequest(request);
+  const legacy = collectLegacyMultipartFields(parsed);
+  Object.defineProperty(legacy, MULTIPART_BODY, {
+    configurable: false,
+    enumerable: false,
+    value: parsed,
+    writable: false,
+  });
+  return legacy as MultipartDecoderInput;
+}
+
+async function parseFileBody(request: Request): Promise<File> {
+  const contentType = parseMediaType(request.headers.get("content-type")) ?? "";
+  return createFile(new Uint8Array(await request.arrayBuffer()), "", contentType);
+}
+
+function createFile(contents: Uint8Array, name: string, contentType: string): File {
+  const ownedContents = new ArrayBuffer(contents.byteLength);
+  new Uint8Array(ownedContents).set(contents);
+  const file = new File([ownedContents], name, { type: contentType });
+  // Bun currently omits `.name` for an empty filename; normalize to the Web
+  // File contract so handlers see the same sentinel in every runtime.
+  if (file.name !== name) {
+    Object.defineProperty(file, "name", { value: name, enumerable: true });
+  }
+  if (file.type !== contentType) {
+    Object.defineProperty(file, "type", { value: contentType, enumerable: true });
+  }
+  return file;
+}
+
+function collectLegacyMultipartFields(body: ParsedMultipartBody): Record<string, unknown> {
+  const value: Record<string, unknown> = Object.create(null);
+  for (const part of body.parts) {
+    const disposition = part.disposition;
+    if (disposition?.type !== "form-data" || !disposition.name) continue;
+
+    let partValue: unknown;
+    if (disposition.filename !== undefined) {
+      partValue = createFile(part.body, disposition.filename, part.contentType ?? "");
+    } else {
+      partValue = new TextDecoder().decode(part.body);
+    }
+    appendBodyField(value, disposition.name, partValue);
+  }
+  return value;
 }
 
 const BODY_PARSERS: Readonly<
   Record<
     BodyMediaKind,
     {
-      readonly parse: (request: Request) => Promise<unknown>;
+      readonly parse: (request: Request, options: BodyDecodeOptions) => Promise<unknown>;
       readonly failureMessage: string;
     }
   >
@@ -935,8 +1732,9 @@ const BODY_PARSERS: Readonly<
   form: { parse: parseFormBody, failureMessage: "Body must contain valid form data." },
   multipart: {
     parse: parseMultipartBody,
-    failureMessage: "Body must contain valid multipart form data.",
+    failureMessage: "Body must contain valid multipart MIME data.",
   },
+  file: { parse: parseFileBody, failureMessage: "Body must contain valid file content." },
   text: { parse: parseTextBody, failureMessage: "Body must contain valid text." },
   binary: { parse: parseBinaryBody, failureMessage: "Body must contain valid binary data." },
 };
@@ -952,11 +1750,19 @@ function bodyMediaKind(contentType: string | null): BodyMediaKind {
   return "binary";
 }
 
+function selectBodyMediaKind<A>(
+  decoders: BodyDecoderMap<A>,
+  contentType: string | null,
+): BodyMediaKind {
+  return decoders.file ? "file" : bodyMediaKind(contentType);
+}
+
 function supportedMediaTypes<A>(decoders: BodyDecoderMap<A>): string[] {
   const supported: string[] = [];
   if (decoders.json) supported.push("application/json");
   if (decoders.form) supported.push("application/x-www-form-urlencoded");
   if (decoders.multipart) supported.push("multipart/form-data");
+  if (decoders.file) supported.push("*/*");
   if (decoders.text) supported.push("text/*");
   if (decoders.binary) supported.push("application/octet-stream");
   return supported;
@@ -973,9 +1779,11 @@ function collectBodyFields(entries: Iterable<readonly [string, unknown]>): Recor
 function checkContentType(
   request: Request,
   declared: readonly string[] | undefined,
+  allowMissing = false,
 ): UnsupportedMediaTypeError | undefined {
   if (!declared || declared.length === 0) return undefined;
   const received = request.headers.get("content-type");
+  if (allowMissing && received === null) return undefined;
   if (isContentTypeAccepted(received, declared)) return undefined;
   return new UnsupportedMediaTypeError(received ?? undefined, declared);
 }

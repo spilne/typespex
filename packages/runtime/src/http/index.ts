@@ -3,6 +3,11 @@ export * from "./context.js";
 export * from "./media-type.js";
 export * from "./json.js";
 export * from "./validation.js";
+export {
+  DEFAULT_MAX_REQUEST_BODY_BYTES,
+  RequestBodyTooLargeError,
+  type RequestBodyLimit,
+} from "./body-limit.js";
 export * from "./decoder.js";
 export * from "./request-decoder.js";
 export * from "./response-encoder.js";

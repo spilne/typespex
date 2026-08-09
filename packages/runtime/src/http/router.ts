@@ -1,15 +1,15 @@
 import { isLeft } from "../core/either.js";
 import { HttpError } from "../errors.js";
-import {
-  createContextMap,
-} from "../core/context.js";
-import {
-  type HttpApp,
-  type Middleware,
-} from "../core/middleware.js";
+import { createContextMap } from "../core/context.js";
+import { type HttpApp, type Middleware } from "../core/middleware.js";
 import type { OperationHandler } from "../core/handler.js";
 import type { RouteMatcher } from "../matcher.js";
 import { createRegexMatcher } from "../match-regex.js";
+import {
+  enforceRequestBodyLimit,
+  type RequestBodyLimit,
+  resolveRequestBodyLimit,
+} from "./body-limit.js";
 import type { RequestContext } from "./context.js";
 import type { MatchedEndpoint } from "./metadata.js";
 import type { ServerOperation } from "./operation.js";
@@ -48,10 +48,7 @@ function createRouteApp<I, R, Ctx extends RequestContext>(
       return Response.json({ error: "Not Found" }, { status: 404 });
     }
 
-    const decoded = route.operation.decodeInput(
-      ctx.request,
-      ctx.match.pathParams,
-    );
+    const decoded = route.operation.decodeInput(ctx.request, ctx.match.pathParams);
     const result = decoded instanceof Promise ? await decoded : decoded;
     if (isLeft(result)) {
       return result.left.toResponse();
@@ -62,10 +59,7 @@ function createRouteApp<I, R, Ctx extends RequestContext>(
   };
 }
 
-function createDefaultContext(
-  request: Request,
-  match?: MatchedEndpoint,
-): RequestContext {
+function createDefaultContext(request: Request, match?: MatchedEndpoint): RequestContext {
   return { request, match, state: createContextMap() };
 }
 
@@ -82,17 +76,16 @@ function createNotFoundApp<Ctx extends RequestContext>(
 /** Options for the HTTP interpreter produced by `createHttpRouter`. */
 export interface HttpInterpreterOptions<Ctx extends RequestContext> {
   readonly middleware?: ReadonlyArray<Middleware<Ctx>>;
-  readonly createContext?: (
-    request: Request,
-    match?: MatchedEndpoint,
-  ) => Promise<Ctx> | Ctx;
-  readonly onUnhandledError?: (
-    error: unknown,
-    context: Ctx,
-  ) => Promise<Response> | Response;
-  readonly notFound?: (
-    context: Ctx,
-  ) => Promise<Response> | Response;
+  readonly createContext?: (request: Request, match?: MatchedEndpoint) => Promise<Ctx> | Ctx;
+  readonly onUnhandledError?: (error: unknown, context: Ctx) => Promise<Response> | Response;
+  readonly notFound?: (context: Ctx) => Promise<Response> | Response;
+  /**
+   * Maximum streamed request-body bytes. Defaults to 10 MiB. Use a
+   * non-negative safe integer to override the limit, or `false` to disable it.
+   * `handle` applies known Content-Length limits before matched or not-found
+   * middleware; an unmatched `tryHandle` request remains untouched.
+   */
+  readonly maxRequestBodyBytes?: RequestBodyLimit;
 }
 
 /** HTTP request handler accepted by the runtime adapters. */
@@ -140,6 +133,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
 ): ComposableHttpRouter {
   const middleware = options.middleware ?? [];
   const middlewareChain = combineMiddleware(middleware);
+  const maxRequestBodyBytes = resolveRequestBodyLimit(options.maxRequestBodyBytes);
 
   // Build a middleware-wrapped app per route — no Map lookup at request time
   const wrappedApps = new Map<RouteBinding<any, any, Ctx>, HttpApp<Ctx>>();
@@ -153,6 +147,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
   const matcherInput = routes.map((binding) => ({
     method: binding.operation.endpoint.operation.method,
     path: binding.operation.endpoint.operation.path,
+    routePattern: binding.operation.endpoint.operation.routePattern,
     route: binding,
   }));
 
@@ -168,6 +163,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
   ): Promise<Response> {
     let context: Ctx | undefined;
     try {
+      request = enforceRequestBodyLimit(request, maxRequestBodyBytes);
       const match: MatchedEndpoint | undefined = matched
         ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
         : undefined;
