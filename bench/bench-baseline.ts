@@ -1,62 +1,51 @@
-// Bare Bun server — equivalent routes, no framework overhead
-const pets = new Map<string, { id: string; name: string; tag?: string }>();
+import { benchmarkServerPort, createPetFixture } from "./fixture.js";
+
+// Bare Bun server — the same four routes and fixture, without framework overhead.
+const pets = createPetFixture();
 
 const server = Bun.serve({
-  port: 3457,
-  async fetch(req) {
-    const url = new URL(req.url);
-    const method = req.method;
-    const path = url.pathname;
+  port: benchmarkServerPort(3457),
+  async fetch(request) {
+    const url = new URL(request.url);
+    const { pathname } = url;
 
-    // GET /pets
-    if (method === "GET" && path === "/pets") {
-      const all = [...pets.values()];
+    if (request.method === "GET" && pathname === "/pets") {
       const limit = url.searchParams.has("limit")
-        ? parseInt(url.searchParams.get("limit")!, 10)
+        ? Number.parseInt(url.searchParams.get("limit")!, 10)
         : undefined;
       const offset = url.searchParams.has("offset")
-        ? parseInt(url.searchParams.get("offset")!, 10)
+        ? Number.parseInt(url.searchParams.get("offset")!, 10)
         : undefined;
-      const start = offset ?? 0;
-      const end = limit ? start + limit : undefined;
-      return Response.json(all.slice(start, end));
+      return Response.json(pets.list(limit, offset));
     }
 
-    // POST /pets
-    if (method === "POST" && path === "/pets") {
-      const body = (await req.json()) as { name: string; tag?: string };
-      const pet = { id: crypto.randomUUID(), ...body };
-      pets.set(pet.id, pet);
-      return Response.json(pet);
+    if (request.method === "POST" && pathname === "/pets") {
+      const input = (await request.json()) as { name: string; tag?: string };
+      return Response.json(pets.create(input));
     }
 
-    // GET /pets/:petId
-    if (method === "GET" && path.startsWith("/pets/") && path.split("/").length === 3) {
-      const petId = decodeURIComponent(path.split("/")[2]);
-      const pet = pets.get(petId);
-      if (!pet)
+    if (
+      (request.method === "GET" || request.method === "DELETE") &&
+      pathname.startsWith("/pets/") &&
+      pathname.split("/").length === 3
+    ) {
+      const petId = decodeURIComponent(pathname.split("/")[2]!);
+      const pet = pets.read(petId);
+      if (!pet) {
         return Response.json(
           { code: "NOT_FOUND", message: `Pet ${petId} not found` },
           { status: 404 },
         );
-      return Response.json(pet);
-    }
-
-    // DELETE /pets/:petId
-    if (method === "DELETE" && path.startsWith("/pets/") && path.split("/").length === 3) {
-      const petId = decodeURIComponent(path.split("/")[2]);
-      const pet = pets.get(petId);
-      if (!pet)
-        return Response.json(
-          { code: "NOT_FOUND", message: `Pet ${petId} not found` },
-          { status: 404 },
-        );
-      pets.delete(petId);
-      return new Response(null, { status: 204 });
+      }
+      if (request.method === "GET") return Response.json(pet);
+      if (request.method === "DELETE") {
+        pets.delete(petId);
+        return new Response(null, { status: 204 });
+      }
     }
 
     return Response.json({ error: "Not Found" }, { status: 404 });
   },
 });
 
-console.log(`Baseline server running on http://localhost:${server.port}`);
+console.log(`Bare Bun benchmark server running on http://127.0.0.1:${server.port}`);
