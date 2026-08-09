@@ -12,5 +12,5 @@
     "types": ["node"],
     "typeRoots": ["../packages/shim-node/node_modules/@types"]
   },
-  "include": ["release-packages.ts"]
+  "include": ["release-packages.ts", "check-coverage.ts"]
 }
