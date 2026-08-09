@@ -12,6 +12,7 @@
     "test": "bun test --timeout 30000",
     "generate:example": "./scripts/generate-example.sh",
     "check:generated": "bun run --filter @typespex/emitter build && ./scripts/check-generated-example.sh",
+    "check:conformance": "bun run --filter @typespex/runtime build && bun run --filter @typespex/emitter build && bun scripts/check-http-conformance.mjs",
     "release:preflight": "./scripts/publish-packages.sh",
     "publish:packages": "./scripts/publish-packages.sh --publish"
   },
