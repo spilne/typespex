@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      compatible-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"

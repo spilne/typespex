@@ -23,7 +23,7 @@
       "default": "./dist/index.js"
     }
   },
-  "engines": { "node": "^20.19.0 || >=22.12.0" },
+  "engines": { "node": "^22.12.0 || ^24.0.0" },
   "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
@@ -40,8 +40,8 @@
     "oxfmt": "^0.50.0"
   },
   "devDependencies": {
-    "@typespec/compiler": "^1.0.0",
-    "@typespec/http": "^1.0.0",
+    "@typespec/compiler": "^1.14.0",
+    "@typespec/http": "^1.14.0",
     "typescript": "^5.7.0"
   }
 }
