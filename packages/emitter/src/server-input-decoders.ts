@@ -27,6 +27,7 @@ import {
   isPureRecordModel,
 } from "./model-indexer.js";
 import { multipartBodyTypeToTs } from "./multipart-input.js";
+import { getSameEndpointOverloads } from "./operation-surface.js";
 import {
   getPayloadCollection,
   getRequestBodyProjection,
@@ -394,7 +395,7 @@ function emitBodyDecoderEntry(
   const lines: string[] = [];
   lines.push(`  ${tsObjectKey(name)}: {`);
   for (const kind of emission.decoderKinds) {
-    const decoderExpr = emitBodyDecoderExpression(ctx, dec, op, kind);
+    const decoderExpr = emitOverloadAwareBodyDecoderExpression(ctx, dec, op, kind);
     const expr =
       plan?.placement === "wrapped"
         ? `${decoderExpr}.map((body) => ({ ${emitObjectAssignment(plan.propertyName, "body")} }))`
@@ -403,6 +404,27 @@ function emitBodyDecoderEntry(
   }
   lines.push("  },");
   return { lines };
+}
+
+function emitOverloadAwareBodyDecoderExpression(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  op: HttpOperation,
+  kind: BodyMediaKind,
+): string {
+  const overloads = getSameEndpointOverloads(op).filter(
+    (overload) =>
+      overload.parameters.body !== undefined &&
+      analyzeBody(ctx, overload).decoderKinds.includes(kind),
+  );
+  if (overloads.length === 0) return emitBodyDecoderExpression(ctx, dec, op, kind);
+
+  const expressions = [
+    ...new Set(overloads.map((overload) => emitBodyDecoderExpression(ctx, dec, overload, kind))),
+  ];
+  if (expressions.length === 1) return expressions[0]!;
+
+  return `Decoders.union<${buildBodyOnlyType(ctx, op)}>([${expressions.join(", ")}])`;
 }
 
 function emitBodyDecoderExpression(

@@ -18,6 +18,7 @@ import {
   isNeverAdditionalProperties,
   isPureRecordModel,
 } from "./model-indexer.js";
+import { getSameEndpointOverloads } from "./operation-surface.js";
 import {
   getRequestBodyProjection,
   payloadItemProjection,
@@ -95,8 +96,24 @@ function checkRequestBody(
 ): void {
   const body = traversal.operation.parameters.body;
   if (!body) return;
-
   if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
+
+  const overloads = getSameEndpointOverloads(traversal.operation).filter(
+    (operation) => operation.parameters.body !== undefined,
+  );
+  if (overloads.length > 0) {
+    for (const operation of overloads) {
+      checkRequestBody(ctx, reported, {
+        operation,
+        seen: new Set(),
+        encodes: new Set(),
+      });
+    }
+    const coveredKinds = new Set(overloads.flatMap(requestBodyDecoderKinds));
+    if (requestBodyDecoderKinds(traversal.operation).every((kind) => coveredKinds.has(kind))) {
+      return;
+    }
+  }
 
   if (body.bodyKind === "file") {
     const constraintReason = unsupportedFileContentsReason(ctx.program, body);
@@ -225,6 +242,14 @@ function checkRequestBody(
       }
     }
   }
+}
+
+function requestBodyDecoderKinds(operation: HttpOperation): BodyMediaKind[] {
+  const body = operation.parameters.body;
+  if (!body) return [];
+  if (body.bodyKind === "file") return ["file"];
+  if (body.bodyKind === "multipart") return ["multipart"];
+  return getBodyMediaKinds(body.contentTypes.length > 0 ? body.contentTypes : ["application/json"]);
 }
 
 function unsupportedBinaryScalarEncodingReason(

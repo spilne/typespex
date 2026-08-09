@@ -280,6 +280,13 @@ headers, unconstrained headers, and constraints on different header names do not
 routes are distinct, so the emitter reports an ambiguity instead of generating order-dependent
 dispatch.
 
+### Operation overloads
+
+TypeSpec operation overloads follow the protocol's endpoint semantics. An `@overload` that inherits
+the base operation's route and verb refines that operation's signature, so TypeSpex emits only the
+base operation's handler and route. The base operation must be the union of its overloads. If an
+overload changes the route or HTTP verb, it represents a separate endpoint and is emitted normally.
+
 ### Reachable-only model emission
 
 By default, `models.ts` includes every named type declared under the service namespace, plus any
