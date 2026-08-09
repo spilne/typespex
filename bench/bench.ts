@@ -70,6 +70,13 @@ export const SCENARIOS: readonly BenchmarkScenario[] = [
     expectedBody: JSON.stringify(INITIAL_PETS.slice(0, 10)),
   },
   {
+    id: "read",
+    name: "GET /pets/:id (success)",
+    path: "/pets/pet-0",
+    expectedStatus: 200,
+    expectedBody: JSON.stringify(INITIAL_PETS[0]!),
+  },
+  {
     id: "not-found",
     name: "GET /pets/:id (404)",
     path: "/pets/nonexistent",

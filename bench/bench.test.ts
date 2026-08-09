@@ -171,7 +171,7 @@ describe("HTTP benchmark validation", () => {
       timeoutSeconds: 1,
       seed: "schedule-test",
     });
-    expect(schedule).toHaveLength(4 * 3 * 4);
+    expect(schedule).toHaveLength(4 * SCENARIOS.length * SERVERS.length);
     for (const scenario of SCENARIOS) {
       const positions = new Map<string, Set<number>>();
       for (let trial = 1; trial <= 4; trial++) {
