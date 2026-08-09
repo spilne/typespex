@@ -38,6 +38,6 @@
   },
   "devDependencies": {
     "hono": "^4.13.1",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   }
 }

@@ -39,6 +39,6 @@
     "lossless-json": "^4.3.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   }
 }

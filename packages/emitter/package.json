@@ -42,6 +42,6 @@
   "devDependencies": {
     "@typespec/compiler": "^1.14.0",
     "@typespec/http": "^1.14.0",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   }
 }
