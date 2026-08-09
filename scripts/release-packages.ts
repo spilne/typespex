@@ -52,6 +52,11 @@ export const RELEASE_PACKAGES: readonly ReleasePackage[] = [
     name: "@typespex/shim-node",
     imports: ["@typespex/shim-node"],
   },
+  {
+    directory: "shim-express",
+    name: "@typespex/shim-express",
+    imports: ["@typespex/shim-express"],
+  },
 ] as const;
 
 interface PackageManifest {

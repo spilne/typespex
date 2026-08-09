@@ -3,7 +3,7 @@
 TypeSpex turns TypeSpec HTTP services into type-safe TypeScript server contracts. The emitter
 generates model types, request decoders, response encoders, handler interfaces, and a
 framework-neutral router. Application code implements the generated interfaces and can run on
-Bun, Node.js, or Hono without handling HTTP parsing in each operation.
+Bun, Node.js, Express, or Hono without handling HTTP parsing in each operation.
 
 The project is server-side only. It does not generate clients.
 
@@ -15,7 +15,7 @@ TypeSpec service
     -> generated TypeScript contracts and operations
     -> application handlers
     -> @typespex/runtime router
-    -> Bun, Node.js, or Hono adapter
+    -> Bun, Node.js, Express, or Hono adapter
 ```
 
 Request decoding and response encoding are generated from the TypeSpec HTTP contract. The
@@ -30,6 +30,7 @@ result as an HTTP response.
 | TypeSpec compiler and `@typespec/http` | `>=1.0.0 <2.0.0`                     |
 | TypeScript                             | `>=5.7 <6`                           |
 | Bun                                    | 1.3.13 is the repository CI baseline |
+| Express                                | 5.x                                  |
 | Hono                                   | 4.x                                  |
 | Module format                          | ESM                                  |
 
@@ -62,6 +63,7 @@ npm install --save-dev @typespec/compiler @typespec/http @typespex/emitter types
 # Choose the adapter used by the service.
 npm install @typespex/shim-bun
 # npm install @typespex/shim-node
+# npm install express@^5 @typespex/shim-express
 # npm install hono@^4 @typespex/shim-hono
 ```
 
@@ -207,6 +209,27 @@ createServer(toNodeHandler(router)).listen(3000);
 The Node adapter derives the request scheme from the socket by default. Set
 `toNodeHandler(router, { trustProxy: true })` only when the process is directly behind a trusted
 reverse proxy. That option trusts the first `X-Forwarded-Proto` value when reconstructing the URL.
+
+### Express
+
+Mount the generated router where it should own the Express request path:
+
+```ts
+import express from "express";
+import { toExpressHandler } from "@typespex/shim-express";
+import { router } from "./app.js";
+
+const app = express();
+app.use("/api", toExpressHandler(router));
+app.listen(3000);
+```
+
+The adapter is terminal: the generated router supplies its not-found response and the underlying
+Node adapter logs and converts any error that escapes the router boundary to a 500 response. It does
+not call Express `next()`. Register it before `express.json()`, `express.urlencoded()`, or any other
+middleware that consumes the raw request body stream. Express removes the mount prefix before the
+generated router matches the request, so the example serves a generated `/todos` route at
+`/api/todos`.
 
 ### Hono
 

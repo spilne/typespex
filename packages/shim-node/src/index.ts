@@ -17,7 +17,7 @@ export interface NodeHandlerOptions {
 export function toNodeHandler(
   router: HttpRouter,
   options?: NodeHandlerOptions,
-): (req: IncomingMessage, res: ServerResponse) => void {
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const logger = options?.logger ?? consoleLogger;
   return async (req, res) => {
     let releaseRequestBody: (() => void) | undefined;

@@ -130,10 +130,12 @@ jobs:
 
       - name: Import package exports with Node
         run: |
-          for package in runtime emitter shim-bun shim-hono shim-node; do
+          for package in runtime emitter shim-bun shim-hono shim-node shim-express; do
             (cd "packages/$package" && node --input-type=module -e "await import('@typespex/$package')")
           done
           (cd packages/runtime && node --input-type=module -e "await import('@typespex/runtime/server')")
 
-      - name: Exercise runtime and Node HTTP adapter
-        run: node ./packages/shim-node/test/node-smoke.mjs
+      - name: Exercise runtime and Node HTTP adapters
+        run: |
+          node ./packages/shim-node/test/node-smoke.mjs
+          node ./packages/shim-express/test/express-smoke.mjs
