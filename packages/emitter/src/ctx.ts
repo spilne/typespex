@@ -20,6 +20,7 @@ export const GENERATED_TYPE_RESERVED_NAMES: ReadonlySet<string> = new Set([
   "createHints",
   "emptyHints",
   "ResponseEncoders",
+  "JsonSerializers",
   "Decoders",
   "RequestDecoders",
   "Validators",

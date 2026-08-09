@@ -18,6 +18,7 @@ import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
 import { buildInputType } from "./emit-server-common.js";
 import { propertiesShareSource } from "./http-models.js";
+import { getJsonPropertyWireName } from "./json-wire-transforms.js";
 import {
   getAdditionalPropertiesValue,
   isNeverAdditionalProperties,
@@ -828,6 +829,21 @@ function emitObjectDecoderBody(
     .join(", ");
 
   const options: string[] = [];
+  if (mode === "json") {
+    const wireNames = properties
+      .map((property) => [property.name, getJsonPropertyWireName(ctx, property)] as const)
+      .filter(([propertyName, wireName]) => propertyName !== wireName);
+    if (wireNames.length > 0) {
+      options.push(
+        `wireNames: { ${wireNames
+          .map(
+            ([propertyName, wireName]) =>
+              `${tsObjectKey(propertyName)}: ${JSON.stringify(wireName)}`,
+          )
+          .join(", ")} }`,
+      );
+    }
+  }
   const additionalProperties = getAdditionalPropertiesValue(model);
   if (additionalProperties === undefined) {
     // TypeSpec/OpenAPI object schemas are open unless explicitly sealed. The
@@ -852,7 +868,9 @@ function emitObjectDecoderBody(
     const included = new Set(properties.map((property) => property.name));
     const forbidden = [...walkPropertiesInherited(model)]
       .filter((property) => !included.has(property.name))
-      .map((property) => property.name);
+      .map((property) =>
+        mode === "json" ? getJsonPropertyWireName(ctx, property) : property.name,
+      );
     if (forbidden.length > 0) {
       options.push(`forbiddenProperties: ${JSON.stringify(forbidden)}`);
     }
@@ -965,6 +983,15 @@ function emitDiscriminatedUnionDecoder(
     getDiscriminator(ctx.program, union)?.propertyName ?? inferCommonLiteralField(models);
   if (!field) return undefined;
 
+  const wireFields = models.map((model) => {
+    const property = [...walkPropertiesInherited(model)].find(
+      (candidate) => candidate.name === field,
+    );
+    return property ? getJsonPropertyWireName(ctx, property) : undefined;
+  });
+  const [wireField] = wireFields;
+  if (!wireField || wireFields.some((candidate) => candidate !== wireField)) return undefined;
+
   const entries: string[] = [];
   const tags = new Set<string>();
   for (const model of models) {
@@ -976,7 +1003,7 @@ function emitDiscriminatedUnionDecoder(
     );
   }
 
-  return `Decoders.discriminated<${typeToTs(ctx, union)}>(${JSON.stringify(field)}, { ${entries.join(", ")} })`;
+  return `Decoders.discriminated<${typeToTs(ctx, union)}>(${JSON.stringify(wireField)}, { ${entries.join(", ")} })`;
 }
 
 /** All variants as plain (non-array, non-pure-record) models, or undefined. */

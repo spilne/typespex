@@ -2,6 +2,7 @@ export * from "./metadata.js";
 export * from "./context.js";
 export * from "./media-type.js";
 export * from "./json.js";
+export * from "./json-serializer.js";
 export * from "./validation.js";
 export {
   DEFAULT_MAX_REQUEST_BODY_BYTES,

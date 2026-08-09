@@ -114,6 +114,7 @@ function streamResponseEncoder(
 function jsonWithHeadersResponseEncoder<A>(
   status: number,
   headers: ReadonlyArray<readonly [property: string, header: string, explode?: boolean]>,
+  transformBody?: (value: unknown) => unknown,
 ): ResponseEncoder<A> {
   const headerMap = new Map(
     headers.map(([property, header, explode]) => [property, { header, explode }] as const),
@@ -135,7 +136,10 @@ function jsonWithHeadersResponseEncoder<A>(
       return new Response(null, responseInit(status, { headers: responseHeaders }));
     }
     responseHeaders.set("content-type", "application/json");
-    return new Response(stringifyJson(body), responseInit(status, { headers: responseHeaders }));
+    return new Response(
+      stringifyJson(transformBody ? transformBody(body) : body),
+      responseInit(status, { headers: responseHeaders }),
+    );
   });
 }
 
@@ -160,6 +164,8 @@ export interface ResponseVariant {
   readonly requireFileContentType?: boolean;
   readonly requireFileName?: boolean;
   readonly emitFileContentDisposition?: boolean;
+  /** Converts the resolved handler-facing JSON body to its wire representation. */
+  readonly transformBody?: (value: unknown) => unknown;
 }
 
 export interface ResponseVariantMatch<A, B extends A = A> {
@@ -216,7 +222,8 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     });
   }
 
-  return new Response(body === undefined ? null : stringifyJson(body), {
+  const wireBody = variant.transformBody ? variant.transformBody(body) : body;
+  return new Response(wireBody === undefined ? null : stringifyJson(wireBody), {
     status,
     headers: responseHeaders,
   });
@@ -237,7 +244,11 @@ function encodeFileResponse(
   const headerContentType = headers.get("content-type") || undefined;
   const fileMediaType = parseMediaType(fileContentType);
   const headerMediaType = parseMediaType(headerContentType);
-  if (fileContentType && headerContentType && (!fileMediaType || fileMediaType !== headerMediaType)) {
+  if (
+    fileContentType &&
+    headerContentType &&
+    (!fileMediaType || fileMediaType !== headerMediaType)
+  ) {
     throw new TypeError(
       `File content type "${fileContentType}" conflicts with response Content-Type "${headerContentType}".`,
     );

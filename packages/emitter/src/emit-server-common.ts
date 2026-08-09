@@ -31,6 +31,10 @@ import {
   type EmitterCtx,
 } from "./ctx.js";
 import { getHttpPartType, isHttpFileModel, propertiesShareSource } from "./http-models.js";
+import {
+  emitJsonWireSerializer,
+  unsupportedJsonWireTransformReason,
+} from "./json-wire-transforms.js";
 import { $lib } from "./lib.js";
 import {
   getAdditionalPropertiesValue,
@@ -47,6 +51,7 @@ import {
   payloadProjectionChangesType,
   payloadPropertyOptional,
   payloadTypeToTs,
+  type PayloadProjection,
 } from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
@@ -574,13 +579,14 @@ export function emitResultResponseEncoder(
   if (kind === "unsupported") {
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
+  const jsonTransform = kind === "json" ? getJsonResponseTransform(ctx, op, response) : undefined;
 
   if (shouldUseVariantEncoder(response)) {
-    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response)})`;
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, jsonTransform)})`;
   }
 
   const headers = response.headers;
-  const encoder = encoderForKind(kind, resultType, response.statusCode);
+  const encoder = encoderForKind(kind, resultType, response.statusCode, jsonTransform);
 
   if (headers.length > 0 && kind === "json") {
     const entries = headers
@@ -589,7 +595,10 @@ export function emitResultResponseEncoder(
           `[${JSON.stringify(h.property)}, ${JSON.stringify(h.header)}${h.explode ? ", true" : ""}]`,
       )
       .join(", ");
-    return `ResponseEncoders.jsonWithHeaders<${resultType}>(${response.statusCode}, [${entries}])`;
+    const transform = jsonTransform
+      ? `, (body) => ${emitJsonBodyTransform("body", jsonTransform)}`
+      : "";
+    return `ResponseEncoders.jsonWithHeaders<${resultType}>(${response.statusCode}, [${entries}]${transform})`;
   }
 
   return encoder;
@@ -603,6 +612,47 @@ function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
     response.bodyProperty !== undefined ||
     response.omitProperties.length > 0
   );
+}
+
+interface JsonResponseTransform {
+  readonly serializer: string;
+  readonly bodyType: string;
+  readonly optional: boolean;
+  readonly path: string;
+}
+
+function getJsonResponseTransform(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  response: SuccessResponseVariant,
+): JsonResponseTransform | undefined {
+  const body = response.body;
+  const serializationType = response.serializationType;
+  if (!body || body.bodyKind !== "single" || !serializationType) return undefined;
+
+  const reason = unsupportedJsonWireTransformReason(ctx, serializationType, response.projection);
+  if (reason) {
+    $lib.reportDiagnostic(ctx.program, {
+      code: "unsupported-json-serialization",
+      format: { operation: op.operation.name, reason },
+      target: body.property ?? op.operation,
+    });
+    return undefined;
+  }
+
+  const serializer = emitJsonWireSerializer(ctx, serializationType, response.projection);
+  if (!serializer) return undefined;
+  return {
+    serializer,
+    bodyType: payloadTypeToTs(ctx, serializationType, response.projection),
+    optional: body.property?.optional === true,
+    path: response.bodyProperty ? `$response.${response.bodyProperty}` : "$response",
+  };
+}
+
+function emitJsonBodyTransform(value: string, transform: JsonResponseTransform): string {
+  const serialized = `${transform.serializer}.serialize(${value} as ${transform.bodyType}, ${JSON.stringify(transform.path)})`;
+  return transform.optional ? `${value} === undefined ? undefined : ${serialized}` : serialized;
 }
 
 interface SuccessResponseVariant {
@@ -623,6 +673,8 @@ interface SuccessResponseVariant {
   readonly model?: Model;
   readonly tsType: string;
   readonly hiddenProperties: ReadonlySet<string>;
+  readonly serializationType?: Type;
+  readonly projection?: PayloadProjection;
 }
 
 type ResponseStatusContract = number | HttpStatusCodeRange;
@@ -656,6 +708,8 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
         model: resp.type.kind === "Model" ? resp.type : undefined,
         tsType: isVoid ? "void" : responseTypeToTs(ctx, resp),
         hiddenProperties,
+        serializationType: undefined,
+        projection: undefined,
       });
       continue;
     }
@@ -691,6 +745,8 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
       // Same-status, same-CT shapes with different bodies need this to avoid
       // collapsing to a single shared model.
       const variantModel = body?.type.kind === "Model" ? body.type : undefined;
+      const projection = body ? getResponseBodyProjection(ctx, content) : undefined;
+      const serializationType = getResponseSerializationType(ctx, resp, content);
 
       for (const contentType of declaredContentTypes) {
         variants.push({
@@ -712,6 +768,8 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           model: variantModel,
           tsType: responseContentToTs(ctx, resp, content),
           hiddenProperties,
+          serializationType,
+          projection,
         });
       }
     }
@@ -836,10 +894,7 @@ function responseContentToTs(
     // A single implicit response can project the named source model directly.
     // TypeSpec often gives `content.body.type` as an already-filtered anonymous
     // model, which would otherwise discard reusable recursive/generic identity.
-    const sourceBodyType =
-      bodyContext === "implicit" && resp.responses.length === 1 && resp.type.kind === "Model"
-        ? resp.type
-        : body.type;
+    const sourceBodyType = getResponseSerializationType(ctx, resp, content) ?? body.type;
     return payloadTypeToTs(ctx, sourceBodyType, projection);
   }
 
@@ -887,6 +942,32 @@ function responseContentToTs(
     );
   }
   return objectTypeFromParts(parts);
+}
+
+/** Semantic handler value that becomes the JSON body after HTTP metadata is removed. */
+function getResponseSerializationType(
+  ctx: EmitterCtx,
+  resp: HttpOperationResponse,
+  content: HttpOperationResponseContent,
+): Type | undefined {
+  const body = content.body;
+  if (!body) return undefined;
+
+  const headers = content.properties.filter((property) => property.kind === "header");
+  const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
+  const bodyProperty = getResponseBodyProperty(ctx, content);
+  const bodyContext = getPayloadBodyContext(body, content.properties);
+  if (
+    !bodyProperty &&
+    bodyContext === "implicit" &&
+    headers.length === 0 &&
+    !dynamicStatus &&
+    resp.responses.length === 1 &&
+    resp.type.kind === "Model"
+  ) {
+    return resp.type;
+  }
+  return body.type;
 }
 
 /**
@@ -1539,7 +1620,11 @@ function emitResponseDecisionEncoder(
             op.operation.name,
             branch.response.contentType,
           )
-        : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(kind, branch.response)})`;
+        : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(
+            kind,
+            branch.response,
+            kind === "json" ? getJsonResponseTransform(ctx, op, branch.response) : undefined,
+          )})`;
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
     lines.push(`encoder: ${branchEncoder},`);
@@ -1553,6 +1638,7 @@ function emitResponseDecisionEncoder(
 function emitResponseVariant(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   response: SuccessResponseVariant,
+  jsonTransform?: JsonResponseTransform,
 ): string {
   const fields = [`status: ${emitResponseStatus(response)}`];
   if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
@@ -1577,6 +1663,9 @@ function emitResponseVariant(
     fields.push(
       `omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`,
     );
+  }
+  if (jsonTransform) {
+    fields.push(`transformBody: (body) => ${emitJsonBodyTransform("body", jsonTransform)}`);
   }
   return `{ ${fields.join(", ")} }`;
 }
@@ -1704,6 +1793,7 @@ function encoderForKind(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   tsType: string,
   status: number,
+  jsonTransform?: JsonResponseTransform,
 ): string {
   switch (kind) {
     case "empty":
@@ -1715,7 +1805,9 @@ function encoderForKind(
     case "file":
       return `ResponseEncoders.file(${status})`;
     case "json":
-      return `ResponseEncoders.json<${tsType}>(${status})`;
+      return jsonTransform
+        ? `ResponseEncoders.json<unknown>(${status}).mapInput((value: ${tsType}) => ${emitJsonBodyTransform("value", jsonTransform)})`
+        : `ResponseEncoders.json<${tsType}>(${status})`;
   }
 }
 

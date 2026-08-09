@@ -308,6 +308,32 @@ describe("http decoder - combinators", () => {
     expect(allowUnknown.decode({ name: "ok", extra: true })).toEqual(Either.right({ name: "ok" }));
   });
 
+  test("Decoders.object maps JSON wire names to handler properties", () => {
+    const decoder = Decoders.object<{ userName: string; optionalValue?: number }>(
+      {
+        userName: Decoders.string,
+        optionalValue: Decoders.optional(Decoders.strictNumber),
+      },
+      {
+        wireNames: {
+          userName: "user_name",
+          optionalValue: "optional_value",
+        },
+      },
+    );
+
+    expect(decoder.decode({ user_name: "Milo" })).toEqual(Either.right({ userName: "Milo" }));
+    expect(decoder.decode({ user_name: 42 })).toEqual(
+      Either.left([{ path: ".user_name", message: "Expected a string." }]),
+    );
+    expect(decoder.decode({ userName: "Milo" })).toEqual(
+      Either.left([
+        { path: ".user_name", message: "Expected a string." },
+        { path: ".userName", message: "Unexpected field." },
+      ]),
+    );
+  });
+
   test("Decoders.object validates and preserves additional properties", () => {
     interface FlexiblePerson {
       age: number;
