@@ -219,6 +219,73 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("rejects malformed encoding in scalar and exploded query values", () => {
+    const scalar = RequestDecoders.query("value", Decoders.string);
+    const exploded = RequestDecoders.query("values", Decoders.array(Decoders.string), {
+      array: true,
+      explode: true,
+    });
+
+    for (const url of [
+      "http://localhost/items?value=%ZZ",
+      "http://localhost/items?value=%E0%A4%A",
+    ]) {
+      const result = decodeRequestInput(scalar, new Request(url), {});
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.left.issues).toEqual([
+          {
+            path: "$query.value",
+            message: "Expected a valid percent-encoded query value.",
+          },
+        ]);
+      }
+    }
+
+    const result = decodeRequestInput(
+      exploded,
+      new Request("http://localhost/items?values=valid&values=%E0%A4%A"),
+      {},
+    );
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.issues).toEqual([
+        {
+          path: "$query.values[1]",
+          message: "Expected a valid percent-encoded query value.",
+        },
+      ]);
+    }
+  });
+
+  test("strict query decoding preserves valid form encoding and ignores undeclared keys", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.query("value", Decoders.string),
+        RequestDecoders.query("values", Decoders.array(Decoders.string), {
+          array: true,
+          explode: true,
+        }),
+      ],
+      (value, values) => ({ value, values }),
+    );
+
+    const result = decodeRequestInput(
+      decoder,
+      new Request(
+        "http://localhost/items?ignored=%ZZ&%76alue=hello+world%2B%E2%9C%93&values=a%2Cb&values=c+d",
+      ),
+      {},
+    );
+
+    expect(result).toEqual(
+      Either.right({
+        value: "hello world+✓",
+        values: ["a,b", "c d"],
+      }),
+    );
+  });
+
   test("Decoder.map lifts one request value into an object", () => {
     const decoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({ petId }));
 
