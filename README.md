@@ -29,7 +29,7 @@ result as an HTTP response.
 | Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`          |
 | TypeSpec compiler and `@typespec/http` | `>=1.0.0 <2.0.0`                     |
 | TypeScript                             | `>=5.7 <6`                           |
-| Bun                                    | 1.3.13 is the repository CI baseline |
+| Bun                                    | 1.3.14 is the repository CI baseline |
 | Express                                | 5.x                                  |
 | Hono                                   | 4.x                                  |
 | Module format                          | ESM                                  |
@@ -549,7 +549,7 @@ Run the same primary checks used by CI:
 ```sh
 bun run build
 bun run typecheck
-bun test
+bun run test
 bun run check:generated
 ```
 

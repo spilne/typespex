@@ -11,12 +11,6 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { setDefaultTimeout } from "bun:test";
-
-// Compiler-backed fixtures spawn TypeSpec and TypeScript subprocesses. Set the
-// timeout inside every worker importing this helper because Bun 1.3 does not
-// propagate bunfig's test timeout to parallel test workers consistently.
-setDefaultTimeout(30_000);
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");

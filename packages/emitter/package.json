@@ -29,7 +29,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test --timeout 30000"
   },
   "peerDependencies": {
     "@js-temporal/polyfill": "^0.5.1",
