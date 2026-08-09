@@ -63,6 +63,7 @@ export function isTextResponseType(type: Type): boolean {
     case "Enum":
     case "EnumMember":
     case "String":
+    case "StringTemplate":
     case "Number":
     case "Boolean":
       return true;

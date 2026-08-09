@@ -59,6 +59,11 @@ import {
   numericLiteralExpression,
   resolveNumericLiteral,
 } from "./numeric-literals.js";
+import {
+  getStringLiteralValue,
+  isStringLikeLiteral,
+  stringLiteralExpression,
+} from "./string-template-literals.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
@@ -693,9 +698,10 @@ function emitDecoderExpression(
       expression = emitEnumDecoder(ctx, type, mode);
       break;
 
-    case "String": {
+    case "String":
+    case "StringTemplate": {
       const lit = mode === "json" ? "Decoders.strictLiteral" : "Decoders.literal";
-      expression = `${lit}(${JSON.stringify(type.value)})`;
+      expression = `${lit}(${stringLiteralExpression(type)})`;
       break;
     }
 
@@ -1227,10 +1233,10 @@ function literalTagValue(ctx: EmitterCtx, model: Model, field: string): string |
   for (const prop of walkPropertiesInherited(model)) {
     if (prop.name !== field) continue;
     if (prop.optional) return undefined;
-    if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
+    if (!isStringLikeLiteral(prop.type) && prop.type.kind !== "Number") return undefined;
     return prop.type.kind === "Number"
       ? resolveNumericLiteral(prop.type).exactValue
-      : prop.type.value;
+      : getStringLiteralValue(prop.type);
   }
   return undefined;
 }

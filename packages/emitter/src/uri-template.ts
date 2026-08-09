@@ -362,6 +362,7 @@ function isScalarWireType(type: Type): boolean {
     case "Enum":
     case "EnumMember":
     case "String":
+    case "StringTemplate":
     case "Number":
     case "Boolean":
     case "Intrinsic":

@@ -34,6 +34,7 @@ import { scalarToTs } from "./scalar-map.js";
 import { isEntityLike } from "./type-guards.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 import { enumMemberLiteralExpression, numericLiteralExpression } from "./numeric-literals.js";
+import { stringLiteralExpression } from "./string-template-literals.js";
 
 type TemplateParameterDeclaration = NonNullable<
   Extract<TemplatedType["node"], { templateParameters: readonly unknown[] }>["templateParameters"]
@@ -109,7 +110,8 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       return enumMemberToTs(ctx, type);
 
     case "String":
-      return JSON.stringify(type.value);
+    case "StringTemplate":
+      return stringLiteralExpression(type);
 
     case "Number":
       return numericLiteralExpression(type);

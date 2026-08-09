@@ -44,6 +44,13 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Numeric literal "${"value"}" cannot be represented safely by @typespex/emitter: ${"reason"}.`,
       },
     },
+    "unsupported-string-template": {
+      severity: "error",
+      messages: {
+        default:
+          "String template cannot be represented exactly because it does not resolve to one string. Use a concrete template, a string scalar, or an explicit union of string literals.",
+      },
+    },
     "no-services": {
       severity: "warning",
       messages: {

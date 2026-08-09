@@ -403,6 +403,7 @@ function isWireScalarType(ctx: EmitterCtx, type: Type): boolean {
     case "Scalar":
     case "Enum":
     case "String":
+    case "StringTemplate":
     case "Number":
     case "Boolean":
     case "Intrinsic":
