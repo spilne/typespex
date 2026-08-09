@@ -47,10 +47,11 @@ packages on every run. Each pair must build the emitter, compile the representat
 
 Node.js support follows maintained LTS lines. CI exercises the runtime and Node adapter on the
 oldest supported version, 22.12.0, and the current supported 24.x line. A future Node major is
-added to `engines` only after it reaches LTS and has equivalent CI coverage; an end-of-life line is
-removed during the next compatibility review. The ranges and matrix are reviewed at each Node LTS
-transition, while new stable TypeSpec 1.x releases enter the dynamic compatibility job
-automatically.
+added to `engines` only after it reaches LTS and has equivalent CI coverage. A separate build uses
+`@types/node` 22.12.0 so newer ambient declarations cannot silently raise the supported floor. An
+end-of-life line is removed during the next compatibility review. The ranges and matrix are
+reviewed at each Node LTS transition, while new stable TypeSpec 1.x releases enter the dynamic
+compatibility job automatically.
 
 ## Quickstart
 
