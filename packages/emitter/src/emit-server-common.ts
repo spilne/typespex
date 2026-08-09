@@ -366,7 +366,7 @@ export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
     const contents = resp.responses.length > 0 ? resp.responses : [undefined];
     for (const content of contents) {
       const tsType = content
-        ? responseContentToTs(ctx, resp, content)
+        ? responseContentToTs(ctx, op, resp, content)
         : responseTypeToTs(ctx, resp);
       if (!seen.has(tsType)) {
         types.push(tsType);
@@ -390,7 +390,7 @@ function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | 
   const body = content?.body;
   if (
     !body ||
-    payloadProjectionChangesType(ctx, body.type, getResponseBodyProjection(ctx, content))
+    payloadProjectionChangesType(ctx, body.type, getResponseBodyProjection(ctx, op, content))
   ) {
     return undefined;
   }
@@ -748,7 +748,8 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
     for (const content of resp.responses) {
       const body = content.body;
       const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
-      const bodyProperty = getResponseBodyProperty(ctx, content);
+      const projection = body ? getResponseBodyProjection(ctx, op, content) : undefined;
+      const bodyProperty = getResponseBodyProperty(ctx, content, projection);
       const emitFileContentDisposition =
         body?.bodyKind !== "file" || !isFileNameResponseHeader(body, content);
       const declaredContentTypes =
@@ -770,8 +771,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
       // Same-status, same-CT shapes with different bodies need this to avoid
       // collapsing to a single shared model.
       const variantModel = body?.type.kind === "Model" ? body.type : undefined;
-      const projection = body ? getResponseBodyProjection(ctx, content) : undefined;
-      const serializationType = getResponseSerializationType(ctx, resp, content);
+      const serializationType = getResponseSerializationType(resp, content);
 
       for (const contentType of declaredContentTypes) {
         variants.push({
@@ -791,7 +791,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           omitProperties: metadataProperties.map((prop) => prop.property.name),
           type: body?.type ?? resp.type,
           model: variantModel,
-          tsType: responseContentToTs(ctx, resp, content),
+          tsType: responseContentToTs(ctx, op, resp, content),
           hiddenProperties,
           serializationType,
           projection,
@@ -891,13 +891,15 @@ function responseHeadersEqual(
  */
 function responseContentToTs(
   ctx: EmitterCtx,
+  op: HttpOperation,
   resp: HttpOperationResponse,
   content: HttpOperationResponse["responses"][number],
 ): string {
   const body = content.body;
   const headers = content.properties.filter((property) => property.kind === "header");
   const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
-  const bodyProperty = getResponseBodyProperty(ctx, content);
+  const projection = body ? getResponseBodyProjection(ctx, op, content) : undefined;
+  const bodyProperty = getResponseBodyProperty(ctx, content, projection);
   if (!body) {
     const parts: string[] = [];
     if (dynamicStatus) {
@@ -913,14 +915,13 @@ function responseContentToTs(
     return objectTypeFromParts(parts);
   }
 
-  const projection = getResponseBodyProjection(ctx, content);
   const bodyContext = getPayloadBodyContext(body, content.properties);
 
   if (!bodyProperty && bodyContext !== "explicit" && headers.length === 0 && !dynamicStatus) {
     // A single implicit response can project the named source model directly.
     // TypeSpec often gives `content.body.type` as an already-filtered anonymous
     // model, which would otherwise discard reusable recursive/generic identity.
-    const sourceBodyType = getResponseSerializationType(ctx, resp, content) ?? body.type;
+    const sourceBodyType = getResponseSerializationType(resp, content) ?? body.type;
     return payloadTypeToTs(ctx, sourceBodyType, projection);
   }
 
@@ -972,25 +973,14 @@ function responseContentToTs(
 
 /** Semantic handler value that becomes the JSON body after HTTP metadata is removed. */
 function getResponseSerializationType(
-  ctx: EmitterCtx,
   resp: HttpOperationResponse,
   content: HttpOperationResponseContent,
 ): Type | undefined {
   const body = content.body;
   if (!body) return undefined;
 
-  const headers = content.properties.filter((property) => property.kind === "header");
-  const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
-  const bodyProperty = getResponseBodyProperty(ctx, content);
   const bodyContext = getPayloadBodyContext(body, content.properties);
-  if (
-    !bodyProperty &&
-    bodyContext === "implicit" &&
-    headers.length === 0 &&
-    !dynamicStatus &&
-    resp.responses.length === 1 &&
-    resp.type.kind === "Model"
-  ) {
+  if (bodyContext === "implicit" && resp.responses.length === 1 && resp.type.kind === "Model") {
     return resp.type;
   }
   return body.type;
@@ -1005,6 +995,7 @@ function getResponseSerializationType(
 function getResponseBodyProperty(
   ctx: EmitterCtx,
   content: HttpOperationResponseContent,
+  projection: PayloadProjection | undefined,
 ): string | undefined {
   const body = content.body;
   if (!body) return undefined;
@@ -1041,7 +1032,6 @@ function getResponseBodyProperty(
     return body.property.name;
   }
 
-  const projection = getResponseBodyProjection(ctx, content);
   const collides = payloadModelProperties(body.type, projection).some((property) =>
     metadataNames.has(property.name),
   );

@@ -1,5 +1,7 @@
-import type { Model, ModelProperty, Type, Union } from "@typespec/compiler";
+import type { Model, ModelProperty, Type, Union, VisibilityFilter } from "@typespec/compiler";
 import {
+  getLifecycleVisibilityEnum,
+  getReturnTypeVisibilityFilter,
   isArrayModelType,
   isTemplateDeclaration,
   isType,
@@ -7,6 +9,7 @@ import {
 } from "@typespec/compiler";
 import {
   createMetadataInfo,
+  HttpVisibilityProvider,
   resolveRequestVisibility,
   Visibility,
   type HttpOperation,
@@ -52,12 +55,11 @@ interface PayloadTypeAlias {
   declaration?: string;
 }
 
-type ProjectionChangeState = boolean | "checking";
-
 interface PayloadContextState {
   readonly metadata: MetadataInfo;
   readonly aliases: Map<Type, Map<string, PayloadTypeAlias>>;
-  readonly projectionChanges: Map<Type, Map<string, ProjectionChangeState>>;
+  readonly projectionChanges: Map<Type, Map<string, boolean>>;
+  readonly projectionFilters: Map<Type, Map<string, boolean>>;
   readonly usedAliasNames: Set<string>;
 }
 
@@ -93,13 +95,55 @@ export function getRequestBodyProjection(
 
 export function getResponseBodyProjection(
   ctx: EmitterCtx,
+  operation: HttpOperation,
   content: HttpOperationResponseContent,
 ): PayloadProjection | undefined {
   const body = content.body;
   if (body?.bodyKind !== "single") return undefined;
 
   const bodyContext = getPayloadBodyContext(body, content.properties);
-  return createPayloadProjection(ctx, Visibility.Read, "response", bodyContext === "explicit");
+  const visibility = resolveResponseVisibility(ctx, operation);
+  return createPayloadProjection(ctx, visibility, "response", bodyContext === "explicit");
+}
+
+function resolveResponseVisibility(ctx: EmitterCtx, operation: HttpOperation): Visibility {
+  const filter = getReturnTypeVisibilityFilter(
+    ctx.program,
+    operation.operation,
+    HttpVisibilityProvider(operation.verb),
+  );
+  return visibilityFilterToHttpVisibility(ctx, filter);
+}
+
+function visibilityFilterToHttpVisibility(ctx: EmitterCtx, filter: VisibilityFilter): Visibility {
+  if (filter.all !== undefined || filter.none !== undefined) {
+    throw new Error("HTTP operation visibility unexpectedly used all/none constraints.");
+  }
+  if (!filter.any) return Visibility.All;
+
+  const lifecycle = getLifecycleVisibilityEnum(ctx.program);
+  let visibility = Visibility.None;
+  for (const modifier of filter.any) {
+    if (modifier.enum !== lifecycle) continue;
+    switch (modifier.name) {
+      case "Read":
+        visibility |= Visibility.Read;
+        break;
+      case "Create":
+        visibility |= Visibility.Create;
+        break;
+      case "Update":
+        visibility |= Visibility.Update;
+        break;
+      case "Delete":
+        visibility |= Visibility.Delete;
+        break;
+      case "Query":
+        visibility |= Visibility.Query;
+        break;
+    }
+  }
+  return visibility;
 }
 
 function createPayloadProjection(
@@ -208,13 +252,32 @@ export function payloadProjectionChangesType(
   }
 
   const cached = byProjection.get(projection.cacheKey);
-  if (cached === "checking") return false;
   if (cached !== undefined) return cached;
 
-  byProjection.set(projection.cacheKey, "checking");
-  const changed = computeProjectionChangesType(ctx, type, projection);
+  const changed = computeProjectionChangesType(ctx, type, projection, new Map());
   byProjection.set(projection.cacheKey, changed);
   return changed;
+}
+
+/** Whether a projection removes at least one declared property from the JSON payload. */
+export function payloadProjectionFiltersProperties(
+  ctx: EmitterCtx,
+  type: Type,
+  projection: PayloadProjection,
+): boolean {
+  const state = getPayloadContextState(ctx);
+  let byProjection = state.projectionFilters.get(type);
+  if (!byProjection) {
+    byProjection = new Map();
+    state.projectionFilters.set(type, byProjection);
+  }
+
+  const cached = byProjection.get(projection.cacheKey);
+  if (cached !== undefined) return cached;
+
+  const filtered = computeProjectionFiltersProperties(ctx, type, projection, new Map());
+  byProjection.set(projection.cacheKey, filtered);
+  return filtered;
 }
 
 /**
@@ -373,21 +436,21 @@ function computeProjectionChangesType(
   ctx: EmitterCtx,
   type: Type,
   projection: PayloadProjection,
+  seen: Map<Type, Set<string>>,
 ): boolean {
+  if (markProjectionSeen(seen, type, projection.cacheKey)) return false;
+
   switch (type.kind) {
     case "Model": {
       const collection = getPayloadCollection(ctx, type);
       if (collection) {
-        return payloadProjectionChangesType(
-          ctx,
-          collection.value,
-          payloadItemProjection(projection),
-        );
+        const itemProjection = payloadItemProjection(projection)!;
+        return computeProjectionChangesType(ctx, collection.value, itemProjection, seen);
       }
 
       const httpPartType = getHttpPartType(ctx.program, type);
       if (httpPartType) {
-        return payloadProjectionChangesType(ctx, httpPartType, projection);
+        return computeProjectionChangesType(ctx, httpPartType, projection, seen);
       }
       // A File is a DOM File only for resolved raw-file or multipart bodies.
       // In every single-body payload context it is the modeled JSON object
@@ -408,7 +471,9 @@ function computeProjectionChangesType(
         }
       }
       if (
-        properties.some((property) => payloadProjectionChangesType(ctx, property.type, projection))
+        properties.some((property) =>
+          computeProjectionChangesType(ctx, property.type, projection, seen),
+        )
       ) {
         return true;
       }
@@ -416,27 +481,113 @@ function computeProjectionChangesType(
       const additionalType = getAdditionalPropertiesValue(type);
       return (
         additionalType !== undefined &&
-        payloadProjectionChangesType(ctx, additionalType, payloadItemProjection(projection))
+        computeProjectionChangesType(ctx, additionalType, payloadItemProjection(projection)!, seen)
       );
     }
 
     case "Union":
       return [...type.variants.values()].some((variant) =>
-        payloadProjectionChangesType(ctx, variant.type, projection),
+        computeProjectionChangesType(ctx, variant.type, projection, seen),
       );
 
     case "Tuple": {
-      const itemProjection = payloadItemProjection(projection);
-      return type.values.some((value) => payloadProjectionChangesType(ctx, value, itemProjection));
+      const itemProjection = payloadItemProjection(projection)!;
+      return type.values.some((value) =>
+        computeProjectionChangesType(ctx, value, itemProjection, seen),
+      );
     }
 
     case "ModelProperty":
     case "UnionVariant":
-      return payloadProjectionChangesType(ctx, type.type, projection);
+      return computeProjectionChangesType(ctx, type.type, projection, seen);
 
     default:
       return false;
   }
+}
+
+function computeProjectionFiltersProperties(
+  ctx: EmitterCtx,
+  type: Type,
+  projection: PayloadProjection,
+  seen: Map<Type, Set<string>>,
+): boolean {
+  if (markProjectionSeen(seen, type, projection.cacheKey)) return false;
+
+  switch (type.kind) {
+    case "Model": {
+      const collection = getPayloadCollection(ctx, type);
+      if (collection) {
+        const itemProjection = payloadItemProjection(projection)!;
+        return computeProjectionFiltersProperties(ctx, collection.value, itemProjection, seen);
+      }
+
+      const httpPartType = getHttpPartType(ctx.program, type);
+      if (httpPartType) {
+        return computeProjectionFiltersProperties(ctx, httpPartType, projection, seen);
+      }
+      if (isHttpFileModel(ctx.program, type)) return false;
+
+      const properties = [...walkPropertiesInherited(type)];
+      for (const property of properties) {
+        if (
+          !projection.metadata.isPayloadProperty(
+            property,
+            projection.visibility,
+            projection.inExplicitBody,
+          ) ||
+          computeProjectionFiltersProperties(ctx, property.type, projection, seen)
+        ) {
+          return true;
+        }
+      }
+
+      const additionalType = getAdditionalPropertiesValue(type);
+      return Boolean(
+        additionalType &&
+        computeProjectionFiltersProperties(
+          ctx,
+          additionalType,
+          payloadItemProjection(projection)!,
+          seen,
+        ),
+      );
+    }
+
+    case "Union":
+      return [...type.variants.values()].some((variant) =>
+        computeProjectionFiltersProperties(ctx, variant.type, projection, seen),
+      );
+
+    case "Tuple": {
+      const itemProjection = payloadItemProjection(projection)!;
+      return type.values.some((value) =>
+        computeProjectionFiltersProperties(ctx, value, itemProjection, seen),
+      );
+    }
+
+    case "ModelProperty":
+    case "UnionVariant":
+      return computeProjectionFiltersProperties(ctx, type.type, projection, seen);
+
+    default:
+      return false;
+  }
+}
+
+function markProjectionSeen(
+  seen: Map<Type, Set<string>>,
+  type: Type,
+  projectionKey: string,
+): boolean {
+  const projections = seen.get(type);
+  if (projections?.has(projectionKey)) return true;
+  if (projections) {
+    projections.add(projectionKey);
+  } else {
+    seen.set(type, new Set([projectionKey]));
+  }
+  return false;
 }
 
 function getPayloadContextState(ctx: EmitterCtx): PayloadContextState {
@@ -447,6 +598,7 @@ function getPayloadContextState(ctx: EmitterCtx): PayloadContextState {
     metadata: createMetadataInfo(ctx.program),
     aliases: new Map(),
     projectionChanges: new Map(),
+    projectionFilters: new Map(),
     usedAliasNames: new Set(ctx.typeNames.values()),
   };
   payloadStates.set(ctx, state);
