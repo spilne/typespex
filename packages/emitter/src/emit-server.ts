@@ -1,5 +1,6 @@
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
+import { addTemporalImport } from "./datetime-mode.js";
 import { buildServerEmission, collectReferencedModelImports } from "./server-emission.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
@@ -57,5 +58,6 @@ export function emitServer(ctx: EmitterCtx, httpOperations: HttpOperation[]): st
   lines.push("}");
   lines.push("");
 
+  addTemporalImport(lines, "type");
   return lines.join("\n");
 }

@@ -29,6 +29,7 @@ export const ScalarEncodings = {
   encodeBigIntString,
   encodeBooleanString,
   decodeRfc3339DateTime,
+  decodeDateTimeDate,
   encodeRfc3339DateTime,
   decodeRfc7231DateTime,
   encodeRfc7231DateTime,
@@ -96,6 +97,10 @@ function encodeBooleanString(value: boolean): string {
 function decodeRfc3339DateTime(value: string): string {
   validateRfc3339(value, "wire");
   return value;
+}
+
+function decodeDateTimeDate(value: string): Date {
+  return parseHandlerDateTime(value);
 }
 
 function encodeRfc3339DateTime(value: string): string {

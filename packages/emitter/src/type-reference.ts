@@ -23,6 +23,7 @@ import {
   hasGeneratedTypeNameCollision,
   type EmitterCtx,
 } from "./ctx.js";
+import { getDateTimeMode } from "./datetime-mode.js";
 import { getHttpPartType, isHttpFileModel } from "./http-models.js";
 import {
   getAdditionalPropertiesValues,
@@ -46,7 +47,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
       if (shouldReferenceScalar(type) || hasGeneratedTypeNameCollision(ctx, type)) {
         return templatedNamedTypeToTs(ctx, type, "Scalar");
       }
-      return scalarToTs(type);
+      return scalarToTs(type, getDateTimeMode(ctx));
 
     case "Model": {
       const templateArgs = type.templateMapper?.args ?? [];

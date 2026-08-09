@@ -12,6 +12,7 @@ import {
   isArrayModelType,
 } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
+import { getDateTimeMode } from "./datetime-mode.js";
 import { scalarToTs } from "./scalar-map.js";
 
 export type DecodedTypeKind = "number" | "bigint" | "string" | "bytes" | "array" | "other";
@@ -82,7 +83,7 @@ export function emitValidatorsForTarget(
 export function decodedTypeKind(ctx: EmitterCtx, type: Type): DecodedTypeKind {
   switch (type.kind) {
     case "Scalar": {
-      const ts = scalarToTs(type);
+      const ts = scalarToTs(type, getDateTimeMode(ctx));
       if (ts === "number" || ts === "bigint" || ts === "string") return ts;
       if (ts === "Uint8Array") return "bytes";
       return "other";

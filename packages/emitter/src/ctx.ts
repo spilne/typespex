@@ -88,7 +88,12 @@ export function createEmitterContext(
     fileNames,
     emittedModels: new Set(),
     namedTypes,
-    typeNames: createTypeNames(service, serviceName, namedTypes),
+    typeNames: createTypeNames(
+      service,
+      serviceName,
+      namedTypes,
+      getGeneratedTypeReservedNames(options),
+    ),
   };
 }
 
@@ -172,6 +177,7 @@ function createTypeNames(
   service: HttpService,
   serviceName: string,
   declarations: readonly EmittedNamedType[],
+  reservedNames: ReadonlySet<string>,
 ): ReadonlyMap<string, string> {
   const names = allocateGeneratedNames(
     declarations.map((type) => {
@@ -186,8 +192,16 @@ function createTypeNames(
         fallbackName: [serviceName, ...qualifiedSegments, type.kind].join("_"),
       };
     }),
-    GENERATED_TYPE_RESERVED_NAMES,
+    reservedNames,
   );
 
   return new Map(declarations.map((type) => [getNamedTypeKey(type), names.get(type)!]));
+}
+
+function getGeneratedTypeReservedNames(options: TypespexEmitterOptions): ReadonlySet<string> {
+  const names = new Set(GENERATED_TYPE_RESERVED_NAMES);
+  const dateTimeMode = options["datetime-mode"] ?? "string";
+  if (dateTimeMode === "date") names.add("Date");
+  if (dateTimeMode === "temporal") names.add("Temporal");
+  return names;
 }

@@ -1,6 +1,7 @@
 import type { EncodeData, ModelProperty, Scalar } from "@typespec/compiler";
 import { getEncode } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
+import { emitDateTimeDecoder, emitDateTimeSerializer } from "./datetime-mode.js";
 import { getIntrinsicScalarName } from "./scalar-map.js";
 import { decodedTypeKind, emitValidatorsForTarget } from "./validation-emission.js";
 
@@ -77,7 +78,11 @@ export function resolveScalarEncoding(
 }
 
 /** Decoder expression that converts the declared wire scalar to the handler scalar. */
-export function emitScalarEncodingDecoder(plan: ScalarEncodingPlan, wireDecoder: string): string {
+export function emitScalarEncodingDecoder(
+  ctx: EmitterCtx,
+  plan: ScalarEncodingPlan,
+  wireDecoder: string,
+): string {
   switch (plan.kind) {
     case "number-string": {
       const shape = numericScalarShape(plan.semanticType);
@@ -97,17 +102,37 @@ export function emitScalarEncodingDecoder(plan: ScalarEncodingPlan, wireDecoder:
     case "boolean-string":
       return `Decoders.compose(${wireDecoder}, Decoders.encodedBooleanString)`;
     case "rfc3339":
-      return `Decoders.compose(${wireDecoder}, Decoders.rfc3339DateTime)`;
+      return emitDateTimeDecoder(
+        ctx,
+        plan.semanticType,
+        `Decoders.compose(${wireDecoder}, Decoders.rfc3339DateTime)`,
+      );
     case "rfc7231":
-      return `Decoders.compose(${wireDecoder}, Decoders.rfc7231DateTime)`;
+      return emitDateTimeDecoder(
+        ctx,
+        plan.semanticType,
+        `Decoders.compose(${wireDecoder}, Decoders.rfc7231DateTime)`,
+      );
     case "unix-timestamp":
-      return `Decoders.unixTimestamp(${wireDecoder})`;
+      return emitDateTimeDecoder(ctx, plan.semanticType, `Decoders.unixTimestamp(${wireDecoder})`);
     case "duration-iso8601":
-      return `Decoders.compose(${wireDecoder}, Decoders.isoDuration)`;
+      return emitDateTimeDecoder(
+        ctx,
+        plan.semanticType,
+        `Decoders.compose(${wireDecoder}, Decoders.isoDuration)`,
+      );
     case "duration-seconds":
-      return `Decoders.numericDuration(${wireDecoder}, "seconds")`;
+      return emitDateTimeDecoder(
+        ctx,
+        plan.semanticType,
+        `Decoders.numericDuration(${wireDecoder}, "seconds")`,
+      );
     case "duration-milliseconds":
-      return `Decoders.numericDuration(${wireDecoder}, "milliseconds")`;
+      return emitDateTimeDecoder(
+        ctx,
+        plan.semanticType,
+        `Decoders.numericDuration(${wireDecoder}, "milliseconds")`,
+      );
     case "base64":
       return `Decoders.compose(${wireDecoder}, Decoders.strictBytes)`;
     case "base64url":
@@ -159,9 +184,11 @@ export function emitScalarEncodingSerializer(ctx: EmitterCtx, plan: ScalarEncodi
     plan.wireType,
     decodedTypeKind(ctx, plan.wireType),
   );
-  return validators.length > 0
-    ? `JsonSerializers.validate(${serializer}, ${validators.join(", ")})`
-    : serializer;
+  const validated =
+    validators.length > 0
+      ? `JsonSerializers.validate(${serializer}, ${validators.join(", ")})`
+      : serializer;
+  return emitDateTimeSerializer(ctx, plan.semanticType, validated);
 }
 
 interface NumericScalarShape {

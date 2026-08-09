@@ -32,8 +32,12 @@
     "test": "bun test"
   },
   "peerDependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
     "@typespec/compiler": ">=1.0.0 <2.0.0",
     "@typespec/http": ">=1.0.0 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@js-temporal/polyfill": { "optional": true }
   },
   "dependencies": {
     "@typespex/runtime": "workspace:*",
