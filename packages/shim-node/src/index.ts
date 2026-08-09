@@ -21,20 +21,25 @@ export function toNodeHandler(
   const logger = options?.logger ?? consoleLogger;
   return async (req, res) => {
     let releaseRequestBody: (() => void) | undefined;
+    const lifecycle = monitorClientConnection(req, res);
     try {
-      const converted = incomingMessageToRequest(req, options);
+      const converted = incomingMessageToRequest(req, lifecycle.abortController, options);
       const request = converted.request;
       releaseRequestBody = converted.releaseBody;
       const response = await router.handle(request);
-      await writeResponse(response, res);
+      await writeResponse(response, res, lifecycle.disconnectSignal);
     } catch (error) {
+      if (lifecycle.disconnectSignal.aborted) {
+        if (!res.destroyed) res.destroy(toError(error));
+        return;
+      }
       logger.error("Unhandled error in request handler", {
         error,
         method: req.method,
         url: req.url,
       });
-      if (res.headersSent || res.writableEnded) {
-        res.destroy(toError(error));
+      if (res.headersSent || res.writableEnded || res.destroyed) {
+        if (!res.destroyed) res.destroy(toError(error));
         return;
       }
       for (const name of res.getHeaderNames()) res.removeHeader(name);
@@ -42,7 +47,83 @@ export function toNodeHandler(
       res.end("Internal Server Error");
     } finally {
       releaseRequestBody?.();
+      lifecycle.cleanup();
     }
+  };
+}
+
+interface ClientConnectionLifecycle {
+  readonly abortController: AbortController;
+  readonly disconnectSignal: AbortSignal;
+  readonly cleanup: () => void;
+}
+
+function monitorClientConnection(
+  req: IncomingMessage,
+  res: ServerResponse,
+): ClientConnectionLifecycle {
+  const abortController = new AbortController();
+  const disconnectController = new AbortController();
+  const sockets = [req.socket, res.socket].filter(
+    (socket, index, values): socket is NonNullable<typeof socket> =>
+      socket != null && typeof socket.once === "function" && values.indexOf(socket) === index,
+  );
+  let cleaned = false;
+
+  const abortRequest = (reason: Error) => {
+    if (!abortController.signal.aborted) abortController.abort(reason);
+  };
+  const disconnect = (reason: Error) => {
+    abortRequest(reason);
+    if (!disconnectController.signal.aborted) disconnectController.abort(reason);
+  };
+  const onRequestAborted = () => {
+    disconnect(new Error("Client aborted the request."));
+  };
+  const onRequestError = (error: Error) => {
+    abortRequest(error);
+  };
+  const onResponseClose = () => {
+    if (!res.writableEnded) {
+      disconnect(new Error("Client connection closed before the response completed."));
+    }
+  };
+  const onResponseError = (error: Error) => {
+    if (!res.writableEnded) disconnect(error);
+  };
+  const onSocketClose = () => {
+    if (!res.writableEnded) {
+      disconnect(new Error("Client connection closed before the response completed."));
+    }
+  };
+  const onSocketError = (error: Error) => {
+    if (!res.writableEnded) disconnect(error);
+  };
+
+  req.once("aborted", onRequestAborted);
+  req.once("error", onRequestError);
+  res.once("close", onResponseClose);
+  res.once("error", onResponseError);
+  for (const socket of sockets) {
+    socket.once("close", onSocketClose);
+    socket.once("error", onSocketError);
+  }
+
+  return {
+    abortController,
+    disconnectSignal: disconnectController.signal,
+    cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      req.off("aborted", onRequestAborted);
+      req.off("error", onRequestError);
+      res.off("close", onResponseClose);
+      res.off("error", onResponseError);
+      for (const socket of sockets) {
+        socket.off("close", onSocketClose);
+        socket.off("error", onSocketError);
+      }
+    },
   };
 }
 
@@ -53,6 +134,7 @@ interface ConvertedIncomingRequest {
 
 function incomingMessageToRequest(
   req: IncomingMessage,
+  abortController: AbortController,
   options?: NodeHandlerOptions,
 ): ConvertedIncomingRequest {
   const forwarded = options?.trustProxy ? req.headers["x-forwarded-proto"] : undefined;
@@ -87,7 +169,6 @@ function incomingMessageToRequest(
   const method = req.method ?? "GET";
   const hasBody = hasIncomingBody(req, method);
 
-  const abortController = new AbortController();
   const bodyBridge = hasBody ? incomingBodyStream(req, abortController) : undefined;
 
   return {
@@ -195,7 +276,16 @@ function incomingBodyStream(
   };
 }
 
-async function writeResponse(response: Response, res: ServerResponse): Promise<void> {
+async function writeResponse(
+  response: Response,
+  res: ServerResponse,
+  disconnectSignal: AbortSignal,
+): Promise<void> {
+  if (disconnectSignal.aborted) {
+    await response.body?.cancel(disconnectSignal.reason).catch(() => undefined);
+    throw abortError(disconnectSignal);
+  }
+
   res.statusCode = response.status;
 
   response.headers.forEach((value, key) => {
@@ -209,21 +299,48 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
 
   if (response.body) {
     const reader = response.body.getReader();
+    let cancellation: Promise<void> | undefined;
+    let rejectDisconnect: ((reason: Error) => void) | undefined;
+    const disconnected = new Promise<never>((_resolve, reject) => {
+      rejectDisconnect = reject;
+    });
+    const cancelReader = (reason: unknown): Promise<void> => {
+      cancellation ??= reader.cancel(reason).catch(() => undefined);
+      return cancellation;
+    };
+    const onAbort = () => {
+      const error = abortError(disconnectSignal);
+      void cancelReader(disconnectSignal.reason);
+      rejectDisconnect?.(error);
+    };
+
+    disconnectSignal.addEventListener("abort", onAbort, { once: true });
     try {
+      if (disconnectSignal.aborted) onAbort();
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await Promise.race([reader.read(), disconnected]);
         if (done) break;
-        if (!res.write(value)) await waitForDrain(res);
+        if (!res.write(value)) {
+          await Promise.race([waitForDrain(res), disconnected]);
+        }
       }
     } catch (error) {
-      await reader.cancel(error).catch(() => undefined);
+      await cancelReader(error);
       throw error;
     } finally {
+      disconnectSignal.removeEventListener("abort", onAbort);
       reader.releaseLock();
     }
   }
 
+  if (disconnectSignal.aborted) throw abortError(disconnectSignal);
   res.end();
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Client connection closed before the response completed.");
 }
 
 function getSetCookieHeaders(headers: Headers): readonly string[] {
