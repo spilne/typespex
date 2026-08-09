@@ -32,7 +32,8 @@ consumes that stream.
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` and
 Express `5.x` are required. `@typespex/runtime` and `@typespex/shim-node` are
-installed as regular dependencies; Express is a peer dependency.
+installed as regular dependencies; Express is a peer dependency. TypeScript
+projects should install `@types/express` `5.x` as a development dependency.
 
 ## License
 

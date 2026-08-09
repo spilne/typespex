@@ -21,7 +21,5 @@ export function toExpressHandler(
   options?: ExpressHandlerOptions,
 ): RequestHandler {
   const nodeHandler = toNodeHandler(router, options);
-  return (request, response) => {
-    nodeHandler(request, response);
-  };
+  return (request, response) => nodeHandler(request, response);
 }

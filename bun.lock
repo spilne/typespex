@@ -83,11 +83,11 @@
       "name": "@typespex/shim-express",
       "version": "0.1.1",
       "dependencies": {
-        "@types/express": "^5.0.6",
         "@typespex/runtime": "workspace:*",
         "@typespex/shim-node": "workspace:*",
       },
       "devDependencies": {
+        "@types/express": "^5.0.6",
         "express": "^5.2.1",
         "typescript": "^5.7.0",
       },
