@@ -145,7 +145,7 @@ function jsonRequest(method: string, path: string, body: unknown, headers = {}):
 }
 
 function responseResource() {
-  return {
+  return Object.assign(Object.create({ resourcePrototype: true }), {
     id: "generated-id",
     createOnly: "create-secret",
     updateOnly: "update-secret",
@@ -169,7 +169,7 @@ function responseResource() {
         commonNested: "item-common",
       },
     ],
-  };
+  });
 }
 
 describe("TypeSpec lifecycle visibility projections", () => {

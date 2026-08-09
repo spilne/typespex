@@ -103,6 +103,12 @@ export const $lib = createTypeSpecLibrary({
           "@useAuth is not supported by @typespex/emitter; generating this service would omit required authentication metadata.",
       },
     },
+    "unsupported-visibility-filter": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Return visibility for operation "${"operation"}" uses all/none constraints that @typespex/emitter cannot represent safely.`,
+      },
+    },
     "unsupported-http-parameter": {
       severity: "error",
       messages: {

@@ -85,6 +85,16 @@ describe("JsonSerializers", () => {
     expect(Object.getPrototypeOf(serialized)).toBeNull();
   });
 
+  test("serializes modeled own properties from class instances", () => {
+    class ProfileValue implements Profile {
+      constructor(readonly displayName: string) {}
+    }
+
+    expect(profile.serialize(new ProfileValue("Class profile"))).toEqual({
+      display_name: "Class profile",
+    });
+  });
+
   test("reports the handler property path for malformed nested values", () => {
     expect(() =>
       user.serialize({

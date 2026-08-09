@@ -25,6 +25,7 @@ import {
   isNeverAdditionalProperties,
   isPureRecordModel,
 } from "./model-indexer.js";
+import { $lib } from "./lib.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import { isTypeSpecNamespaceModel, templateParametersToTs, typeToTs } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
@@ -112,12 +113,21 @@ function resolveResponseVisibility(ctx: EmitterCtx, operation: HttpOperation): V
     operation.operation,
     HttpVisibilityProvider(operation.verb),
   );
-  return visibilityFilterToHttpVisibility(ctx, filter);
+  return visibilityFilterToHttpVisibility(ctx, operation, filter);
 }
 
-function visibilityFilterToHttpVisibility(ctx: EmitterCtx, filter: VisibilityFilter): Visibility {
+function visibilityFilterToHttpVisibility(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+  filter: VisibilityFilter,
+): Visibility {
   if (filter.all !== undefined || filter.none !== undefined) {
-    throw new Error("HTTP operation visibility unexpectedly used all/none constraints.");
+    $lib.reportDiagnostic(ctx.program, {
+      code: "unsupported-visibility-filter",
+      format: { operation: operation.operation.name },
+      target: operation.operation,
+    });
+    return Visibility.None;
   }
   if (!filter.any) return Visibility.All;
 
