@@ -17,6 +17,7 @@ import { emitServer } from "./emit-server.js";
 import { emitServerRouter } from "./emit-server-router.js";
 import { reportUnsupportedResponseStatusContracts } from "./emit-server-common.js";
 import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
+import { getServerHttpOperations } from "./operation-surface.js";
 import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
@@ -55,7 +56,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
       service,
       layout,
       ctx: createEmitterContext(program, service, context.options, layout.fileNames),
-      httpOperations: service.operations,
+      httpOperations: getServerHttpOperations(service.operations),
     };
   });
 

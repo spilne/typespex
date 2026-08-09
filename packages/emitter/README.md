@@ -37,6 +37,14 @@ non-overlapping values of the same required literal header. Required request bod
 treated as `Content-Type` constraints. Ambiguous collisions produce an emitter diagnostic and no
 partial service output; see the repository README for examples and matching details.
 
+## Operation overloads
+
+For TypeSpec `@overload` declarations that inherit the base operation's route and verb, the emitter
+generates one server handler and one runtime route for the base operation. The base operation must
+describe the union of its overload signatures, as required by TypeSpec, and that union remains the
+handler contract. An overload that changes its route or HTTP verb is a distinct endpoint and is
+generated separately.
+
 ## Runtime requirements
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` is

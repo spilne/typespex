@@ -27,6 +27,7 @@ import {
   isPureRecordModel,
 } from "./model-indexer.js";
 import { multipartBodyTypeToTs } from "./multipart-input.js";
+import { getSameEndpointOverloads } from "./operation-surface.js";
 import {
   getPayloadCollection,
   getRequestBodyProjection,
@@ -392,9 +393,16 @@ function emitBodyDecoderEntry(
   plan?: RequestBodyInputPlan,
 ): InputDecoderEntry {
   const lines: string[] = [];
+  const overloadsByKind = indexOverloadBodiesByMediaKind(ctx, op);
   lines.push(`  ${tsObjectKey(name)}: {`);
   for (const kind of emission.decoderKinds) {
-    const decoderExpr = emitBodyDecoderExpression(ctx, dec, op, kind);
+    const decoderExpr = emitOverloadAwareBodyDecoderExpression(
+      ctx,
+      dec,
+      op,
+      kind,
+      overloadsByKind.get(kind) ?? [],
+    );
     const expr =
       plan?.placement === "wrapped"
         ? `${decoderExpr}.map((body) => ({ ${emitObjectAssignment(plan.propertyName, "body")} }))`
@@ -403,6 +411,39 @@ function emitBodyDecoderEntry(
   }
   lines.push("  },");
   return { lines };
+}
+
+function indexOverloadBodiesByMediaKind(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+): ReadonlyMap<BodyMediaKind, readonly HttpOperation[]> {
+  const indexed = new Map<BodyMediaKind, HttpOperation[]>();
+  for (const overload of getSameEndpointOverloads(op)) {
+    if (!overload.parameters.body) continue;
+    for (const kind of analyzeBody(ctx, overload).decoderKinds) {
+      const operations = indexed.get(kind) ?? [];
+      operations.push(overload);
+      indexed.set(kind, operations);
+    }
+  }
+  return indexed;
+}
+
+function emitOverloadAwareBodyDecoderExpression(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  op: HttpOperation,
+  kind: BodyMediaKind,
+  overloads: readonly HttpOperation[],
+): string {
+  if (overloads.length === 0) return emitBodyDecoderExpression(ctx, dec, op, kind);
+
+  const expressions = [
+    ...new Set(overloads.map((overload) => emitBodyDecoderExpression(ctx, dec, overload, kind))),
+  ];
+  if (expressions.length === 1) return expressions[0]!;
+
+  return `Decoders.union<${buildBodyOnlyType(ctx, op)}>([${expressions.join(", ")}])`;
 }
 
 function emitBodyDecoderExpression(

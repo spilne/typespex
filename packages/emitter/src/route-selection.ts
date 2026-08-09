@@ -1,8 +1,9 @@
 import type { Type } from "@typespec/compiler";
-import { isOverloadSameEndpoint, isSharedRoute, type HttpOperation } from "@typespec/http";
+import { isSharedRoute, type HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
 import { getNamespaceFullName } from "./namespace-names.js";
+import { isSameEndpointOverload } from "./operation-surface.js";
 import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
 
 export interface RouteHeaderConstraintEmission {
@@ -64,10 +65,7 @@ function analyzeRoutes(ctx: EmitterCtx, operations: readonly HttpOperation[]): R
   for (const operation of operations) {
     // Same-endpoint overloads are a distinct TypeSpec construct. They are
     // intentionally excluded from ordinary duplicate/shared-route analysis.
-    if (
-      operation.overloading &&
-      isOverloadSameEndpoint(operation as HttpOperation & { overloading: HttpOperation })
-    ) {
+    if (isSameEndpointOverload(operation)) {
       continue;
     }
 
