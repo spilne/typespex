@@ -580,9 +580,15 @@ function defineDataProperty(target: Record<string, unknown>, key: string, value:
   });
 }
 
-function unionDecoder<A, Variants extends readonly Decoder<A>[] = readonly Decoder<A>[]>(
+type DecoderOutput<TDecoder> = TDecoder extends Decoder<infer A, infer _Input> ? A : never;
+
+// Keep inference first so unannotated calls derive every member output, then
+// retain the explicit `union<T>(...)` overload for the existing public API.
+function unionDecoder<const Variants extends readonly Decoder<unknown>[]>(
   variants: Variants,
-): Decoder<A> {
+): Decoder<DecoderOutput<Variants[number]>>;
+function unionDecoder<A>(variants: readonly Decoder<A>[]): Decoder<A>;
+function unionDecoder(variants: readonly Decoder<unknown>[]): Decoder<unknown> {
   return Decoder.of((input) => {
     for (const variant of variants) {
       const decoded = variant.decode(input);
