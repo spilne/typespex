@@ -51,6 +51,9 @@ jobs:
       - name: Verify generated example
         run: bun run check:generated
 
+      - name: Check TypeSpec HTTP conformance
+        run: bun run check:conformance
+
       - name: Test
         run: bun run test
 
