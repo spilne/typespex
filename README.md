@@ -24,18 +24,32 @@ result as an HTTP response.
 
 ## Prerequisites
 
-| Component | Supported version |
-| --- | --- |
-| Node.js for generation and builds | `>=20.19 <21` or `>=22.12` |
-| TypeSpec compiler and `@typespec/http` | 1.x |
-| TypeScript | `>=5.7 <6` |
-| Bun | 1.3.13 is the repository CI baseline |
-| Hono | 4.x |
-| Module format | ESM |
+| Component                              | Supported version                    |
+| -------------------------------------- | ------------------------------------ |
+| Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`          |
+| TypeSpec compiler and `@typespec/http` | `>=1.0.0 <2.0.0`                     |
+| TypeScript                             | `>=5.7 <6`                           |
+| Bun                                    | 1.3.13 is the repository CI baseline |
+| Hono                                   | 4.x                                  |
+| Module format                          | ESM                                  |
 
 Generated services use the standard Web APIs, including `Request`, `Response`, `Headers`,
 `ReadableStream`, and `File`. TypeScript projects should use modern ESM settings such as
 `module: "NodeNext"`, `moduleResolution: "NodeNext"`, and `target: "ES2022"`.
+
+### Compatibility policy
+
+The TypeSpec compatibility job tests `@typespec/compiler` and `@typespec/http` as an aligned pair.
+It covers the declared minimum, 1.0.0, and resolves the newest stable 1.x version published by both
+packages on every run. Each pair must build the emitter, compile the representative service in
+`example/`, and typecheck its generated TypeScript.
+
+Node.js support follows maintained LTS lines. CI exercises the runtime and Node adapter on the
+oldest supported version, 22.12.0, and the current supported 24.x line. A future Node major is
+added to `engines` only after it reaches LTS and has equivalent CI coverage; an end-of-life line is
+removed during the next compatibility review. The ranges and matrix are reviewed at each Node LTS
+transition, while new stable TypeSpec 1.x releases enter the dynamic compatibility job
+automatically.
 
 ## Quickstart
 
@@ -137,10 +151,12 @@ const implementation: TodosServer = {
     },
 
     async read({ id }) {
-      return todos.get(id) ?? {
-        code: "NOT_FOUND" as const,
-        message: `Todo ${id} was not found`,
-      };
+      return (
+        todos.get(id) ?? {
+          code: "NOT_FOUND" as const,
+          message: `Todo ${id} was not found`,
+        }
+      );
     },
   },
 };
@@ -230,13 +246,13 @@ operation matched, which is useful when composing with other frameworks.
 
 The default `service-output: auto` layout creates one kebab-case directory per service:
 
-| File | Purpose |
-| --- | --- |
-| `models.ts` | TypeScript model, enum, union, and scalar shapes, including referenced external namespace dependencies |
-| `server-hints.ts` | Typed metadata keys emitted from supported TypeSpec decorators |
-| `server-operations.ts` | Route metadata, request decoders, validators, and response encoders |
-| `server.ts` | Typed operation-handler and service interfaces implemented by application code |
-| `server-router.ts` | Factory that binds the implementation to the runtime router |
+| File                   | Purpose                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| `models.ts`            | TypeScript model, enum, union, and scalar shapes, including referenced external namespace dependencies |
+| `server-hints.ts`      | Typed metadata keys emitted from supported TypeSpec decorators                                         |
+| `server-operations.ts` | Route metadata, request decoders, validators, and response encoders                                    |
+| `server.ts`            | Typed operation-handler and service interfaces implemented by application code                         |
+| `server-router.ts`     | Factory that binds the implementation to the runtime router                                            |
 
 Generated files contain an `AUTO-GENERATED` header and should not be edited. Change the TypeSpec
 source or emitter, then regenerate them. The emitter also supports `flat`, `prefix`, and
@@ -244,10 +260,39 @@ source or emitter, then regenerate them. The emitter also supports `flat`, `pref
 
 ## HTTP and Error Behavior
 
-TypeSpex decodes path, query, header, cookie, JSON, form, multipart, text, and binary input according
-to the generated operation. Declared media types are checked before the handler runs. Constraints
-such as `@minValue`, `@maxValue`, `@minLength`, `@maxLength`, and `@pattern` become runtime
-validators.
+TypeSpex decodes path, query, header, cookie, JSON, form, multipart, text, binary, and raw file
+input according to the generated operation. Declared media types are checked before the handler
+runs. Constraints such as `@minValue`, `@maxValue`, `@minLength`, `@maxLength`, and `@pattern`
+become runtime validators.
+
+Multipart requests are decoded from their raw MIME representation. Model-shaped
+`multipart/form-data` and `multipart/mixed` bodies match each wire part name to its TypeSpec
+source property, while tuple-shaped bodies preserve declaration order and support unnamed
+`multipart/mixed` parts. Text, JSON, binary, and `File` parts retain their per-part media types;
+optional and repeated parts keep their declared handler shape. Malformed boundaries, headers,
+missing required parts, unexpected parts, and ambiguous tuple cardinality are returned as
+structured request validation errors.
+
+Request models follow TypeSpec's open-object convention. Undeclared properties on an ordinary
+model are accepted but omitted from the typed handler value. A model that spreads, copies, or
+extends `Record<T>` instead validates and preserves undeclared properties as `T`; its declared
+properties keep their own types and requiredness. `Record<never>` explicitly seals a model and
+rejects undeclared properties. TypeScript requires declared fields to be assignable to a string
+index signature, so a mixed model's generated index value is widened with its declared field types
+when necessary; runtime validation still applies `T` to undeclared fields.
+
+A TypeSpec HTTP `File` used as a raw body or multipart part is represented by the Web `File`
+type. Its `type`, `name`, and blob contents carry the media type, filename, and bytes. A missing
+`Content-Type` is accepted when the file's `contentType` property is optional, while a supplied
+value is always checked against the declared media types. Canonical raw request files have an
+empty name; multipart filenames and a file subtype's modeled path, query, or header filename are
+mirrored into `File.name`. The modeled filename remains available as an ordinary handler input.
+When a raw file is combined with other inputs, it is kept under the request model's body property
+rather than flattened into them.
+
+A `File` transported as a structured JSON body is instead represented by its projected object
+shape: `contentType`, `filename`, and `contents`. String contents stay strings, while `bytes`
+contents use `Uint8Array` in handlers and base64 on the JSON wire.
 
 Validation failures return status 400 with all applicable issues collected:
 
@@ -264,13 +309,23 @@ Validation failures return status 400 with all applicable issues collected:
 ```
 
 An unsupported request `Content-Type` returns status 415 with the received and supported media
-types. This check takes precedence because the body cannot be decoded safely.
+types. This check takes precedence over schema validation because the body cannot be decoded
+safely. Request-size policy is evaluated earlier when a valid `Content-Length` already proves that
+the body is oversized, so that case returns 413 without attempting media-type decoding.
+
+Response status ranges and unions remain visible to handlers and are validated before they drive
+the Fetch `Response`. Header-only responses are emitted without a body, and 204, 205, and 304
+always suppress body bytes. A wildcard response without an `@statusCode` property is rejected at
+generation time because no concrete status can be selected safely.
 
 The hosting adapters preserve stream-backed Web `Request` and `Response` bodies at their boundary.
 Generated request body decoders nevertheless consume the complete body before invoking a handler,
-including JSON, URL-encoded form, multipart, text, and binary bodies. TypeSpex does not impose an
-application-specific body size limit or request deadline. Configure those limits in the trusted
-reverse proxy, hosting runtime, or application middleware for the deployment environment.
+including JSON, URL-encoded form, multipart, text, binary, and raw file bodies. The runtime limits
+these bodies to 10 MiB by default, rejecting larger declared or streamed payloads with a structured
+413 response. Set `maxRequestBodyBytes` on `createHttpRouter` or direct body-decoder options to a
+non-negative byte count; set it to `false` to disable runtime enforcement explicitly. Deployments
+should still configure transport-level limits and request deadlines in their trusted proxy or
+hosting runtime.
 
 Modeled success and error values are encoded using their declared status, headers, body, and media
 type. Full-range `int64` and `uint64` handler values use `bigint` and are emitted as exact,
@@ -278,6 +333,10 @@ unquoted JSON numeric tokens; clients interpret those tokens according to their 
 implementation. Inbound JSON integer tokens longer than 20 digits are rejected before handler
 decoding to bound precise-integer parsing. TypeSpec `bytes` map to `Uint8Array` and are base64
 strings when nested in JSON.
+
+Raw file responses accept a Web `File`, validate its media type, and use its name for a safe
+`Content-Disposition` filename. Empty optional media types and names omit those response headers;
+a filename relocated to a modeled response header suppresses the default `Content-Disposition`.
 
 Handlers and middleware may throw `HttpError` for an explicit HTTP response. Other exceptions use
 `onUnhandledError` when configured, otherwise the router returns status 500. Unmatched requests
@@ -292,7 +351,8 @@ union envelopes, and standard `@useAuth` metadata. They also reject parameter se
 styles, media/body shape combinations, and output layouts that the generated runtime cannot
 represent safely. Authentication and authorization enforcement should currently be implemented
 in application middleware. Supported response bodies are JSON, `text/*`,
-`application/octet-stream`, and empty responses.
+`application/octet-stream`, resolved raw `File` media types, and empty responses. Multipart
+response bodies remain unsupported.
 
 ## Regeneration
 
