@@ -63,6 +63,12 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Generated artifacts "${"first"}" and "${"second"}" both resolve to "${"path"}". Give the services unique names or configure layout patterns that resolve to distinct paths.`,
       },
     },
+    "generated-format-error": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Generated TypeScript file "${"file"}" could not be formatted, so no generated files were written. Formatter error: ${"reason"}`,
+      },
+    },
     "duplicate-route": {
       severity: "error",
       messages: {
