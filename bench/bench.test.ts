@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createRadixMatcher, createRegexMatcher } from "@typespex/runtime";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   aggregateSamples,
   autocannonOptions,
   type BenchmarkScenario,
   createSchedule,
+  fetchWithTimeout,
   type HttpSample,
   SCENARIOS,
   SERVERS,
@@ -12,7 +16,7 @@ import {
   validateAutocannonResult,
   validateScenario,
 } from "./bench.js";
-import { balancedOrder, median, summarize } from "./benchmark-common.js";
+import { balancedOrder, installedPackageVersion, median, summarize } from "./benchmark-common.js";
 import {
   aggregateMatcherSamples,
   buildMatcherSuite,
@@ -106,6 +110,21 @@ describe("HTTP benchmark validation", () => {
     ).rejects.toThrow("status 404, expected 200");
   });
 
+  test("validation fetches abort instead of hanging past their deadline", async () => {
+    let signal: AbortSignal | undefined;
+    const boundedFetch = fetchWithTimeout(1, async (_input, init) => {
+      signal = init?.signal ?? undefined;
+      if (!signal) throw new Error("Expected an abort signal.");
+      return await new Promise<Response>((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+      });
+    });
+
+    const rejection = await boundedFetch("http://127.0.0.1/hangs").catch((error) => error);
+    expect(rejection).toBeInstanceOf(DOMException);
+    expect(signal?.aborted).toBeTrue();
+  });
+
   test("timed validation accepts exact success and modeled-error distributions", () => {
     const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
     const notFound = SCENARIOS.find((scenario) => scenario.id === "not-found")!;
@@ -194,6 +213,18 @@ describe("benchmark statistics and fixtures", () => {
     expect(fixture.create({ name: "Bench", tag: "test" })).toEqual(CREATED_PET);
     expect(fixture.create({ name: "Bench", tag: "test" })).toEqual(CREATED_PET);
     expect(fixture.list().length).toBe(20);
+  });
+
+  test("dependency metadata falls back to a hoisted root package", async () => {
+    const repositoryRoot = await mkdtemp(join(tmpdir(), "typespex-benchmark-"));
+    try {
+      const packageDirectory = join(repositoryRoot, "node_modules", "hoisted-dependency");
+      await mkdir(packageDirectory, { recursive: true });
+      await Bun.write(join(packageDirectory, "package.json"), '{"version":"1.2.3"}');
+      expect(await installedPackageVersion(repositoryRoot, "hoisted-dependency")).toBe("1.2.3");
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true });
+    }
   });
 
   test("generated matcher suites are semantically valid before timing", () => {

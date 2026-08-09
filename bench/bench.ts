@@ -93,6 +93,20 @@ export const SCENARIOS: readonly BenchmarkScenario[] = [
 
 export type FetchRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export function fetchWithTimeout(
+  timeoutMilliseconds: number,
+  fetchRequest: FetchRequest = fetch,
+): FetchRequest {
+  if (!Number.isFinite(timeoutMilliseconds) || timeoutMilliseconds <= 0) {
+    throw new Error("Fetch timeout must be a positive number of milliseconds.");
+  }
+  return (input, init) =>
+    fetchRequest(input, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMilliseconds),
+    });
+}
+
 export function autocannonOptions(
   url: string,
   scenario: BenchmarkScenario,
@@ -522,6 +536,7 @@ async function main(): Promise<void> {
   const metadata = await benchmarkMetadata(REPOSITORY_ROOT);
   const schedule = createSchedule();
   const samples: HttpSample[] = [];
+  const validationFetch = fetchWithTimeout(HTTP_SETTINGS.timeoutSeconds * 1_000);
   const estimatedSeconds =
     schedule.length * (HTTP_SETTINGS.durationSeconds + HTTP_SETTINGS.warmupSeconds);
   console.log(
@@ -544,14 +559,14 @@ async function main(): Promise<void> {
       );
       const running = await startServer(server);
       try {
-        await validateScenario(url, scenario, "preflight");
+        await validateScenario(url, scenario, "preflight", validationFetch);
         const warmup = await runAutocannon(
           autocannonOptions(url, scenario, HTTP_SETTINGS.warmupSeconds),
         );
         validateAutocannonResult(warmup, scenario, "warmup");
         const measured = await runAutocannon(autocannonOptions(url, scenario));
         validateAutocannonResult(measured, scenario, "measurement");
-        await validateScenario(url, scenario, "postflight");
+        await validateScenario(url, scenario, "postflight", validationFetch);
         const sample = extractSample(cell.trial, cell.sequence, server, scenario, measured);
         samples.push(sample);
         console.log(

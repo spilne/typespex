@@ -81,16 +81,24 @@ function gitOutput(repositoryRoot: string, args: readonly string[]): string | un
   return result.stdout.toString().trim();
 }
 
-export async function benchmarkMetadata(repositoryRoot: string) {
-  async function installedVersion(packageName: string): Promise<string | undefined> {
-    const manifest = Bun.file(
-      resolve(repositoryRoot, "bench/node_modules", packageName, "package.json"),
-    );
-    if (!(await manifest.exists())) return undefined;
+export async function installedPackageVersion(
+  repositoryRoot: string,
+  packageName: string,
+): Promise<string | undefined> {
+  const packageDirectories = [
+    resolve(repositoryRoot, "bench/node_modules"),
+    resolve(repositoryRoot, "node_modules"),
+  ];
+  for (const packageDirectory of packageDirectories) {
+    const manifest = Bun.file(resolve(packageDirectory, packageName, "package.json"));
+    if (!(await manifest.exists())) continue;
     const value = (await manifest.json()) as { version?: string };
     return value.version;
   }
+  return undefined;
+}
 
+export async function benchmarkMetadata(repositoryRoot: string) {
   const status = gitOutput(repositoryRoot, ["status", "--porcelain"]);
   const cpuModels = [...new Set(cpus().map((cpu) => cpu.model))];
 
@@ -113,11 +121,11 @@ export async function benchmarkMetadata(repositoryRoot: string) {
       freeMemoryBytesAtStart: freemem(),
     },
     dependencies: {
-      autocannon: await installedVersion("autocannon"),
-      hono: await installedVersion("hono"),
-      honoZodValidator: await installedVersion("@hono/zod-validator"),
-      zod: await installedVersion("zod"),
-      tinybench: await installedVersion("tinybench"),
+      autocannon: await installedPackageVersion(repositoryRoot, "autocannon"),
+      hono: await installedPackageVersion(repositoryRoot, "hono"),
+      honoZodValidator: await installedPackageVersion(repositoryRoot, "@hono/zod-validator"),
+      zod: await installedPackageVersion(repositoryRoot, "zod"),
+      tinybench: await installedPackageVersion(repositoryRoot, "tinybench"),
     },
   };
 }
