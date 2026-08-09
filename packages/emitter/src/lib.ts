@@ -50,6 +50,18 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Generated artifacts "${"first"}" and "${"second"}" both resolve to "${"path"}". Give the services unique names or configure layout patterns that resolve to distinct paths.`,
       },
     },
+    "duplicate-route": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Operations "${"first"}" and "${"second"}" both resolve to "${"method"} ${"path"}". Every colliding operation must use @sharedRoute and declare request headers that distinguish it from every other operation.`,
+      },
+    },
+    "ambiguous-shared-route": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Shared operations "${"first"}" and "${"second"}" both resolve to "${"method"} ${"path"}" but their required literal request headers or content types overlap or are absent. Dispatch would be ambiguous.`,
+      },
+    },
     "undifferentiable-response-union": {
       severity: "error",
       messages: {

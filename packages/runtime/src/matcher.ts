@@ -17,6 +17,22 @@ export interface RoutePattern {
   readonly trailingSlash: boolean;
 }
 
+/** One required request-header constraint used to distinguish a shared route. */
+export interface RouteHeaderConstraint {
+  /** Header names are matched case-insensitively. */
+  readonly name: string;
+  /** Accepted wire values. Every value must be non-empty. */
+  readonly values: readonly string[];
+  /** Media types ignore case and parameters and support subtype wildcards. */
+  readonly kind?: "exact" | "media-type";
+}
+
+/** Explicit request metadata that selects one operation among a shared route. */
+export interface RouteSelection {
+  /** All header constraints must match the request. */
+  readonly headers: readonly RouteHeaderConstraint[];
+}
+
 /** Route registration accepted by the built-in matchers. */
 export interface RouteMatcherInput<R> {
   readonly method: string;
@@ -24,6 +40,10 @@ export interface RouteMatcherInput<R> {
   readonly path: string;
   /** Structured matcher input. Preferred whenever available. */
   readonly routePattern?: RoutePattern;
+  /** Required request metadata used only to distinguish duplicate route patterns. */
+  readonly selection?: RouteSelection;
+  /** Optional human-readable identity included in conflict diagnostics. */
+  readonly label?: string;
   readonly route: R;
 }
 
@@ -35,5 +55,5 @@ export interface RouteMatch<R> {
 
 /** Strategy interface for matching HTTP method/path pairs to route values. */
 export interface RouteMatcher<R> {
-  match(method: string, pathname: string): RouteMatch<R> | null;
+  match(method: string, pathname: string, headers?: Headers): RouteMatch<R> | null;
 }

@@ -18,6 +18,7 @@ import { emitServerRouter } from "./emit-server-router.js";
 import { reportUnsupportedResponseStatusContracts } from "./emit-server-common.js";
 import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
 import { reportRequestInputCollisions } from "./request-input-plan.js";
+import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
 
 async function formatTs(fileName: string, content: string): Promise<string> {
@@ -61,6 +62,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
   reportDuplicateOutputPaths(context, emissionPlans);
   for (const { ctx, httpOperations } of emissionPlans) {
     reportUnsupportedUriTemplates(ctx, httpOperations);
+    reportRouteConflicts(ctx, httpOperations);
     reportIgnoredDecorators(ctx, httpOperations);
     reportRequestInputCollisions(ctx, httpOperations);
     reportUnsupportedResponseStatusContracts(ctx, httpOperations);

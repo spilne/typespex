@@ -14,14 +14,14 @@ import {
   type NormalizedRouteInput,
   normalizeRouteInputs,
   type RouteSegmentKind,
+  selectRouteVariant,
 } from "./match-common.js";
 import { canonicalizePathname, rawPathSlice } from "./match-path.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
 interface RouteGroupInfo<R> {
-  readonly route: R;
-  readonly paramNames: readonly string[];
+  readonly routes: readonly NormalizedRouteInput<R>[];
   readonly firstGroup: number;
 }
 
@@ -82,7 +82,16 @@ function compileMethodRoutes<R>(
   const groupToRoute: Array<RouteGroupInfo<R> | undefined> = [];
   let nextGroup = 1;
 
-  for (const { pattern, route } of routes) {
+  for (let routeIndex = 0; routeIndex < routes.length;) {
+    const firstRoute = routes[routeIndex]!;
+    const variants = [firstRoute];
+    routeIndex += 1;
+    while (routeIndex < routes.length && routes[routeIndex]!.structure === firstRoute.structure) {
+      variants.push(routes[routeIndex]!);
+      routeIndex += 1;
+    }
+
+    const { pattern } = firstRoute;
     const paramNames: string[] = [];
     const firstGroup = nextGroup;
     let source = pattern.segments.length === 0 ? "\\/" : "";
@@ -102,7 +111,7 @@ function compileMethodRoutes<R>(
     }
 
     alternatives.push(source);
-    groupToRoute[firstGroup] = { route, paramNames, firstGroup };
+    groupToRoute[firstGroup] = { routes: variants, firstGroup };
   }
 
   return {
@@ -111,7 +120,11 @@ function compileMethodRoutes<R>(
   };
 }
 
-function regexLookup<R>(compiled: CompiledMethodRouter<R>, pathname: string): RouteMatch<R> | null {
+function regexLookup<R>(
+  compiled: CompiledMethodRouter<R>,
+  pathname: string,
+  headers?: Headers,
+): RouteMatch<R> | null {
   const canonical = canonicalizePathname(pathname);
   if (!canonical) return null;
   const match = compiled.regex.exec(canonical.value);
@@ -121,17 +134,19 @@ function regexLookup<R>(compiled: CompiledMethodRouter<R>, pathname: string): Ro
     if (match[index] === undefined) continue;
     const info = compiled.groupToRoute[index];
     if (!info) continue;
+    const selected = selectRouteVariant(info.routes, headers);
+    if (!selected) return null;
 
-    if (info.paramNames.length === 0) {
-      return { route: info.route, pathParams: EMPTY_PARAMS };
+    if (selected.parameterNames.length === 0) {
+      return { route: selected.route, pathParams: EMPTY_PARAMS };
     }
     const pathParams: Record<string, string> = Object.create(null);
     const indices = match.indices!;
-    for (let parameter = 0; parameter < info.paramNames.length; parameter++) {
+    for (let parameter = 0; parameter < selected.parameterNames.length; parameter++) {
       const range = indices[info.firstGroup + parameter]!;
-      pathParams[info.paramNames[parameter]!] = rawPathSlice(canonical, range[0], range[1]);
+      pathParams[selected.parameterNames[parameter]!] = rawPathSlice(canonical, range[0], range[1]);
     }
-    return { route: info.route, pathParams };
+    return { route: selected.route, pathParams };
   }
   return null;
 }
@@ -152,9 +167,9 @@ export function createRegexMatcher<R>(
   }
 
   return {
-    match(method, pathname) {
+    match(method, pathname, headers) {
       const router = compiled.get(method);
-      return router ? regexLookup(router, pathname) : null;
+      return router ? regexLookup(router, pathname, headers) : null;
     },
   };
 }

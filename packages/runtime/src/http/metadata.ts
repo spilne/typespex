@@ -1,5 +1,5 @@
 import type { Hints } from "../core/hints.js";
-import type { RoutePattern } from "../matcher.js";
+import type { RoutePattern, RouteSelection } from "../matcher.js";
 
 /** HTTP methods supported by the generated server runtime. */
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
@@ -25,6 +25,8 @@ export interface OperationMeta {
   readonly path: string;
   /** Structured matcher route. Falls back to legacy `path` when omitted. */
   readonly routePattern?: RoutePattern;
+  /** Explicit request metadata used to distinguish this operation on a shared route. */
+  readonly routeSelection?: RouteSelection;
   readonly hints: Hints;
 }
 

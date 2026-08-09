@@ -11,6 +11,15 @@ and operation primitives for TypeSpec-generated HTTP servers.
 Generated services normally import this package directly. Choose one adapter
 package to connect the router to a server framework.
 
+## Shared-route matching
+
+The built-in regex and radix matchers accept a `selection` on structurally duplicate route inputs.
+Every duplicate pair must contain a non-overlapping constraint for the same required header;
+otherwise matcher construction throws a conflict error that includes both paths and optional route
+labels. Pass request headers as the third argument to `matcher.match(...)`. Generated TypeSpex
+routers configure and pass these selectors automatically for supported TypeSpec `@sharedRoute`
+operations.
+
 ## Runtime requirements
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` is

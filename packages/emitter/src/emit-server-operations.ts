@@ -166,6 +166,13 @@ function emitEndpoint(
     method: string;
     path: string;
     routePattern: RoutePattern;
+    routeSelection?: {
+      readonly headers: readonly {
+        readonly name: string;
+        readonly values: readonly string[];
+        readonly kind: "exact" | "media-type";
+      }[];
+    };
     operationHints: ReadonlyArray<{ keyExportName: string; valueExpression: string }>;
   },
 ): void {
@@ -192,6 +199,9 @@ function emitEndpoint(
   lines.push(`        method: ${JSON.stringify(operation.method)} as const,`);
   lines.push(`        path: ${JSON.stringify(operation.path)},`);
   lines.push(`        routePattern: ${JSON.stringify(operation.routePattern)},`);
+  if (operation.routeSelection) {
+    lines.push(`        routeSelection: ${JSON.stringify(operation.routeSelection)},`);
+  }
   lines.push(`        hints: ${emitHintsExpression(operation.operationHints)},`);
   lines.push("      },");
   lines.push("    },");

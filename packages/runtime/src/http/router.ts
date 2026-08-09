@@ -148,13 +148,15 @@ export function createHttpRouter<Ctx extends RequestContext>(
     method: binding.operation.endpoint.operation.method,
     path: binding.operation.endpoint.operation.path,
     routePattern: binding.operation.endpoint.operation.routePattern,
+    selection: binding.operation.endpoint.operation.routeSelection,
+    label: binding.operation.endpoint.operation.operationId,
     route: binding,
   }));
 
   const routeMatcher = matcher ?? createRegexMatcher(matcherInput);
 
   function matchRequest(request: Request) {
-    return routeMatcher.match(request.method, extractPathname(request.url));
+    return routeMatcher.match(request.method, extractPathname(request.url), request.headers);
   }
 
   async function execute(

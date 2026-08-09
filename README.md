@@ -258,6 +258,28 @@ Generated files contain an `AUTO-GENERATED` header and should not be edited. Cha
 source or emitter, then regenerate them. The emitter also supports `flat`, `prefix`, and
 `directory` service layouts plus configurable service-folder and file-name patterns.
 
+### Shared routes
+
+TypeSpex supports `@sharedRoute` when every operation at the same method and structural path can be
+selected from explicit request metadata. Each operation pair must have at least one common,
+required header whose accepted literal values do not overlap. Request body content types also act
+as required `Content-Type` constraints, including the implicit `application/json` media type of a
+JSON body.
+
+```typespec
+@sharedRoute @route("/ingest") @post
+op ingestJson(@body body: JsonPayload): void;
+
+@sharedRoute @route("/ingest") @post
+op ingestText(@header contentType: "text/plain", @body body: string): void;
+```
+
+Media-type matching is case-insensitive, ignores parameters such as `charset`, and accounts for
+wildcards when checking whether routes overlap. Other header literals use exact matching. Optional
+headers, unconstrained headers, and constraints on different header names do not prove that two
+routes are distinct, so the emitter reports an ambiguity instead of generating order-dependent
+dispatch.
+
 ### Reachable-only model emission
 
 By default, `models.ts` includes every named type declared under the service namespace, plus any

@@ -3,6 +3,7 @@ import type {
   RoutePattern,
   RoutePatternSegment,
   RoutePatternToken,
+  RouteSelection,
 } from "./matcher.js";
 import { canonicalizeRouteLiteral } from "./match-path.js";
 
@@ -19,6 +20,8 @@ export interface NormalizedRouteInput<R> {
   readonly structure: string;
   readonly segmentKinds: readonly RouteSegmentKind[];
   readonly parameterNames: readonly string[];
+  readonly selection?: RouteSelection;
+  readonly label?: string;
   readonly route: R;
 }
 
@@ -63,13 +66,18 @@ export function normalizeRouteInputs<R>(
       structure,
       segmentKinds,
       parameterNames,
+      selection: normalizeRouteSelection(route.selection, route.method, route.path),
+      label: route.label,
       route: route.route,
     };
 
     const sameMethod = byMethod.get(route.method) ?? [];
     for (const previous of sameMethod) {
       if (previous.structure === structure) {
-        throw new Error(`Duplicate route: ${route.method} ${route.path}`);
+        if (routeSelectionsAreDisjoint(previous.selection, current.selection)) continue;
+        throw new Error(
+          `Duplicate route: ${describeRoute(current)} conflicts with ${describeRoute(previous)}. Shared routes require pairwise non-overlapping header constraints.`,
+        );
       }
       if (routePatternsAreAmbiguous(previous, current)) {
         throw new Error(
@@ -83,6 +91,140 @@ export function normalizeRouteInputs<R>(
   }
 
   return normalized;
+}
+
+/** Selects the sole matching variant from a validated structural route group. */
+export function selectRouteVariant<R>(
+  routes: readonly NormalizedRouteInput<R>[],
+  headers?: Headers,
+): NormalizedRouteInput<R> | undefined {
+  if (routes.length === 1) return routes[0];
+  if (!headers) return undefined;
+  return routes.find((route) => routeSelectionMatches(route.selection, headers));
+}
+
+/** True when two selections cannot both match the same request. */
+export function routeSelectionsAreDisjoint(
+  left: RouteSelection | undefined,
+  right: RouteSelection | undefined,
+): boolean {
+  if (!left || !right) return false;
+  for (const leftHeader of left.headers) {
+    const rightHeader = right.headers.find((header) => header.name === leftHeader.name);
+    if (!rightHeader || rightHeader.kind !== leftHeader.kind) continue;
+    if (!headerValueSetsOverlap(leftHeader, rightHeader)) return true;
+  }
+  return false;
+}
+
+function normalizeRouteSelection(
+  selection: RouteSelection | undefined,
+  method: string,
+  path: string,
+): RouteSelection | undefined {
+  if (!selection) return undefined;
+  if (!Array.isArray(selection.headers) || selection.headers.length === 0) {
+    throw new Error(`Invalid route selection: ${method} ${path}`);
+  }
+
+  const names = new Set<string>();
+  const headers: RouteSelection["headers"][number][] = selection.headers.map(
+    (header: RouteSelection["headers"][number]) => {
+      const name = header.name.trim().toLowerCase();
+      const kind = header.kind ?? "exact";
+      if (name.length === 0 || names.has(name) || (kind !== "exact" && kind !== "media-type")) {
+        throw new Error(`Invalid route selection: ${method} ${path}`);
+      }
+      names.add(name);
+
+      if (!Array.isArray(header.values) || header.values.length === 0) {
+        throw new Error(`Invalid route selection: ${method} ${path}`);
+      }
+      const values = [
+        ...new Set(
+          header.values.map((value: string) => {
+            if (typeof value !== "string" || value.length === 0) {
+              throw new Error(`Invalid route selection: ${method} ${path}`);
+            }
+            if (kind === "exact") return value;
+            const mediaRange = parseMediaRange(value);
+            if (!mediaRange) throw new Error(`Invalid route selection: ${method} ${path}`);
+            return `${mediaRange.type}/${mediaRange.subtype}`;
+          }),
+        ),
+      ].sort();
+      return { name, values, kind };
+    },
+  );
+  return { headers };
+}
+
+function routeSelectionMatches(selection: RouteSelection | undefined, headers: Headers): boolean {
+  if (!selection) return false;
+  return selection.headers.every((constraint) => {
+    const received = headers.get(constraint.name);
+    if (constraint.kind === "media-type") {
+      const mediaType = parseMediaRange(received);
+      if (!mediaType || mediaType.type === "*" || mediaType.subtype === "*") return false;
+      return constraint.values.some((allowed) => mediaRangesOverlap(received!, allowed));
+    }
+    return received !== null && constraint.values.includes(received);
+  });
+}
+
+function headerValueSetsOverlap(
+  left: RouteSelection["headers"][number],
+  right: RouteSelection["headers"][number],
+): boolean {
+  if (left.kind === "media-type") {
+    return left.values.some((leftValue) =>
+      right.values.some((rightValue) => mediaRangesOverlap(leftValue, rightValue)),
+    );
+  }
+  return left.values.some((value) => right.values.includes(value));
+}
+
+interface MediaRange {
+  readonly type: string;
+  readonly subtype: string;
+}
+
+const MEDIA_TYPE_TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
+
+function parseMediaRange(value: string | null): MediaRange | undefined {
+  if (!value) return undefined;
+  const semicolon = value.indexOf(";");
+  const raw = (semicolon === -1 ? value : value.substring(0, semicolon)).trim().toLowerCase();
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash !== raw.lastIndexOf("/")) return undefined;
+  const type = raw.substring(0, slash);
+  const subtype = raw.substring(slash + 1);
+  if (!MEDIA_TYPE_TOKEN.test(type) || !MEDIA_TYPE_TOKEN.test(subtype)) return undefined;
+  if (type === "*" && subtype !== "*") return undefined;
+  return { type, subtype };
+}
+
+function mediaRangesOverlap(left: string, right: string): boolean {
+  const leftRange = parseMediaRange(left);
+  const rightRange = parseMediaRange(right);
+  if (!leftRange || !rightRange) return true;
+  if (
+    (leftRange.type === "*" && leftRange.subtype === "*") ||
+    (rightRange.type === "*" && rightRange.subtype === "*")
+  ) {
+    return true;
+  }
+  if (leftRange.type !== rightRange.type) return false;
+  return (
+    leftRange.subtype === "*" ||
+    rightRange.subtype === "*" ||
+    leftRange.subtype === rightRange.subtype
+  );
+}
+
+function describeRoute<R>(route: NormalizedRouteInput<R>): string {
+  const label = route.label ? ` (${route.label})` : "";
+  return `${route.method} ${route.path}${label}`;
 }
 
 /** Stable structural identity that deliberately excludes parameter names. */

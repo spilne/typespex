@@ -16,14 +16,14 @@ import {
   type NormalizedRouteInput,
   normalizeRouteInputs,
   routePatternSegmentKind,
+  selectRouteVariant,
 } from "./match-common.js";
 import { type CanonicalPathSegment, canonicalizePathname, rawSegmentSlice } from "./match-path.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
 interface StoredRoute<R> {
-  readonly value: R;
-  readonly paramNames: readonly string[];
+  readonly variants: readonly NormalizedRouteInput<R>[];
 }
 
 interface MixedEdge<R> {
@@ -39,7 +39,8 @@ interface RadixNode<R> {
 }
 
 interface RankedMatch<R> {
-  readonly match: RouteMatch<R>;
+  /** `null` means the best path matched but none of its shared-route selectors did. */
+  readonly match: RouteMatch<R> | null;
   readonly ranks: readonly number[];
 }
 
@@ -95,21 +96,27 @@ function insertRoute<R>(root: RadixNode<R>, input: NormalizedRouteInput<R>): voi
       node = edge.child;
     }
   }
+  const stored = node.routes.get(input.pattern.trailingSlash);
   node.routes.set(input.pattern.trailingSlash, {
-    value: input.route,
-    paramNames: input.parameterNames,
+    variants: stored ? [...stored.variants, input] : [input],
   });
 }
 
-function finishMatch<R>(stored: StoredRoute<R>, captured: readonly string[]): RouteMatch<R> {
-  if (stored.paramNames.length === 0) {
-    return { route: stored.value, pathParams: EMPTY_PARAMS };
+function finishMatch<R>(
+  stored: StoredRoute<R>,
+  captured: readonly string[],
+  headers?: Headers,
+): RouteMatch<R> | null {
+  const selected = selectRouteVariant(stored.variants, headers);
+  if (!selected) return null;
+  if (selected.parameterNames.length === 0) {
+    return { route: selected.route, pathParams: EMPTY_PARAMS };
   }
   const pathParams: Record<string, string> = Object.create(null);
-  for (let index = 0; index < stored.paramNames.length; index++) {
-    pathParams[stored.paramNames[index]!] = captured[index]!;
+  for (let index = 0; index < selected.parameterNames.length; index++) {
+    pathParams[selected.parameterNames[index]!] = captured[index]!;
   }
-  return { route: stored.value, pathParams };
+  return { route: selected.route, pathParams };
 }
 
 function compareRanks(left: readonly number[], right: readonly number[]): number {
@@ -126,16 +133,24 @@ function search<R>(
   segmentIndex: number,
   trailingSlash: boolean,
   captured: string[],
+  headers?: Headers,
 ): RankedMatch<R> | undefined {
   if (segmentIndex === segments.length) {
     const stored = node.routes.get(trailingSlash);
-    return stored ? { match: finishMatch(stored, captured), ranks: [] } : undefined;
+    return stored ? { match: finishMatch(stored, captured, headers), ranks: [] } : undefined;
   }
 
   const segment = segments[segmentIndex]!;
   const staticChild = node.staticChildren.get(segment.value);
   if (staticChild) {
-    const result = search(staticChild, segments, segmentIndex + 1, trailingSlash, captured);
+    const result = search(
+      staticChild,
+      segments,
+      segmentIndex + 1,
+      trailingSlash,
+      captured,
+      headers,
+    );
     if (result) return { match: result.match, ranks: [0, ...result.ranks] };
   }
 
@@ -149,7 +164,7 @@ function search<R>(
       const [start, end] = range!;
       captured.push(rawSegmentSlice(segment, start, end));
     }
-    const result = search(edge.child, segments, segmentIndex + 1, trailingSlash, captured);
+    const result = search(edge.child, segments, segmentIndex + 1, trailingSlash, captured, headers);
     captured.length = capturedLength;
     if (!result) continue;
     const ranked = { match: result.match, ranks: [1, ...result.ranks] };
@@ -161,7 +176,7 @@ function search<R>(
 
   if (node.param) {
     captured.push(segment.raw);
-    const result = search(node.param, segments, segmentIndex + 1, trailingSlash, captured);
+    const result = search(node.param, segments, segmentIndex + 1, trailingSlash, captured, headers);
     captured.pop();
     if (result) return { match: result.match, ranks: [2, ...result.ranks] };
   }
@@ -182,11 +197,11 @@ export function createRadixMatcher<R>(
   }
 
   return {
-    match(method, pathname) {
+    match(method, pathname, headers) {
       const root = roots.get(method);
       const parsed = canonicalizePathname(pathname);
       if (!root || !parsed) return null;
-      return search(root, parsed.segments, 0, parsed.trailingSlash, [])?.match ?? null;
+      return search(root, parsed.segments, 0, parsed.trailingSlash, [], headers)?.match ?? null;
     },
   };
 }
