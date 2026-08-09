@@ -7,8 +7,10 @@ import {
   createContextMap,
   createHttpRouter,
   decode,
+  decodeRequestInput,
   emptyHints,
   type MatchedRequestContext,
+  RequestDecoders,
   type RequestContext,
   type ServerOperation,
 } from "../src/server.js";
@@ -64,6 +66,161 @@ describe("createHttpRouter", () => {
       id: "p-123",
       seenBy: "Pets.read",
     });
+  });
+
+  test("routes embedded parameters raw and decodes them exactly once at the input boundary", async () => {
+    const operation = makeOperation({
+      endpoint: {
+        service: {
+          name: "TestService",
+          hints: emptyHints(),
+        },
+        namespaces: [],
+        operation: {
+          name: "readFile",
+          operationId: "Files.read",
+          method: "GET",
+          path: "/files/{id}.json",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "files" }],
+              [
+                { kind: "parameter", name: "id" },
+                { kind: "literal", value: ".json" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          hints: emptyHints(),
+        },
+      },
+      decodeInput(request, pathParams) {
+        return decodeRequestInput(
+          RequestDecoders.path("id", Decoders.string).map((id) => ({ id })),
+          request,
+          pathParams,
+        );
+      },
+      encodeResult(result: { id: string }) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const router = createHttpRouter([bindRoute(operation, async (input) => input)]);
+
+    const encoded = await router.handle(new Request("http://localhost/files/a%2Fb%20c.json"));
+    expect(encoded.status).toBe(200);
+    expect(await encoded.json()).toEqual({ id: "a/b c" });
+
+    const malformed = await router.handle(new Request("http://localhost/files/bad%ZZ.json"));
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({
+      error: "Invalid request",
+      issues: [
+        {
+          path: "$path.id",
+          message: "Expected a valid percent-encoded path segment.",
+        },
+      ],
+    });
+  });
+
+  test("canonicalizes path spelling before route selection while decoding captures once", async () => {
+    const parameter = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "readPet",
+          operationId: "Pets.read",
+          method: "GET",
+          path: "/pets/:petId",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput(request, pathParams) {
+        return decodeRequestInput(
+          RequestDecoders.path("petId", Decoders.string).map((petId) => ({
+            route: "parameter" as const,
+            value: petId,
+          })),
+          request,
+          pathParams,
+        );
+      },
+      encodeResult(result: { route: "parameter"; value: string }) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const staticPet = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "newPet",
+          operationId: "Pets.new",
+          method: "GET",
+          path: "/pets/new",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput() {
+        return Either.right({ route: "static" as const });
+      },
+      encodeResult(result: { route: "static" }) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const unicode = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "cafe",
+          operationId: "Cafe.read",
+          method: "GET",
+          path: "/café",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput() {
+        return Either.right({ route: "unicode" as const });
+      },
+      encodeResult(result: { route: "unicode" }) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const router = createHttpRouter([
+      bindRoute(parameter, async (input) => input),
+      bindRoute(staticPet, async (input) => input),
+      bindRoute(unicode, async (input) => input),
+    ]);
+
+    const selectedStatic = await router.handle(new Request("http://localhost/pets/%6Eew"));
+    expect(await selectedStatic.json()).toEqual({ route: "static" });
+
+    const selectedUnicode = await router.handle(new Request("http://localhost/caf%C3%A9"));
+    expect(await selectedUnicode.json()).toEqual({ route: "unicode" });
+
+    const encodedSlash = await router.handle(new Request("http://localhost/pets/%2F"));
+    expect(await encodedSlash.json()).toEqual({ route: "parameter", value: "/" });
+
+    const doubleEncodedSlash = await router.handle(new Request("http://localhost/pets/%252F"));
+    expect(await doubleEncodedSlash.json()).toEqual({ route: "parameter", value: "%2F" });
+
+    const malformed = await router.handle(new Request("http://localhost/pets/%ZZ"));
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({
+      error: "Invalid request",
+      issues: [
+        {
+          path: "$path.petId",
+          message: "Expected a valid percent-encoded path segment.",
+        },
+      ],
+    });
+
+    const wrongTrailingSlash = await router.handle(new Request("http://localhost/caf%C3%A9/"));
+    expect(wrongTrailingSlash.status).toBe(404);
   });
 
   test("encodes declared failures as modeled results", async () => {
@@ -153,7 +310,9 @@ describe("createHttpRouter", () => {
       {
         middleware: [
           (app) => async (ctx) => {
-            if (ctx.match?.endpoint.operation.operationId === operation.endpoint.operation.operationId) {
+            if (
+              ctx.match?.endpoint.operation.operationId === operation.endpoint.operation.operationId
+            ) {
               expect(ctx.match?.endpoint.operation.name).toBe("listPets");
               ctx.state.set(UserIdKey, "u-42");
             }
@@ -182,11 +341,14 @@ describe("createHttpRouter", () => {
         },
       ],
       notFound: async (ctx) => {
-        return Response.json({
-          error: "Not Found",
-          userId: ctx.state.get(UserIdKey),
-          matched: ctx.match !== undefined,
-        }, { status: 404 });
+        return Response.json(
+          {
+            error: "Not Found",
+            userId: ctx.state.get(UserIdKey),
+            matched: ctx.match !== undefined,
+          },
+          { status: 404 },
+        );
       },
     });
 
@@ -218,26 +380,21 @@ describe("createHttpRouter", () => {
       },
       decodeInput(request) {
         const value = new URL(request.url).searchParams.get("limit");
-        return Either.map(
-          decode(Decoders.number, value, "$query.limit"),
-          (limit) => ({ limit }),
-        );
+        return Either.map(decode(Decoders.number, value, "$query.limit"), (limit) => ({ limit }));
       },
       encodeResult(result: { limit: number }) {
         return Response.json(result, { status: 200 });
       },
     });
 
-    const router = createHttpRouter(
-      [
-        {
-          operation,
-          async handler(input) {
-            return input;
-          },
+    const router = createHttpRouter([
+      {
+        operation,
+        async handler(input) {
+          return input;
         },
-      ],
-    );
+      },
+    ]);
 
     const response = await router.handle(new Request("http://localhost/pets?limit=wat"));
 
@@ -246,6 +403,48 @@ describe("createHttpRouter", () => {
       error: "Invalid request",
       issues: [{ path: "$query.limit", message: "Expected a finite number." }],
     });
+  });
+
+  test("accepts a request when a generated-style optional header is absent", async () => {
+    const operation = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "readPet",
+          operationId: "Pets.read",
+          method: "GET",
+          path: "/pets",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput(request, pathParams) {
+        return decodeRequestInput(
+          RequestDecoders.header("x-trace-id", Decoders.string.optional()).map((traceId) => ({
+            traceId,
+          })),
+          request,
+          pathParams,
+        );
+      },
+      encodeResult(result: { traceId?: string }) {
+        return Response.json({ traceId: result.traceId ?? null }, { status: 200 });
+      },
+    });
+
+    const router = createHttpRouter([
+      {
+        operation,
+        async handler(input) {
+          return input;
+        },
+      },
+    ]);
+
+    const response = await router.handle(new Request("http://localhost/pets"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ traceId: null });
   });
 
   test("custom createContext factory injects into handler", async () => {

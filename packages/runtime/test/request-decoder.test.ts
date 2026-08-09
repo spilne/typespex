@@ -253,6 +253,91 @@ describe("http request decoders (sync)", () => {
     expect(result).toEqual(Either.right({ petId: "p-1", name: "Milo" }));
   });
 
+  test("decodeRequestInputAndBody mirrors relocated raw-file names after input decoding", async () => {
+    const requestDecoder = RequestDecoders.query("filename", Decoders.string).map((filename) => ({
+      filename,
+    }));
+    const bodyDecoder = {
+      file: Decoders.file.map((file) => ({ body: file })),
+    };
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/upload?filename=query.bin", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2]),
+      }),
+      {},
+      {
+        contentTypes: ["application/octet-stream"],
+        allowMissingContentType: true,
+        fileNameProperty: "filename",
+        fileBodyProperty: "body",
+      },
+    );
+
+    expect(result._tag).toBe("Right");
+    if (result._tag === "Right") {
+      expect(result.right.filename).toBe("query.bin");
+      expect(result.right.body.name).toBe("query.bin");
+      expect(result.right.body.type).toBe("application/octet-stream");
+      expect(new Uint8Array(await result.right.body.arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+    }
+  });
+
+  test("decodeRequestInputAndBody rejects overlapping request and body properties", async () => {
+    const requestDecoder = RequestDecoders.path("id", Decoders.string).map((id) => ({ id }));
+    const bodyDecoder = Decoders.object<{ id: string; value: string }>({
+      id: Decoders.string,
+      value: Decoders.string,
+    });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/items/path-id", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "body-id", value: "payload" }),
+      }),
+      { id: "path-id" },
+    );
+
+    expect(isLeft(result)).toBe(true);
+    if (isLeft(result)) {
+      expect(result.left).toBeInstanceOf(ValidationError);
+      expect((result.left as ValidationError).issues).toEqual([
+        {
+          path: "$body.id",
+          message: 'Body property "id" conflicts with another request input.',
+        },
+      ]);
+    }
+    expect("right" in result).toBe(false);
+  });
+
+  test("decodeRequestInputAndBody only treats own request properties as collisions", async () => {
+    const requestDecoder = RequestDecoders.path("source", Decoders.string).map(
+      () => Object.create({ id: "prototype-only" }) as Record<string, string>,
+    );
+    const bodyDecoder = Decoders.object<{ id: string }>({ id: Decoders.string });
+
+    const result = await decodeRequestInputAndBody(
+      requestDecoder,
+      bodyDecoder,
+      new Request("http://localhost/items/source", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "body-id" }),
+      }),
+      { source: "source" },
+    );
+
+    expect(result).toEqual(Either.right({ id: "body-id" }));
+  });
+
   test("decodeRequestInputAndBody accepts a structurally compatible Decoder", async () => {
     const requestDecoder = RequestDecoders.path("petId", Decoders.string).map((petId) => ({
       petId,
@@ -447,6 +532,28 @@ describe("http request decoders (sync)", () => {
     if (isLeft(missing)) {
       expect(missing.left).toEqual([{ path: "$header.x-api-key", message: "Expected a string." }]);
     }
+  });
+
+  test("optional headers decode missing values as undefined", () => {
+    const source = {
+      pathParams: {},
+      query: new URLSearchParams(),
+      headers: new Headers(),
+    };
+
+    expect(RequestDecoders.header("x-trace-id", Decoders.string.optional()).decode(source)).toEqual(
+      Either.right(undefined),
+    );
+    expect(
+      RequestDecoders.header("x-values", Decoders.array(Decoders.string).optional(), {
+        array: true,
+      }).decode(source),
+    ).toEqual(Either.right(undefined));
+    expect(
+      RequestDecoders.header("content-type", Decoders.literal("application/json").optional(), {
+        mediaType: true,
+      }).decode(source),
+    ).toEqual(Either.right(undefined));
   });
 
   test("content-type header decoding ignores media type parameters", () => {

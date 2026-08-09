@@ -1,14 +1,21 @@
 /**
  * Parses the bare media type from a Content-Type header value, dropping
  * parameters such as `; charset=utf-8` or `; boundary=...`. Returns the
- * lowercased `type/subtype` or `undefined` when no parsable value is present.
+ * lowercased `type/subtype` or `undefined` when no valid value is present.
  */
 export function parseMediaType(header: string | null | undefined): string | undefined {
   if (!header) return undefined;
   const semi = header.indexOf(";");
   const raw = (semi === -1 ? header : header.substring(0, semi)).trim().toLowerCase();
-  return raw.length === 0 ? undefined : raw;
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash !== raw.lastIndexOf("/")) return undefined;
+
+  const type = raw.substring(0, slash);
+  const subtype = raw.substring(slash + 1);
+  return MEDIA_TYPE_TOKEN.test(type) && MEDIA_TYPE_TOKEN.test(subtype) ? raw : undefined;
 }
+
+const MEDIA_TYPE_TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
 
 /**
  * Returns true when `received` matches one of `declared`. Each declared
@@ -22,6 +29,8 @@ export function isContentTypeAccepted(
   if (declared.length === 0) return true;
   const receivedMedia = parseMediaType(received);
   if (!receivedMedia) return false;
+  const [receivedType, receivedSubtype] = receivedMedia.split("/", 2);
+  if (receivedType === "*" || receivedSubtype === "*") return false;
   for (const allowed of declared) {
     if (matchesMediaType(receivedMedia, allowed)) return true;
   }
