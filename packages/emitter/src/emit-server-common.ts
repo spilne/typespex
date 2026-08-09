@@ -624,41 +624,36 @@ function getResponseBodyTransform(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
 ): ResponseBodyTransform | undefined {
   if (kind !== "json" && kind !== "text") return undefined;
-  return getJsonResponseTransform(
-    ctx,
-    op,
-    response,
-    kind === "json",
-    kind === "text" ? "text" : "value",
-  );
+  return getResponseWireTransform(ctx, op, response, kind === "text" ? "text" : "value");
 }
 
-function getJsonResponseTransform(
+function getResponseWireTransform(
   ctx: EmitterCtx,
   op: HttpOperation,
   response: SuccessResponseVariant,
-  checkAmbiguousUnion: boolean,
   encodingContext: "value" | "text",
 ): ResponseBodyTransform | undefined {
   const body = response.body;
   const serializationType = response.serializationType;
   if (!body || body.bodyKind !== "single" || !serializationType) return undefined;
 
-  const reason = checkAmbiguousUnion
-    ? unsupportedJsonWireTransformReason(
-        ctx,
-        serializationType,
-        response.projection,
-        new Set(),
-        body.property,
-      )
-    : undefined;
+  const reason = unsupportedJsonWireTransformReason(
+    ctx,
+    serializationType,
+    response.projection,
+    new Set(),
+    body.property,
+  );
   if (reason) {
-    $lib.reportDiagnostic(ctx.program, {
-      code: "unsupported-json-serialization",
-      format: { operation: op.operation.name, reason },
-      target: body.property ?? op.operation,
-    });
+    if (encodingContext === "text") {
+      reportUnsupportedResponseBody(ctx, op, response, reason);
+    } else {
+      $lib.reportDiagnostic(ctx.program, {
+        code: "unsupported-json-serialization",
+        format: { operation: op.operation.name, reason },
+        target: body.property ?? op.operation,
+      });
+    }
     return undefined;
   }
 
@@ -762,7 +757,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           : body?.contentTypes.length
             ? body.contentTypes
             : [undefined];
-      const headers = collectResponseHeadersFromContent(ctx, content);
+      const headers = collectResponseHeadersFromContent(ctx, op, content);
       const metadataProperties = content.properties.filter(
         (prop) =>
           prop.kind === "header" ||
@@ -1055,6 +1050,7 @@ function getResponseBodyProperty(
 
 function collectResponseHeadersFromContent(
   ctx: EmitterCtx,
+  op: HttpOperation,
   content: HttpOperationResponse["responses"][number] | undefined,
 ): ResponseHeader[] {
   if (!content) return [];
@@ -1064,12 +1060,35 @@ function collectResponseHeadersFromContent(
       property: property.name,
       header: getHeaderFieldName(ctx.program, property).toLowerCase(),
       explode: getHeaderFieldOptions(ctx.program, property).explode === true,
-      transform: emitResponseHeaderTransform(ctx, property),
+      transform: emitResponseHeaderTransform(ctx, op, property),
     }));
 }
 
-function emitResponseHeaderTransform(ctx: EmitterCtx, property: ModelProperty): string | undefined {
+function emitResponseHeaderTransform(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  property: ModelProperty,
+): string | undefined {
   if (!headerTypeHasScalarEncoding(ctx, property.type, property)) return undefined;
+  const reason = unsupportedJsonWireTransformReason(
+    ctx,
+    property.type,
+    undefined,
+    new Set(),
+    property,
+  );
+  if (reason) {
+    $lib.reportDiagnostic(ctx.program, {
+      code: "unsupported-response-header",
+      format: {
+        header: getHeaderFieldName(ctx.program, property).toLowerCase(),
+        operation: op.operation.name,
+        reason,
+      },
+      target: property,
+    });
+    return undefined;
+  }
   const serializer = emitJsonWireSerializer(ctx, property.type, undefined, property, "header");
   if (!serializer) return undefined;
   const type = typeToTs(ctx, property.type);
@@ -1093,9 +1112,7 @@ function headerTypeHasScalarEncoding(ctx: EmitterCtx, type: Type, target?: Model
       const variants = [...type.variants.values()].filter(
         (variant) => variant.type.kind !== "Intrinsic" || variant.type.name !== "null",
       );
-      return variants.length === 1
-        ? headerTypeHasScalarEncoding(ctx, variants[0]!.type, target)
-        : false;
+      return variants.some((variant) => headerTypeHasScalarEncoding(ctx, variant.type, target));
     }
     default:
       return false;

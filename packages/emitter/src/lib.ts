@@ -72,6 +72,12 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`JSON response for operation "${"operation"}" cannot be serialized safely: ${"reason"}.`,
       },
     },
+    "unsupported-response-header": {
+      severity: "error",
+      messages: {
+        default: paramMessage`HTTP response header "${"header"}" for operation "${"operation"}" cannot be serialized safely: ${"reason"}.`,
+      },
+    },
     "unsupported-scalar-encoding": {
       severity: "error",
       messages: {

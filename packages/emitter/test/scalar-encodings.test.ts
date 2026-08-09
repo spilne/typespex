@@ -267,7 +267,7 @@ describe("TypeSpec scalar encodings", () => {
     expect(await textBytes.text()).toBe("/w==");
   });
 
-  test("rejects custom and binary-incompatible scalar encodings before emission", () => {
+  test("rejects unsupported and ambiguous scalar encoding contracts before emission", () => {
     const custom = compileFixtureExpectingDiagnostics(
       "scalar-encoding-custom",
       `
@@ -301,5 +301,31 @@ describe("TypeSpec scalar encodings", () => {
     expect(binaryDiagnostics).toContain("unsupported-request-body");
     expect(binaryDiagnostics).toContain("binary bodies cannot apply scalar encoding");
     expect(binary.listFiles("binary-encoding-api")).toEqual([]);
+
+    const ambiguous = compileFixtureExpectingDiagnostics(
+      "scalar-encoding-ambiguous-response",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+      @service namespace AmbiguousEncodingApi {
+        @encode("rfc7231") scalar HttpDate extends utcDateTime;
+        union TextValue { date: HttpDate, raw: string }
+        model HeaderResponse {
+          @header("x-value") value: TextValue;
+          @body body: string;
+        }
+        @route("/text") @get op text(): {
+          @header contentType: "text/plain";
+          @body body: TextValue;
+        };
+        @route("/header") @get op header(): HeaderResponse;
+      }
+    `,
+    );
+    const ambiguousDiagnostics = `${ambiguous.diagnostics.stdout}\n${ambiguous.diagnostics.stderr}`;
+    expect(ambiguousDiagnostics).toContain("unsupported-response-body");
+    expect(ambiguousDiagnostics).toContain("unsupported-response-header");
+    expect(ambiguousDiagnostics).toContain("multiple wire-transforming variants");
+    expect(ambiguous.listFiles("ambiguous-encoding-api")).toEqual([]);
   });
 });
