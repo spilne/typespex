@@ -1,42 +1,42 @@
 import { Hono } from "hono";
+import { benchmarkServerPort, createPetFixture } from "./fixture.js";
 
 const app = new Hono();
-const pets = new Map<string, { id: string; name: string; tag?: string }>();
+const pets = createPetFixture();
 
-app.get("/pets", (c) => {
-  const all = [...pets.values()];
-  const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : undefined;
-  const offset = c.req.query("offset") ? parseInt(c.req.query("offset")!, 10) : undefined;
-  const start = offset ?? 0;
-  const end = limit ? start + limit : undefined;
-  return c.json(all.slice(start, end));
+app.get("/pets", (context) => {
+  const limit = context.req.query("limit")
+    ? Number.parseInt(context.req.query("limit")!, 10)
+    : undefined;
+  const offset = context.req.query("offset")
+    ? Number.parseInt(context.req.query("offset")!, 10)
+    : undefined;
+  return context.json(pets.list(limit, offset));
 });
 
-app.post("/pets", async (c) => {
-  const body = await c.req.json<{ name: string; tag?: string }>();
-  const pet = { id: crypto.randomUUID(), ...body };
-  pets.set(pet.id, pet);
-  return c.json(pet);
+app.post("/pets", async (context) => {
+  const input = await context.req.json<{ name: string; tag?: string }>();
+  return context.json(pets.create(input));
 });
 
-app.get("/pets/:petId", (c) => {
-  const petId = c.req.param("petId");
-  const pet = pets.get(petId);
-  if (!pet) return c.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
-  return c.json(pet);
+app.get("/pets/:petId", (context) => {
+  const petId = context.req.param("petId");
+  const pet = pets.read(petId);
+  if (!pet) return context.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
+  return context.json(pet);
 });
 
-app.delete("/pets/:petId", (c) => {
-  const petId = c.req.param("petId");
-  const pet = pets.get(petId);
-  if (!pet) return c.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
+app.delete("/pets/:petId", (context) => {
+  const petId = context.req.param("petId");
+  const pet = pets.read(petId);
+  if (!pet) return context.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
   pets.delete(petId);
-  return c.body(null, 204);
+  return context.body(null, 204);
 });
 
 const server = Bun.serve({
-  port: 3458,
-  fetch: (req) => app.fetch(req),
+  port: benchmarkServerPort(3458),
+  fetch: (request) => app.fetch(request),
 });
 
-console.log(`Hono server running on http://localhost:${server.port}`);
+console.log(`Hono benchmark server running on http://127.0.0.1:${server.port}`);

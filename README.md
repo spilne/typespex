@@ -541,6 +541,62 @@ bun run check:generated
 `check:generated` regenerates into a temporary directory and fails when the committed example is
 stale.
 
+## Benchmarks
+
+Run benchmarks from an idle machine with the locked Bun version. The public commands build the
+current workspace first, so ignored or stale `dist/` files cannot silently supply the code under
+test:
+
+```sh
+bun run bench:http
+bun run bench:matchers
+```
+
+The HTTP benchmark uses Autocannon against Bare Bun, Hono, Hono with Zod validation, and TypeSpex.
+Every timed cell gets a fresh server process and the same bounded, deterministic pet fixture. The
+timed scenarios cover list, successful and missing read, and create. DELETE remains bound in every
+server so their route tables stay equivalent, but it is not load-tested because repeated deletion
+would change response semantics. Each cell has an untimed preflight, a discarded warmup, a timed
+measurement, and an untimed postflight. The run fails on a wrong status or body, any transport
+error, timeout, body mismatch, or pipeline reset. Scenario and server order rotate deterministically
+between trials. The summary reports the median, median absolute deviation, observed range, and a
+trial-paired throughput ratio to Bare Bun. Autocannon's latency percentiles use whole-millisecond
+buckets, so `0 ms` means the request landed in its sub-millisecond bucket rather than literally
+taking no time.
+
+The defaults are five trials, a 2-second warmup and 10-second measurement per cell, 50 connections,
+and HTTP pipelining of one. A complete run takes about 16 minutes plus build and startup time. These
+environment variables tune it:
+
+| Variable                      | Default            | Meaning                                           |
+| ----------------------------- | ------------------ | ------------------------------------------------- |
+| `TYPESPEX_BENCH_TRIALS`       | `5`                | Independent measurements per cell                 |
+| `TYPESPEX_BENCH_WARMUP`       | `2`                | Discarded warmup seconds                          |
+| `TYPESPEX_BENCH_DURATION`     | `10`               | Timed seconds                                     |
+| `TYPESPEX_BENCH_CONNECTIONS`  | `50`               | Concurrent clients                                |
+| `TYPESPEX_BENCH_PIPELINING`   | `1`                | HTTP/1 requests in flight per connection          |
+| `TYPESPEX_BENCH_TIMEOUT`      | `10`               | Per-request timeout seconds                       |
+| `TYPESPEX_BENCH_OVERALL_RATE` | unset              | Optional fixed aggregate arrival rate             |
+| `TYPESPEX_BENCH_SEED`         | `typespex-http-v1` | Reproducible base ordering                        |
+| `TYPESPEX_BENCH_OUTPUT`       | timestamped file   | Artifact path; relative paths use repository root |
+
+Without `TYPESPEX_BENCH_OVERALL_RATE`, the HTTP run is a closed-loop saturation benchmark: it is
+useful for maximum throughput comparisons, but its tail latency does not represent an external
+fixed request arrival rate. Set an overall rate below saturation when evaluating latency at a
+specific load.
+
+The matcher benchmark uses Tinybench with Bun's nanosecond clock and timer-overhead correction. It
+validates both matchers before timing, batches lookups to stay above timer resolution, alternates
+task order, repeats independent rounds, and covers route tables with 16, 64, 256, and 1024 entries.
+It measures steady-state lookup work; matcher construction is deliberately outside the timed task.
+Its main controls are `TYPESPEX_MATCHER_ROUNDS` (default `7`), `TYPESPEX_MATCHER_TIME` (default
+`500` ms), `TYPESPEX_MATCHER_WARMUP` (default `250` ms), `TYPESPEX_MATCHER_BATCH` (default `256`),
+and `TYPESPEX_MATCHER_ROUTE_SIZES` (a comma-separated list).
+
+Both commands save machine metadata, commit and dirty-worktree state, settings, order, and every
+trial or round under `.context/bench-results/`. Compare results only on the same machine and power
+profile. One-trial or shortened runs are smoke tests, not evidence for a performance claim.
+
 ## Contributing
 
 Install the locked workspace dependencies:

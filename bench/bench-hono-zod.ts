@@ -1,6 +1,7 @@
-import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { Hono } from "hono";
 import { z } from "zod/v4";
+import { benchmarkServerPort, createPetFixture } from "./fixture.js";
 
 const createPetSchema = z.object({
   name: z
@@ -17,41 +18,35 @@ const listQuerySchema = z.object({
 });
 
 const app = new Hono();
-const pets = new Map<string, { id: string; name: string; tag?: string }>();
+const pets = createPetFixture();
 
-app.get("/pets", zValidator("query", listQuerySchema), (c) => {
-  const { limit, offset } = c.req.valid("query");
-  const all = [...pets.values()];
-  const start = offset ?? 0;
-  const end = limit ? start + limit : undefined;
-  return c.json(all.slice(start, end));
+app.get("/pets", zValidator("query", listQuerySchema), (context) => {
+  const { limit, offset } = context.req.valid("query");
+  return context.json(pets.list(limit, offset));
 });
 
-app.post("/pets", zValidator("json", createPetSchema), async (c) => {
-  const body = c.req.valid("json");
-  const pet = { id: crypto.randomUUID(), ...body };
-  pets.set(pet.id, pet);
-  return c.json(pet);
+app.post("/pets", zValidator("json", createPetSchema), (context) => {
+  return context.json(pets.create(context.req.valid("json")));
 });
 
-app.get("/pets/:petId", (c) => {
-  const petId = c.req.param("petId");
-  const pet = pets.get(petId);
-  if (!pet) return c.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
-  return c.json(pet);
+app.get("/pets/:petId", (context) => {
+  const petId = context.req.param("petId");
+  const pet = pets.read(petId);
+  if (!pet) return context.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
+  return context.json(pet);
 });
 
-app.delete("/pets/:petId", (c) => {
-  const petId = c.req.param("petId");
-  const pet = pets.get(petId);
-  if (!pet) return c.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
+app.delete("/pets/:petId", (context) => {
+  const petId = context.req.param("petId");
+  const pet = pets.read(petId);
+  if (!pet) return context.json({ code: "NOT_FOUND", message: `Pet ${petId} not found` }, 404);
   pets.delete(petId);
-  return c.body(null, 204);
+  return context.body(null, 204);
 });
 
 const server = Bun.serve({
-  port: 3459,
-  fetch: (req) => app.fetch(req),
+  port: benchmarkServerPort(3459),
+  fetch: (request) => app.fetch(request),
 });
 
-console.log(`Hono+Zod server running on http://localhost:${server.port}`);
+console.log(`Hono+Zod benchmark server running on http://127.0.0.1:${server.port}`);

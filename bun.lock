@@ -22,6 +22,7 @@
       "devDependencies": {
         "@types/autocannon": "^7.12.0",
         "bun-types": "1.3.14",
+        "tinybench": "6.1.2",
         "typescript": "^5.7.0",
       },
     },
@@ -529,6 +530,8 @@
     "temporal-utils": ["temporal-utils@1.0.1", "", {}, "sha512-HAixuesxFQIUaQk3ptX2jhfO/FsOkgVkDDMawvp6n/fkB1q6BKfs3lURw9I+pK/2e2e/q/vrLrxmeqauBoyGMQ=="],
 
     "timestring": ["timestring@6.0.0", "", {}, "sha512-wMctrWD2HZZLuIlchlkE2dfXJh7J2KDI9Dwl+2abPYg0mswQHfOAyQW3jJg1pY5VfttSINZuKcXoB3FGypVklA=="],
+
+    "tinybench": ["tinybench@6.1.2", "", {}, "sha512-REdMxUreK3VSUeWcLd5+ijUGNKFyHT8s1trKmYEE/tlYE6ggdOkFOlKba/vI/l1fIqh/NTEEr1Cyw4AwttOicA=="],
 
     "tinypool": ["tinypool@2.1.0", "", {}, "sha512-Pugqs6M0m7Lv1I7FtxN4aoyToKg1C4tu+/381vH35y8oENM/Ai7f7C4StcoK4/+BSw9ebcS8jRiVrORFKCALLw=="],
 
