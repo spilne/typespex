@@ -393,9 +393,16 @@ function emitBodyDecoderEntry(
   plan?: RequestBodyInputPlan,
 ): InputDecoderEntry {
   const lines: string[] = [];
+  const overloadsByKind = indexOverloadBodiesByMediaKind(ctx, op);
   lines.push(`  ${tsObjectKey(name)}: {`);
   for (const kind of emission.decoderKinds) {
-    const decoderExpr = emitOverloadAwareBodyDecoderExpression(ctx, dec, op, kind);
+    const decoderExpr = emitOverloadAwareBodyDecoderExpression(
+      ctx,
+      dec,
+      op,
+      kind,
+      overloadsByKind.get(kind) ?? [],
+    );
     const expr =
       plan?.placement === "wrapped"
         ? `${decoderExpr}.map((body) => ({ ${emitObjectAssignment(plan.propertyName, "body")} }))`
@@ -406,17 +413,29 @@ function emitBodyDecoderEntry(
   return { lines };
 }
 
+function indexOverloadBodiesByMediaKind(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+): ReadonlyMap<BodyMediaKind, readonly HttpOperation[]> {
+  const indexed = new Map<BodyMediaKind, HttpOperation[]>();
+  for (const overload of getSameEndpointOverloads(op)) {
+    if (!overload.parameters.body) continue;
+    for (const kind of analyzeBody(ctx, overload).decoderKinds) {
+      const operations = indexed.get(kind) ?? [];
+      operations.push(overload);
+      indexed.set(kind, operations);
+    }
+  }
+  return indexed;
+}
+
 function emitOverloadAwareBodyDecoderExpression(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
   op: HttpOperation,
   kind: BodyMediaKind,
+  overloads: readonly HttpOperation[],
 ): string {
-  const overloads = getSameEndpointOverloads(op).filter(
-    (overload) =>
-      overload.parameters.body !== undefined &&
-      analyzeBody(ctx, overload).decoderKinds.includes(kind),
-  );
   if (overloads.length === 0) return emitBodyDecoderExpression(ctx, dec, op, kind);
 
   const expressions = [
