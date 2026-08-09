@@ -241,6 +241,43 @@ describe("ResponseEncoders", () => {
     expect(body).not.toHaveProperty("requestId");
   });
 
+  test("jsonWithHeaders transforms the resolved body without changing headers", async () => {
+    const encoder = ResponseEncoders.jsonWithHeaders<{
+      requestId: string;
+      displayName: string;
+    }>(200, [["requestId", "x-request-id"]], (body) => {
+      const source = body as { displayName: string };
+      return { display_name: source.displayName };
+    });
+
+    const response = encoder.encode({ requestId: "r-1", displayName: "Milo" });
+
+    expect(response.headers.get("x-request-id")).toBe("r-1");
+    expect(await response.json()).toEqual({ display_name: "Milo" });
+  });
+
+  test("variant transforms only the resolved JSON body", async () => {
+    const encoder = ResponseEncoders.variant<{
+      requestId: string;
+      body: { displayName: string };
+    }>({
+      status: 200,
+      headers: [["requestId", "x-request-id"]],
+      body: "body",
+      transformBody: (body) => ({
+        display_name: (body as { displayName: string }).displayName,
+      }),
+    });
+
+    const response = encoder.encode({
+      requestId: "r-1",
+      body: { displayName: "Milo" },
+    });
+
+    expect(response.headers.get("x-request-id")).toBe("r-1");
+    expect(await response.json()).toEqual({ display_name: "Milo" });
+  });
+
   test("jsonWithHeaders skips undefined header values", async () => {
     const encoder = ResponseEncoders.jsonWithHeaders<{
       etag?: string;

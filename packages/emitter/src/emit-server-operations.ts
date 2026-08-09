@@ -1,6 +1,7 @@
 import type { EmitterCtx } from "./ctx.js";
 import type { HttpOperation } from "@typespec/http";
 import { emitResultResponseEncoder } from "./emit-server-common.js";
+import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
 import {
   type InputDecoderEntry,
   type DecoderEmission,
@@ -13,6 +14,19 @@ import type { RoutePattern } from "./uri-template.js";
 
 export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
   const emission = buildServerEmission(ctx, httpOperations);
+  const responseEncoders = new Map<HttpOperation, string>();
+  for (const group of emission.groups) {
+    for (const operation of group.operations) {
+      responseEncoders.set(
+        operation.httpOperation,
+        emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType),
+      );
+    }
+  }
+  const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
+  const usesJsonSerializers =
+    jsonSerializerDeclarations.length > 0 ||
+    [...responseEncoders.values()].some((encoder) => encoder.includes("JsonSerializers."));
   const lines: string[] = [];
 
   // --- Header ---
@@ -20,12 +34,15 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   lines.push("");
 
   // --- Imports (multi-line) ---
-  lines.push('import type { Decoder, ServerOperation } from "@typespex/runtime/server";');
+  const runtimeTypes = ["Decoder", "ServerOperation"];
+  if (jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
+  lines.push(`import type { ${runtimeTypes.join(", ")} } from "@typespex/runtime/server";`);
   lines.push("import {");
   lines.push("  Either,");
   lines.push("  createHints,");
   lines.push("  emptyHints,");
   lines.push("  ResponseEncoders,");
+  if (usesJsonSerializers) lines.push("  JsonSerializers,");
   for (const name of getServerInputDecoderImports()) {
     lines.push(`  ${name},`);
   }
@@ -39,6 +56,10 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   lines.push("");
   if (emission.payloadTypeAliases.length > 0) {
     lines.push(...emission.payloadTypeAliases);
+    lines.push("");
+  }
+  if (jsonSerializerDeclarations.length > 0) {
+    lines.push(...jsonSerializerDeclarations);
     lines.push("");
   }
 
@@ -83,7 +104,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
       lines.push(
-        `  ${tsObjectKey(operation.propertyName)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`,
+        `  ${tsObjectKey(operation.propertyName)}: ${responseEncoders.get(operation.httpOperation)!},`,
       );
     }
     lines.push("};");

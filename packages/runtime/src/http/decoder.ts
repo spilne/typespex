@@ -97,6 +97,13 @@ type ObjectDecoderFields<A extends object> = {
 
 export interface ObjectDecoderOptions<AdditionalProperty = unknown> {
   /**
+   * Maps handler-facing property names to their encoded wire names.
+   *
+   * Decoding reads and reports paths using the wire name, then stores the
+   * decoded value under the handler-facing field name.
+   */
+  readonly wireNames?: Readonly<Record<string, string>>;
+  /**
    * Accept undeclared fields without preserving them in the decoded result.
    *
    * Ignored when `additionalProperties` is provided, because those fields are
@@ -417,10 +424,26 @@ function objectDecoder<A extends object>(
   fields: ObjectDecoderFields<A>,
   options?: ObjectDecoderOptions<ObjectAdditionalProperty<A>>,
 ): Decoder<A> {
+  const wireNames = options?.wireNames ?? {};
   const fieldEntries = Object.entries(fields).map(
-    ([name, decoder]) => [name, decoder as Decoder<unknown>] as const,
+    ([name, decoder]) =>
+      [
+        name,
+        Object.prototype.hasOwnProperty.call(wireNames, name) ? wireNames[name]! : name,
+        decoder as Decoder<unknown>,
+      ] as const,
   );
-  const declaredProperties = new Set(fieldEntries.map(([name]) => name));
+  const declaredProperties = new Set(fieldEntries.map(([, wireName]) => wireName));
+  if (declaredProperties.size !== fieldEntries.length) {
+    throw new TypeError("Object decoder fields must have unique wire names.");
+  }
+  for (const name of Object.keys(wireNames)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, name)) {
+      throw new TypeError(
+        `Object decoder wire name references unknown field ${JSON.stringify(name)}.`,
+      );
+    }
+  }
   const allowUnknown = options?.allowUnknown ?? false;
   const additionalProperties = options?.additionalProperties;
   const forbiddenProperties = new Set(options?.forbiddenProperties);
@@ -432,15 +455,15 @@ function objectDecoder<A extends object>(
     const result: Record<string, unknown> = {};
     let issues: ValidationIssue[] | null = null;
 
-    for (const [fieldName, decoder] of fieldEntries) {
-      const inputValue = Object.prototype.hasOwnProperty.call(object.right, fieldName)
-        ? object.right[fieldName]
+    for (const [fieldName, wireName, decoder] of fieldEntries) {
+      const inputValue = Object.prototype.hasOwnProperty.call(object.right, wireName)
+        ? object.right[wireName]
         : undefined;
       const decoded = decoder.decode(inputValue);
       if (isLeft(decoded)) {
         for (const issue of decoded.left) {
           (issues ??= []).push({
-            path: `.${fieldName}${issue.path}`,
+            path: `.${wireName}${issue.path}`,
             message: issue.message,
           });
         }

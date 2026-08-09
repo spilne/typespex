@@ -28,15 +28,6 @@ model Event {
 }
 `;
 
-const encodedNameSpec = `${header("EncodedNameApi")}
-model User {
-  @encodedName("application/json", "user_name") userName: string;
-}
-@route("/users") interface Users {
-  @post create(@body body: User): User;
-}
-`;
-
 const discriminatedSpec = `${header("DiscriminatedApi")}
 model Cat { meows: boolean; }
 model Dog { barks: boolean; }
@@ -116,14 +107,6 @@ using TypeSpec.Http;
 describe("unsupported decorator diagnostics", () => {
   for (const [decorator, fixture, source, diagnosticCode, target, serviceDir] of [
     ["@encode", "diag-encode", encodeSpec, "ignored-encode", "createdAt", "encode-api"],
-    [
-      "@encodedName",
-      "diag-encoded-name",
-      encodedNameSpec,
-      "ignored-encoded-name",
-      "userName",
-      "encoded-name-api",
-    ],
     [
       "@discriminated",
       "diag-discriminated",

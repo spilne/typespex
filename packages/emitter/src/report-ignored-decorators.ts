@@ -1,6 +1,5 @@
 import type { Model, ModelProperty, Scalar, Type, Union } from "@typespec/compiler";
 import {
-  $encodedName,
   getDiscriminatedUnion,
   getEncode,
   isArrayModelType,
@@ -9,11 +8,7 @@ import {
 } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
 import { getAuthenticationForOperation } from "@typespec/http";
-import {
-  getBodyMediaKinds,
-  normalizeMediaType,
-  type BodyMediaKind,
-} from "./body-media-kinds.js";
+import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { propertiesShareSource } from "./http-models.js";
 import { $lib } from "./lib.js";
@@ -24,6 +19,7 @@ import {
 } from "./model-indexer.js";
 import {
   getRequestBodyProjection,
+  payloadItemProjection,
   payloadModelProperties,
   type PayloadProjection,
 } from "./payload-context.js";
@@ -212,6 +208,9 @@ function checkRequestBody(
   const projection = getRequestBodyProjection(ctx, traversal.operation);
   for (const contentType of contentTypes) {
     for (const kind of getBodyMediaKinds([contentType])) {
+      if (kind === "form") {
+        reportUnsupportedEncodedNames(ctx, reported, body.type, contentType, projection, new Set());
+      }
       const reason = unsupportedBodyKindReason(ctx, body.type, kind, projection);
       if (reason) {
         reportUnsupportedBody(ctx, traversal.operation, contentType, reason);
@@ -480,19 +479,6 @@ function checkProperty(
   }
 
   if (
-    !reported.encodedNames.has(property) &&
-    (property.decorators.some((decorator) => decorator.decorator === $encodedName) ||
-      resolveEncodedName(ctx.program, property, "application/json") !== property.name)
-  ) {
-    reported.encodedNames.add(property);
-    $lib.reportDiagnostic(ctx.program, {
-      code: "ignored-encoded-name",
-      format: { name: property.name },
-      target: property,
-    });
-  }
-
-  if (
     !reported.visibility.has(property) &&
     property.decorators.some((decorator) =>
       VISIBILITY_DECORATOR_NAMES.has(decorator.definition?.name ?? ""),
@@ -504,6 +490,91 @@ function checkProperty(
       format: { name: property.name },
       target: property,
     });
+  }
+}
+
+function reportUnsupportedEncodedNames(
+  ctx: EmitterCtx,
+  reported: ServiceDecoratorReports,
+  type: Type,
+  contentType: string,
+  projection: PayloadProjection | undefined,
+  seen: Set<Type>,
+): void {
+  if (seen.has(type)) return;
+  seen.add(type);
+
+  switch (type.kind) {
+    case "Model": {
+      if (isArrayModelType(ctx.program, type)) {
+        if (type.indexer) {
+          reportUnsupportedEncodedNames(
+            ctx,
+            reported,
+            type.indexer.value,
+            contentType,
+            projection,
+            seen,
+          );
+        }
+        return;
+      }
+      const additional = getAdditionalPropertiesValue(type);
+      if (isPureRecordModel(type)) {
+        if (additional) {
+          reportUnsupportedEncodedNames(ctx, reported, additional, contentType, projection, seen);
+        }
+        return;
+      }
+      for (const property of payloadModelProperties(type, projection)) {
+        if (
+          resolveEncodedName(ctx.program, property, contentType) !== property.name &&
+          !reported.encodedNames.has(property)
+        ) {
+          reported.encodedNames.add(property);
+          $lib.reportDiagnostic(ctx.program, {
+            code: "ignored-encoded-name",
+            format: { name: property.name },
+            target: property,
+          });
+        }
+        reportUnsupportedEncodedNames(ctx, reported, property.type, contentType, projection, seen);
+      }
+      if (additional && !isNeverAdditionalProperties(type)) {
+        reportUnsupportedEncodedNames(
+          ctx,
+          reported,
+          additional,
+          contentType,
+          payloadItemProjection(projection),
+          seen,
+        );
+      }
+      return;
+    }
+    case "Union":
+      for (const variant of type.variants.values()) {
+        reportUnsupportedEncodedNames(ctx, reported, variant.type, contentType, projection, seen);
+      }
+      return;
+    case "Tuple":
+      for (const value of type.values) {
+        reportUnsupportedEncodedNames(
+          ctx,
+          reported,
+          value,
+          contentType,
+          payloadItemProjection(projection),
+          seen,
+        );
+      }
+      return;
+    case "ModelProperty":
+    case "UnionVariant":
+      reportUnsupportedEncodedNames(ctx, reported, type.type, contentType, projection, seen);
+      return;
+    default:
+      return;
   }
 }
 

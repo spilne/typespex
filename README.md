@@ -281,6 +281,13 @@ rejects undeclared properties. TypeScript requires declared fields to be assigna
 index signature, so a mixed model's generated index value is widened with its declared field types
 when necessary; runtime validation still applies `T` to undeclared fields.
 
+JSON payloads honor `@encodedName("application/json", ...)` recursively. Generated request
+decoders read the encoded wire key but expose the original TypeSpec property name to handlers;
+response serializers perform the inverse mapping. The transform applies through nested models,
+arrays, records, optional properties, nullable properties, and recursive models, including
+structured `+json` media types. Request validation paths use wire names. A malformed handler
+result raises a path-aware `JsonSerializationError` before an invalid JSON body is returned.
+
 A TypeSpec HTTP `File` used as a raw body or multipart part is represented by the Web `File`
 type. Its `type`, `name`, and blob contents carry the media type, filename, and bytes. A missing
 `Content-Type` is accepted when the file's `contentType` property is optional, while a supplied
@@ -346,11 +353,12 @@ configured.
 ## Current Contract Boundaries
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
-diagnostics cover unsupported `@encode`, `@encodedName`, visibility decorators, `@discriminated`
-union envelopes, and standard `@useAuth` metadata. They also reject parameter serialization
-styles, media/body shape combinations, and output layouts that the generated runtime cannot
-represent safely. Authentication and authorization enforcement should currently be implemented
-in application middleware. Supported response bodies are JSON, `text/*`,
+diagnostics cover unsupported `@encode`, non-JSON encoded property names, visibility decorators,
+`@discriminated` union envelopes, and standard `@useAuth` metadata. They also reject ambiguous
+nested response unions that require different JSON transforms, parameter serialization styles,
+media/body shape combinations, and output layouts that the generated runtime cannot represent
+safely. Authentication and authorization enforcement should currently be implemented in
+application middleware. Supported response bodies are JSON, `text/*`,
 `application/octet-stream`, resolved raw `File` media types, and empty responses. Multipart
 response bodies remain unsupported.
 

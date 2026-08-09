@@ -66,6 +66,12 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`HTTP response body for operation "${"operationName"}" cannot be encoded as "${"contentType"}": ${"reason"}.`,
       },
     },
+    "unsupported-json-serialization": {
+      severity: "error",
+      messages: {
+        default: paramMessage`JSON response for operation "${"operation"}" cannot be serialized safely: ${"reason"}.`,
+      },
+    },
     "ignored-encode": {
       severity: "error",
       messages: {
