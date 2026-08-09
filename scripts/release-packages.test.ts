@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   RELEASE_PACKAGES,
+  RELEASE_PREFLIGHT_COMMANDS,
   assertTagMatches,
   parseArguments,
   validatePackedManifest,
@@ -37,6 +38,22 @@ describe("release package validation", () => {
       "@typespex/shim-hono",
       "@typespex/shim-node",
       "@typespex/shim-express",
+    ]);
+  });
+
+  test("keeps release preflight aligned with the required quality gates", () => {
+    expect(RELEASE_PREFLIGHT_COMMANDS).toEqual([
+      { command: "bun", args: ["run", "clean"] },
+      { command: "bun", args: ["run", "format:check"] },
+      { command: "bun", args: ["run", "audit:dependencies"] },
+      { command: "bun", args: ["run", "build"] },
+      { command: "bun", args: ["run", "typecheck"] },
+      { command: "bun", args: ["run", "check:generated"] },
+      { command: "bun", args: ["run", "check:conformance"] },
+      { command: "bun", args: ["run", "test"] },
+      { command: "bun", args: ["run", "test:coverage"] },
+      { command: "node", args: ["./packages/shim-node/test/node-smoke.mjs"] },
+      { command: "node", args: ["./packages/shim-express/test/express-smoke.mjs"] },
     ]);
   });
 

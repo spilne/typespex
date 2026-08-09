@@ -90,6 +90,25 @@ export interface CliOptions {
   readonly outputDirectory?: string;
 }
 
+export interface ReleaseCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export const RELEASE_PREFLIGHT_COMMANDS: readonly ReleaseCommand[] = [
+  { command: "bun", args: ["run", "clean"] },
+  { command: "bun", args: ["run", "format:check"] },
+  { command: "bun", args: ["run", "audit:dependencies"] },
+  { command: "bun", args: ["run", "build"] },
+  { command: "bun", args: ["run", "typecheck"] },
+  { command: "bun", args: ["run", "check:generated"] },
+  { command: "bun", args: ["run", "check:conformance"] },
+  { command: "bun", args: ["run", "test"] },
+  { command: "bun", args: ["run", "test:coverage"] },
+  { command: "node", args: ["./packages/shim-node/test/node-smoke.mjs"] },
+  { command: "node", args: ["./packages/shim-express/test/express-smoke.mjs"] },
+] as const;
+
 class ReleaseError extends Error {}
 
 export function assertTagMatches(
@@ -392,12 +411,9 @@ function verifySourceManifests(packages: readonly LoadedPackage[]): void {
 
 function runQualityGates(): void {
   console.log("\nRunning release quality gates...");
-  runCommand("bun", ["run", "clean"]);
-  runCommand("bun", ["run", "build"]);
-  runCommand("bun", ["run", "typecheck"]);
-  runCommand("bun", ["run", "check:generated"]);
-  runCommand("bun", ["test"]);
-  runCommand("node", ["./packages/shim-node/test/node-smoke.mjs"]);
+  for (const command of RELEASE_PREFLIGHT_COMMANDS) {
+    runCommand(command.command, command.args);
+  }
 }
 
 function createOutputDirectory(requested?: string): {
