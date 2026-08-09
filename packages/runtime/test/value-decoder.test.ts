@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type Decoder,
   Decoders,
   Either,
   UnsupportedMediaTypeError,
@@ -532,6 +533,19 @@ describe("http decoder - combinators", () => {
     expect(nullable.decode(null)).toEqual(Either.right(null));
     expect(nullable.decode("null")).toEqual(Either.right(null));
     expect(nullable.decode("2")).toEqual(Either.right(2));
+  });
+
+  test("Decoders.union infers the union of member outputs", () => {
+    const literalUnion: Decoder<"active" | "archived"> = Decoders.union([
+      Decoders.literal("active"),
+      Decoders.literal("archived"),
+    ]);
+    const mixedUnion: Decoder<string | number> = Decoders.union([Decoders.string, Decoders.number]);
+
+    expect(literalUnion.decode("active")).toEqual(Either.right("active"));
+    expect(literalUnion.decode("missing")._tag).toBe("Left");
+    expect(mixedUnion.decode("value")).toEqual(Either.right("value"));
+    expect(mixedUnion.decode(42)).toEqual(Either.right(42));
   });
 
   test("Decoders.lazy resolves once and delegates decoding", () => {
