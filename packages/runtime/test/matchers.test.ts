@@ -48,6 +48,87 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(m!.pathParams).toEqual({ userId: "u-1", postId: "p-2", tagId: "t-3" });
     });
 
+    test("embedded suffix parameters preserve their exact names and raw values", () => {
+      const embedded = create([
+        {
+          method: "GET",
+          path: "/files/{id}.json",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "files" }],
+              [
+                { kind: "parameter", name: "id" },
+                { kind: "literal", value: ".json" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "file",
+        },
+      ]);
+
+      expect(embedded.match("GET", "/files/example.json")!.pathParams).toEqual({
+        id: "example",
+      });
+      expect(embedded.match("GET", "/files/a%2Fb%20c.json")!.pathParams).toEqual({
+        id: "a%2Fb%20c",
+      });
+      expect(embedded.match("GET", "/files/.json")!.pathParams).toEqual({ id: "" });
+      expect(embedded.match("GET", "/files/example.txt")).toBeNull();
+    });
+
+    test("supports literal prefixes and multiple embedded variables", () => {
+      const embedded = create([
+        {
+          method: "GET",
+          path: "/releases/v{version}",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "releases" }],
+              [
+                { kind: "literal", value: "v" },
+                { kind: "parameter", name: "version" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "release",
+        },
+        {
+          method: "GET",
+          path: "/coordinates/{x,y}",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "coordinates" }],
+              [
+                { kind: "parameter", name: "x" },
+                { kind: "literal", value: "," },
+                { kind: "parameter", name: "y" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "coordinates",
+        },
+      ]);
+
+      expect(embedded.match("GET", "/releases/v1.2")!.pathParams).toEqual({
+        version: "1.2",
+      });
+      expect(embedded.match("GET", "/coordinates/a%2Fb,c%20d")!.pathParams).toEqual({
+        x: "a%2Fb",
+        y: "c%20d",
+      });
+      expect(embedded.match("GET", "/coordinates/,right")!.pathParams).toEqual({
+        x: "",
+        y: "right",
+      });
+      expect(embedded.match("GET", "/coordinates/left,")!.pathParams).toEqual({
+        x: "left",
+        y: "",
+      });
+    });
+
     // --- Method isolation ---
 
     test("same path, different methods → different routes", () => {
@@ -120,6 +201,71 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(match!.pathParams).toEqual({ id: "foo" });
     });
 
+    test("orders static, mixed, and whole-parameter segments by specificity", () => {
+      const routesBySpecificity = create([
+        { method: "GET", path: "/files/:name", route: "parameter" },
+        {
+          method: "GET",
+          path: "/files/{id}.json",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "files" }],
+              [
+                { kind: "parameter", name: "id" },
+                { kind: "literal", value: ".json" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "mixed",
+        },
+        { method: "GET", path: "/files/index.json", route: "static" },
+      ]);
+
+      expect(routesBySpecificity.match("GET", "/files/index.json")!.route).toBe("static");
+      expect(routesBySpecificity.match("GET", "/files/other.json")!.route).toBe("mixed");
+      expect(routesBySpecificity.match("GET", "/files/other")!.route).toBe("parameter");
+    });
+
+    test("uses later-segment specificity across overlapping mixed branches", () => {
+      const routesBySpecificity = create([
+        {
+          method: "GET",
+          path: "/{right}b/:tail",
+          routePattern: {
+            segments: [
+              [
+                { kind: "parameter", name: "right" },
+                { kind: "literal", value: "b" },
+              ],
+              [{ kind: "parameter", name: "tail" }],
+            ],
+            trailingSlash: false,
+          },
+          route: "mixedThenParameter",
+        },
+        {
+          method: "GET",
+          path: "/a{left}/fixed",
+          routePattern: {
+            segments: [
+              [
+                { kind: "literal", value: "a" },
+                { kind: "parameter", name: "left" },
+              ],
+              [{ kind: "literal", value: "fixed" }],
+            ],
+            trailingSlash: false,
+          },
+          route: "mixedThenStatic",
+        },
+      ]);
+
+      const matched = routesBySpecificity.match("GET", "/ab/fixed");
+      expect(matched!.route).toBe("mixedThenStatic");
+      expect(matched!.pathParams).toEqual({ left: "b" });
+    });
+
     test("uses parameter names from the matched route", () => {
       const m = create([
         { method: "GET", path: "/:id/a", route: "a" },
@@ -128,6 +274,91 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
 
       expect(m.match("GET", "/first/a")!.pathParams).toEqual({ id: "first" });
       expect(m.match("GET", "/second/b")!.pathParams).toEqual({ name: "second" });
+    });
+
+    test("canonicalizes percent escapes before applying static-route precedence", () => {
+      const canonical = create([
+        { method: "GET", path: "/pets/:id", route: "parameter" },
+        { method: "GET", path: "/pets/new", route: "static" },
+        { method: "GET", path: "/café", route: "unicode" },
+        { method: "GET", path: "/reserved/:value", route: "reservedParameter" },
+        { method: "GET", path: "/reserved/%2F", route: "reservedStatic" },
+      ]);
+
+      expect(canonical.match("GET", "/pets/%6Eew")!.route).toBe("static");
+      expect(canonical.match("GET", "/pets/%6eew")!.route).toBe("static");
+      expect(canonical.match("GET", "/caf%C3%A9")!.route).toBe("unicode");
+      expect(canonical.match("GET", "/caf%c3%a9")!.route).toBe("unicode");
+      expect(canonical.match("GET", "/reserved/%2f")!.route).toBe("reservedStatic");
+      expect(canonical.match("GET", "/reserved/%252F")!.route).toBe("reservedParameter");
+      expect(canonical.match("GET", "/caf%C3%A9/")).toBeNull();
+    });
+
+    test("preserves raw captures across canonical embedded-literal boundaries", () => {
+      const canonical = create([
+        {
+          method: "GET",
+          path: "/files/pre-{id}-post",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "files" }],
+              [
+                { kind: "literal", value: "pre-" },
+                { kind: "parameter", name: "id" },
+                { kind: "literal", value: "-post" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "embedded",
+        },
+        {
+          method: "GET",
+          path: "/pairs/{left}:{right}",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "pairs" }],
+              [
+                { kind: "parameter", name: "left" },
+                { kind: "literal", value: ":" },
+                { kind: "parameter", name: "right" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "pair",
+        },
+        { method: "GET", path: "/pairs/:value", route: "pairFallback" },
+        {
+          method: "GET",
+          path: "/emoji/🐱{name}",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "emoji" }],
+              [
+                { kind: "literal", value: "🐱" },
+                { kind: "parameter", name: "name" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          route: "emoji",
+        },
+      ]);
+
+      expect(canonical.match("GET", "/files/%70re-%6Eew-%70ost")!.pathParams).toEqual({
+        id: "%6Eew",
+      });
+      expect(canonical.match("GET", "/pairs/left%3aright:tail")!.pathParams).toEqual({
+        left: "left%3aright",
+        right: "tail",
+      });
+      const reservedData = canonical.match("GET", "/pairs/left%3Aright");
+      expect(reservedData!.route).toBe("pairFallback");
+      expect(reservedData!.pathParams).toEqual({ value: "left%3Aright" });
+      expect(canonical.match("GET", "/emoji/%f0%9f%90%b1%6Eew")!.pathParams).toEqual({
+        name: "%6Eew",
+      });
     });
 
     // --- Param values with special characters ---
@@ -140,6 +371,10 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(matcher.match("GET", "/pets/hello%20world")!.pathParams).toEqual({
         petId: "hello%20world",
       });
+      expect(matcher.match("GET", "/pets/caf%C3%A9")!.pathParams).toEqual({
+        petId: "caf%C3%A9",
+      });
+      expect(matcher.match("GET", "/pets/%ZZ")!.pathParams).toEqual({ petId: "%ZZ" });
     });
 
     test("encoded slash %2F stays inside param (not a separator)", () => {
@@ -161,6 +396,39 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       const m = root.match("GET", "/");
       expect(m!.route).toBe("root");
       expect(m!.pathParams).toEqual({});
+    });
+
+    test("structured routes match root and non-root trailing slashes exactly", () => {
+      const exact = create([
+        {
+          method: "GET",
+          path: "/",
+          routePattern: { segments: [], trailingSlash: true },
+          route: "root",
+        },
+        {
+          method: "GET",
+          path: "/pets",
+          routePattern: {
+            segments: [[{ kind: "literal", value: "pets" }]],
+            trailingSlash: false,
+          },
+          route: "withoutSlash",
+        },
+        {
+          method: "GET",
+          path: "/pets/",
+          routePattern: {
+            segments: [[{ kind: "literal", value: "pets" }]],
+            trailingSlash: true,
+          },
+          route: "withSlash",
+        },
+      ]);
+
+      expect(exact.match("GET", "/")!.route).toBe("root");
+      expect(exact.match("GET", "/pets")!.route).toBe("withoutSlash");
+      expect(exact.match("GET", "/pets/")!.route).toBe("withSlash");
     });
 
     // --- Root-level catch-all param ---
@@ -214,6 +482,133 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       ).toThrow("Duplicate route: GET /pets/:id");
     });
 
+    test("rejects static routes that are equivalent after path canonicalization", () => {
+      for (const paths of [
+        ["/café", "/caf%C3%A9"],
+        ["/pets/new", "/pets/%6eew"],
+        ["/reserved/%2F", "/reserved/%2f"],
+      ]) {
+        expect(() =>
+          create([
+            { method: "GET", path: paths[0]!, route: "first" },
+            { method: "GET", path: paths[1]!, route: "second" },
+          ]),
+        ).toThrow(`Duplicate route: GET ${paths[1]}`);
+      }
+    });
+
+    test("rejects canonical-equivalent literals in structured routes", () => {
+      const suffix = (literal: string, route: string) => ({
+        method: "GET",
+        path: `/files/{id}${literal}`,
+        routePattern: {
+          segments: [
+            [{ kind: "literal" as const, value: "files" }],
+            [
+              { kind: "parameter" as const, name: "id" },
+              { kind: "literal" as const, value: literal },
+            ],
+          ],
+          trailingSlash: false,
+        },
+        route,
+      });
+
+      expect(() => create([suffix(".json", "literal"), suffix("%2Ejson", "encoded")])).toThrow(
+        "Duplicate route: GET /files/{id}%2Ejson",
+      );
+    });
+
+    test("rejects structurally duplicate embedded routes with renamed params", () => {
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/files/{first}.json",
+            routePattern: {
+              segments: [
+                [{ kind: "literal", value: "files" }],
+                [
+                  { kind: "parameter", name: "first" },
+                  { kind: "literal", value: ".json" },
+                ],
+              ],
+              trailingSlash: false,
+            },
+            route: "first",
+          },
+          {
+            method: "GET",
+            path: "/files/{second}.json",
+            routePattern: {
+              segments: [
+                [{ kind: "literal", value: "files" }],
+                [
+                  { kind: "parameter", name: "second" },
+                  { kind: "literal", value: ".json" },
+                ],
+              ],
+              trailingSlash: false,
+            },
+            route: "second",
+          },
+        ]),
+      ).toThrow("Duplicate route: GET /files/{second}.json");
+    });
+
+    test("rejects overlapping same-precedence mixed routes and allows disjoint ones", () => {
+      const suffix = (name: string, literal: string) => ({
+        segments: [
+          [
+            { kind: "parameter" as const, name },
+            { kind: "literal" as const, value: literal },
+          ],
+        ],
+        trailingSlash: false,
+      });
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/a{left}",
+            routePattern: {
+              segments: [
+                [
+                  { kind: "literal", value: "a" },
+                  { kind: "parameter", name: "left" },
+                ],
+              ],
+              trailingSlash: false,
+            },
+            route: "left",
+          },
+          {
+            method: "GET",
+            path: "/{right}b",
+            routePattern: suffix("right", "b"),
+            route: "right",
+          },
+        ]),
+      ).toThrow("Ambiguous route");
+
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/{id}.json",
+            routePattern: suffix("id", ".json"),
+            route: "json",
+          },
+          {
+            method: "GET",
+            path: "/{id}.txt",
+            routePattern: suffix("id", ".txt"),
+            route: "text",
+          },
+        ]),
+      ).not.toThrow();
+    });
+
     test("allows the same route structure for different methods", () => {
       expect(() =>
         create([
@@ -231,9 +626,56 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       }
     });
 
+    test("validates structured segment tokens and root trailing-slash semantics", () => {
+      const invalidPatterns = [
+        null,
+        { segments: [], trailingSlash: false },
+        { segments: [[]], trailingSlash: false },
+        {
+          segments: [[{ kind: "literal", value: "bad/segment" }]],
+          trailingSlash: false,
+        },
+        {
+          segments: [
+            [
+              { kind: "parameter", name: "one" },
+              { kind: "parameter", name: "two" },
+            ],
+          ],
+          trailingSlash: false,
+        },
+        {
+          segments: [
+            [
+              { kind: "parameter", name: "name" },
+              { kind: "literal", value: "." },
+              { kind: "parameter", name: "extension" },
+            ],
+          ],
+          trailingSlash: false,
+        },
+        {
+          segments: [[{ kind: "parameter", name: "same" }], [{ kind: "parameter", name: "same" }]],
+          trailingSlash: false,
+        },
+      ];
+      for (const routePattern of invalidPatterns) {
+        expect(() =>
+          create([
+            {
+              method: "GET",
+              path: "/invalid",
+              routePattern: routePattern as never,
+              route: "invalid",
+            },
+          ]),
+        ).toThrow();
+      }
+    });
+
     test("rejects duplicate parameter names in one route", () => {
       expect(() =>
-        create([{ method: "GET", path: "/teams/:id/members/:id", route: "invalid" }])
+        create([{ method: "GET", path: "/teams/:id/members/:id", route: "invalid" }]),
       ).toThrow('Duplicate path parameter "id"');
     });
 
