@@ -258,6 +258,23 @@ Generated files contain an `AUTO-GENERATED` header and should not be edited. Cha
 source or emitter, then regenerate them. The emitter also supports `flat`, `prefix`, and
 `directory` service layouts plus configurable service-folder and file-name patterns.
 
+### Reachable-only model emission
+
+By default, `models.ts` includes every named type declared under the service namespace, plus any
+external dependencies those declarations reference. Set `omit-unreachable-types: true` to emit
+only the named types reachable from the service's operation inputs and responses:
+
+```yaml
+options:
+  "@typespex/emitter":
+    omit-unreachable-types: true
+```
+
+Reachability follows nested models, enums, unions, records, arrays, scalar references, generic
+arguments, inheritance, and external namespace dependencies. Shared declarations are emitted
+once. This option is useful when a large TypeSpec namespace contains types that are not part of the
+generated HTTP server surface; leaving it unset preserves full-namespace emission.
+
 ### Date-time modes
 
 Set `datetime-mode` in the emitter options to choose the handler-facing representation of TypeSpec

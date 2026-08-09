@@ -12,6 +12,10 @@ Configure the package as an emitter in `tspconfig.yaml`. Generated files import
 
 ## Options
 
+`omit-unreachable-types` follows the standard TypeSpec emitter convention. It defaults to `false`,
+which emits every named type under the service namespace. Set it to `true` to emit only declarations
+reachable from operation inputs and responses, including their transitive external dependencies.
+
 `datetime-mode` controls handler-facing date and duration types:
 
 - `string` (default) maps `plainDate`, `plainTime`, `utcDateTime`, `offsetDateTime`, and `duration`
