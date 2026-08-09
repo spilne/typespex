@@ -1,9 +1,22 @@
 import type { HttpOperation, HttpOperationMultipartBody, HttpOperationPart } from "@typespec/http";
 import { isHeader } from "@typespec/http";
-import type { Enum, Model, ModelProperty, Scalar, Type, Union } from "@typespec/compiler";
+import type {
+  DiscriminatedUnion,
+  Enum,
+  Model,
+  ModelProperty,
+  Scalar,
+  Type,
+  Union,
+} from "@typespec/compiler";
 import { getDiscriminator, isArrayModelType, walkPropertiesInherited } from "@typespec/compiler";
 import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import {
+  discriminatedVariantToTs,
+  discriminatedVariants,
+  resolveDiscriminatedUnion,
+} from "./discriminated-unions.js";
 import { buildInputType } from "./emit-server-common.js";
 import { propertiesShareSource } from "./http-models.js";
 import { getJsonPropertyWireName } from "./json-wire-transforms.js";
@@ -814,30 +827,47 @@ function emitObjectDecoderBody(
   mode: DecoderMode,
   seenTypes: ReadonlySet<Type>,
   projection?: PayloadProjection,
+  syntheticDiscriminator?: {
+    readonly name: string;
+    readonly tag?: string;
+    readonly typeTs: string;
+  },
 ): string {
   const properties = payloadModelProperties(model, projection);
-  const fields = properties
-    .map((prop) => {
-      const propertyDecoder = emitDecoderExpression(
-        ctx,
-        dec,
-        prop.type,
-        mode,
-        seenTypes,
-        prop,
-        projection,
-      );
-      const expr = payloadPropertyOptional(prop, projection)
+  const fields: string[] = [];
+  if (
+    syntheticDiscriminator &&
+    !properties.some((property) => property.name === syntheticDiscriminator.name)
+  ) {
+    fields.push(
+      `${tsObjectKey(syntheticDiscriminator.name)}: ${emitSyntheticDiscriminatorDecoder(syntheticDiscriminator.tag)}`,
+    );
+  }
+  for (const prop of properties) {
+    const isSyntheticDiscriminator = prop.name === syntheticDiscriminator?.name;
+    const propertyDecoder =
+      isSyntheticDiscriminator && syntheticDiscriminator.tag !== undefined
+        ? emitSyntheticDiscriminatorDecoder(syntheticDiscriminator.tag)
+        : emitDecoderExpression(ctx, dec, prop.type, mode, seenTypes, prop, projection);
+    const expr =
+      !isSyntheticDiscriminator && payloadPropertyOptional(prop, projection)
         ? `Decoders.optional(${propertyDecoder})`
         : propertyDecoder;
-      return `${tsObjectKey(prop.name)}: ${expr}`;
-    })
-    .join(", ");
+    fields.push(`${tsObjectKey(prop.name)}: ${expr}`);
+  }
 
   const options: string[] = [];
   if (mode === "json") {
     const wireNames = properties
-      .map((property) => [property.name, getJsonPropertyWireName(ctx, property)] as const)
+      .map(
+        (property) =>
+          [
+            property.name,
+            property.name === syntheticDiscriminator?.name
+              ? syntheticDiscriminator.name
+              : getJsonPropertyWireName(ctx, property),
+          ] as const,
+      )
       .filter(([propertyName, wireName]) => propertyName !== wireName);
     if (wireNames.length > 0) {
       options.push(
@@ -873,7 +903,10 @@ function emitObjectDecoderBody(
   if (projection) {
     const included = new Set(properties.map((property) => property.name));
     const forbidden = [...walkPropertiesInherited(model)]
-      .filter((property) => !included.has(property.name))
+      .filter(
+        (property) =>
+          !included.has(property.name) && property.name !== syntheticDiscriminator?.name,
+      )
       .map((property) =>
         mode === "json" ? getJsonPropertyWireName(ctx, property) : property.name,
       );
@@ -883,7 +916,12 @@ function emitObjectDecoderBody(
   }
 
   const optionsArg = options.length > 0 ? `, { ${options.join(", ")} }` : "";
-  return `Decoders.object<${payloadTypeToTs(ctx, model, projection)}>({ ${fields} }${optionsArg})`;
+  const typeTs = syntheticDiscriminator?.typeTs ?? payloadTypeToTs(ctx, model, projection);
+  return `Decoders.object<${typeTs}>({ ${fields.join(", ")} }${optionsArg})`;
+}
+
+function emitSyntheticDiscriminatorDecoder(tag: string | undefined): string {
+  return tag === undefined ? "Decoders.string" : `Decoders.strictLiteral(${JSON.stringify(tag)})`;
 }
 
 function emitUnionDecoder(
@@ -913,9 +951,22 @@ function emitUnionDecoderBody(
   projection?: PayloadProjection,
   encodingTarget?: ModelProperty,
 ): string {
-  if (mode === "json" && !payloadProjectionChangesType(ctx, union, projection)) {
-    const discriminated = emitDiscriminatedUnionDecoder(ctx, dec, union, seenTypes);
-    if (discriminated) return discriminated;
+  if (mode === "json") {
+    const declared = resolveDiscriminatedUnion(ctx.program, union);
+    if (declared) {
+      return emitDeclaredDiscriminatedUnionDecoder(
+        ctx,
+        dec,
+        declared,
+        seenTypes,
+        projection,
+        encodingTarget,
+      );
+    }
+    if (!payloadProjectionChangesType(ctx, union, projection)) {
+      const inferred = emitStructuralDiscriminatedUnionDecoder(ctx, dec, union, seenTypes);
+      if (inferred) return inferred;
+    }
   }
   const variants = [...union.variants.values()]
     .map((variant) =>
@@ -932,6 +983,75 @@ function emitUnionDecoderBody(
     )
     .join(", ");
   return `Decoders.union<${payloadTypeToTs(ctx, union, projection)}>([${variants}])`;
+}
+
+function emitDeclaredDiscriminatedUnionDecoder(
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  discriminated: DiscriminatedUnion,
+  seenTypes: ReadonlySet<Type>,
+  projection?: PayloadProjection,
+  encodingTarget?: ModelProperty,
+): string {
+  const entries: string[] = [];
+  let defaultVariant: string | undefined;
+
+  for (const variant of discriminatedVariants(discriminated)) {
+    const payloadTs = payloadTypeToTs(ctx, variant.type, projection);
+    const variantTs = discriminatedVariantToTs(discriminated, variant, payloadTs);
+    let decoder: string;
+
+    if (discriminated.options.envelope === "object") {
+      const payloadDecoder = emitDecoderExpression(
+        ctx,
+        dec,
+        variant.type,
+        "json",
+        seenTypes,
+        undefined,
+        projection,
+        encodingTarget,
+      );
+      decoder = `Decoders.object<${variantTs}>({ ${tsObjectKey(
+        discriminated.options.discriminatorPropertyName,
+      )}: ${emitSyntheticDiscriminatorDecoder(variant.tag)}, ${tsObjectKey(
+        discriminated.options.envelopePropertyName,
+      )}: ${payloadDecoder} }, { allowUnknown: true })`;
+    } else if (variant.type.kind === "Model") {
+      decoder = emitObjectDecoderBody(
+        ctx,
+        dec,
+        variant.type,
+        "json",
+        new Set([...seenTypes, variant.type]),
+        projection,
+        {
+          name: discriminated.options.discriminatorPropertyName,
+          tag: variant.tag,
+          typeTs: variantTs,
+        },
+      );
+    } else {
+      // The preflight diagnostic suppresses output for this invalid inline
+      // shape. Keep a safe placeholder for callers that render despite errors.
+      decoder = "Decoders.never";
+    }
+
+    if (variant.tag === undefined) {
+      defaultVariant = decoder;
+    } else {
+      entries.push(`${tsObjectKey(variant.tag)}: ${decoder}`);
+    }
+  }
+
+  const options = defaultVariant ? `, { defaultVariant: ${defaultVariant} }` : "";
+  return `Decoders.discriminated<${payloadTypeToTs(
+    ctx,
+    discriminated.type,
+    projection,
+  )}>(${JSON.stringify(discriminated.options.discriminatorPropertyName)}, { ${entries.join(
+    ", ",
+  )} }${options})`;
 }
 
 function getOrCreateLazyDecoder(
@@ -987,7 +1107,7 @@ function hasLazyDecoderVariable(dec: DecoderEmitContext, varName: string): boole
  * across the variants. Returns undefined when no such field exists so the
  * caller falls back.
  */
-function emitDiscriminatedUnionDecoder(
+function emitStructuralDiscriminatedUnionDecoder(
   ctx: EmitterCtx,
   dec: DecoderEmitContext,
   union: Union,

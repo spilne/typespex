@@ -599,6 +599,32 @@ describe("http decoder - combinators", () => {
     ]);
   });
 
+  test("Decoders.discriminated delegates unknown tags to a default variant", () => {
+    type Value = { kind: "known"; value: string } | { kind: string; raw: number };
+    const decoder = Decoders.discriminated<Value>(
+      "kind",
+      {
+        known: Decoders.object<{ kind: "known"; value: string }>({
+          kind: Decoders.literal("known"),
+          value: Decoders.string,
+        }),
+      },
+      {
+        defaultVariant: Decoders.object<{ kind: string; raw: number }>({
+          kind: Decoders.string,
+          raw: Decoders.number,
+        }),
+      },
+    );
+
+    expect(decoder.decode({ kind: "future", raw: 2 })).toEqual(
+      Either.right({ kind: "future", raw: 2 }),
+    );
+    expectLeftIssues(decoder.decode({ raw: 2 }), [
+      { path: ".kind", message: "Unknown discriminator value: undefined." },
+    ]);
+  });
+
   test("Decoders.discriminated treats prototype names as own-key variants only", () => {
     const fallbackDecoder = Decoders.discriminated("kind", {
       known: Decoders.object({ kind: Decoders.literal("known") }),
@@ -621,6 +647,28 @@ describe("http decoder - combinators", () => {
     expect(declaredDecoder.decode({ kind: "__proto__", value: "safe" })).toEqual(
       Either.right({ kind: "__proto__", value: "safe" }),
     );
+  });
+
+  test("Decoders.discriminated ignores inherited discriminator values", () => {
+    const discriminator = "__typespex_inherited_discriminator__";
+    const decoder = Decoders.discriminated(discriminator, {
+      polluted: Decoders.unknown,
+    });
+
+    Object.defineProperty(Object.prototype, discriminator, {
+      configurable: true,
+      value: "polluted",
+    });
+    try {
+      expectLeftIssues(decoder.decode({}), [
+        {
+          path: `.${discriminator}`,
+          message: "Unknown discriminator value: undefined.",
+        },
+      ]);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[discriminator];
+    }
   });
 
   test("nested object validation reports precise relative paths", () => {

@@ -19,6 +19,7 @@ import {
   type MetadataInfo,
 } from "@typespec/http";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import { discriminatedUnionBodyToTs, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { getHttpPartType, isHttpFileModel } from "./http-models.js";
 import {
   getAdditionalPropertiesValue,
@@ -391,6 +392,13 @@ function projectedUnionBodyToTs(
   union: Union,
   projection: PayloadProjection,
 ): string {
+  const discriminated = resolveDiscriminatedUnion(ctx.program, union);
+  if (discriminated) {
+    return discriminatedUnionBodyToTs(discriminated, ({ type }) =>
+      payloadTypeToTs(ctx, type, projection),
+    );
+  }
+
   const variants = [...union.variants.values()].map((variant) =>
     payloadTypeToTs(ctx, variant.type, projection),
   );

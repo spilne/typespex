@@ -122,6 +122,11 @@ export interface ObjectDecoderOptions<AdditionalProperty = unknown> {
   readonly forbiddenProperties?: readonly string[];
 }
 
+export interface DiscriminatedDecoderOptions<A> {
+  /** Decoder used when a string/number discriminator has no named variant. */
+  readonly defaultVariant?: Decoder<A>;
+}
+
 type ObjectAdditionalProperty<A extends object> = string extends keyof A
   ? A[string & keyof A]
   : unknown;
@@ -607,16 +612,20 @@ function lazyDecoder<A>(resolve: () => Decoder<A>): Decoder<A> {
 function discriminatedDecoder<A>(
   discriminator: string,
   variants: Readonly<Record<string, Decoder<A>>>,
+  options: DiscriminatedDecoderOptions<A> = {},
 ): Decoder<A> {
   return Decoder.of((input) => {
     const object = expectPlainObject(input);
     if (isLeft(object)) return object;
-    const tag = object.right[discriminator];
+    const tag = Object.prototype.hasOwnProperty.call(object.right, discriminator)
+      ? object.right[discriminator]
+      : undefined;
     const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
-    const variant =
+    const namedVariant =
       key !== undefined && Object.prototype.hasOwnProperty.call(variants, key)
         ? variants[key]
         : undefined;
+    const variant = namedVariant ?? (key === undefined ? undefined : options.defaultVariant);
     if (!variant) {
       return fail(`.${discriminator}`, `Unknown discriminator value: ${JSON.stringify(tag)}.`);
     }

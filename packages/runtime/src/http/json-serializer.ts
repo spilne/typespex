@@ -54,6 +54,11 @@ export interface JsonObjectSerializerOptions<A extends object> {
   readonly additionalProperties?: JsonSerializer<JsonAdditionalProperty<A>>;
 }
 
+export interface JsonDiscriminatedSerializerOptions<A> {
+  /** Serializer used when a string/number discriminator has no named variant. */
+  readonly defaultVariant?: JsonSerializer<A>;
+}
+
 interface ErasedJsonObjectProperty {
   readonly property: string;
   readonly wireName: string;
@@ -121,12 +126,14 @@ function objectJsonSerializer<A extends object>(
   properties: readonly JsonObjectProperty<A>[],
   options: JsonObjectSerializerOptions<A> = {},
 ): JsonSerializer<A> {
-  const erased = properties.map((property): ErasedJsonObjectProperty => ({
-    property: property.property,
-    wireName: property.wireName,
-    serializer: property.serializer as JsonSerializer<unknown>,
-    optional: property.optional === true,
-  }));
+  const erased = properties.map(
+    (property): ErasedJsonObjectProperty => ({
+      property: property.property,
+      wireName: property.wireName,
+      serializer: property.serializer as JsonSerializer<unknown>,
+      optional: property.optional === true,
+    }),
+  );
   validateObjectSchema(erased);
 
   const declaredProperties = new Set(erased.map((property) => property.property));
@@ -179,6 +186,32 @@ function nullableJsonSerializer<A>(inner: JsonSerializer<A>): JsonSerializer<A |
   return JsonSerializer.of((value, path) =>
     value === null ? null : serializeNested(inner, value, path),
   );
+}
+
+function discriminatedJsonSerializer<A>(
+  discriminator: string,
+  variants: Readonly<Record<string, JsonSerializer<A>>>,
+  options: JsonDiscriminatedSerializerOptions<A> = {},
+): JsonSerializer<A> {
+  return JsonSerializer.of((value, path) => {
+    const source = expectObject(value, path);
+    const tag = Object.prototype.hasOwnProperty.call(source, discriminator)
+      ? source[discriminator]
+      : undefined;
+    const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
+    const namedVariant =
+      key !== undefined && Object.prototype.hasOwnProperty.call(variants, key)
+        ? variants[key]
+        : undefined;
+    const variant = namedVariant ?? (key === undefined ? undefined : options.defaultVariant);
+    if (!variant) {
+      throw new JsonSerializationError(
+        appendPropertyPath(path, discriminator),
+        `Unknown discriminator value: ${JSON.stringify(tag)}.`,
+      );
+    }
+    return serializeNested(variant, value, path);
+  });
 }
 
 function lazyJsonSerializer<A>(resolve: () => JsonSerializer<A>): JsonSerializer<A> {
@@ -320,6 +353,7 @@ export const JsonSerializers = {
   record: recordJsonSerializer,
   object: objectJsonSerializer,
   nullable: nullableJsonSerializer,
+  discriminated: discriminatedJsonSerializer,
   lazy: lazyJsonSerializer,
   validate: validatedJsonSerializer,
   encodedNumberString: encodedNumberStringJsonSerializer,

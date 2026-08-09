@@ -140,4 +140,67 @@ describe("JsonSerializers", () => {
       child: { node_name: "leaf" },
     });
   });
+
+  test("dispatches discriminated serializers and reports the discriminator path", () => {
+    type Animal = { kind: "cat"; displayName: string } | { kind: "dog"; bark: boolean };
+    const animals = JsonSerializers.discriminated<Animal>("kind", {
+      cat: JsonSerializers.object<{ kind: "cat"; displayName: string }>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.identity() },
+        {
+          property: "displayName",
+          wireName: "display_name",
+          serializer: JsonSerializers.identity(),
+        },
+      ]),
+      dog: JsonSerializers.object<{ kind: "dog"; bark: boolean }>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.identity() },
+        { property: "bark", wireName: "bark", serializer: JsonSerializers.identity() },
+      ]),
+    });
+
+    expect(animals.serialize({ kind: "cat", displayName: "Miso" })).toEqual({
+      kind: "cat",
+      display_name: "Miso",
+    });
+    expect(() => animals.serialize({ kind: "bird" } as unknown as Animal)).toThrow(
+      "$response.kind: Unknown discriminator value",
+    );
+    expect(() => animals.serialize({ displayName: "Missing" } as unknown as Animal)).toThrow(
+      "$response.kind: Unknown discriminator value",
+    );
+  });
+
+  test("supports default and prototype-sensitive discriminator variants", () => {
+    type Value = { kind: "__proto__"; value: string } | { kind: string; value: { raw: string } };
+    const serializer = JsonSerializers.discriminated<Value>(
+      "kind",
+      {
+        ["__proto__"]: JsonSerializers.object<{ kind: "__proto__"; value: string }>([
+          { property: "kind", wireName: "kind", serializer: JsonSerializers.identity() },
+          { property: "value", wireName: "value", serializer: JsonSerializers.identity() },
+        ]),
+      },
+      {
+        defaultVariant: JsonSerializers.object<{ kind: string; value: { raw: string } }>([
+          { property: "kind", wireName: "kind", serializer: JsonSerializers.identity() },
+          {
+            property: "value",
+            wireName: "value",
+            serializer: JsonSerializers.object([
+              { property: "raw", wireName: "raw_value", serializer: JsonSerializers.identity() },
+            ]),
+          },
+        ]),
+      },
+    );
+
+    expect(serializer.serialize({ kind: "__proto__", value: "safe" })).toEqual({
+      kind: "__proto__",
+      value: "safe",
+    });
+    expect(serializer.serialize({ kind: "future", value: { raw: "opaque" } })).toEqual({
+      kind: "future",
+      value: { raw_value: "opaque" },
+    });
+  });
 });
