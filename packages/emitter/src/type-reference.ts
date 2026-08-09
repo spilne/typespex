@@ -33,6 +33,7 @@ import {
 import { scalarToTs } from "./scalar-map.js";
 import { isEntityLike } from "./type-guards.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+import { enumMemberLiteralExpression, numericLiteralExpression } from "./numeric-literals.js";
 
 type TemplateParameterDeclaration = NonNullable<
   Extract<TemplatedType["node"], { templateParameters: readonly unknown[] }>["templateParameters"]
@@ -101,25 +102,17 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
         return getGeneratedTypeName(ctx, type, "Enum");
       }
       const members = [...type.members.values()];
-      return members
-        .map((m) =>
-          typeof m.value === "string"
-            ? JSON.stringify(m.value)
-            : m.value != null
-              ? String(m.value)
-              : JSON.stringify(m.name),
-        )
-        .join(" | ");
+      return members.map((member) => enumMemberLiteralExpression(ctx.program, member)).join(" | ");
     }
 
     case "EnumMember":
-      return enumMemberToTs(type);
+      return enumMemberToTs(ctx, type);
 
     case "String":
       return JSON.stringify(type.value);
 
     case "Number":
-      return String(type.value);
+      return numericLiteralExpression(type);
 
     case "Boolean":
       return String(type.value);
@@ -270,7 +263,7 @@ function valueToTs(ctx: EmitterCtx, value: Value): string {
     case "NullValue":
       return "null";
     case "EnumValue":
-      return enumMemberToTs(value.value);
+      return enumMemberToTs(ctx, value.value);
     case "ArrayValue":
       return `[${value.values.map((item) => valueToTs(ctx, item)).join(", ")}]`;
     case "ObjectValue":
@@ -282,12 +275,8 @@ function valueToTs(ctx: EmitterCtx, value: Value): string {
   }
 }
 
-function enumMemberToTs(type: EnumMember): string {
-  return typeof type.value === "string"
-    ? JSON.stringify(type.value)
-    : type.value != null
-      ? String(type.value)
-      : JSON.stringify(type.name);
+function enumMemberToTs(ctx: EmitterCtx, type: EnumMember): string {
+  return enumMemberLiteralExpression(ctx.program, type);
 }
 
 function emitInlineModel(ctx: EmitterCtx, model: Model): string {

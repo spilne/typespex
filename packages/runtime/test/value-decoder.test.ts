@@ -232,6 +232,9 @@ describe("http decoder - combinators", () => {
     expect(Decoders.literal(5).decode("5")).toEqual(Either.right(5));
     expect(Decoders.literal(true).decode("true")).toEqual(Either.right(true));
     expect(Decoders.literal(null).decode("null")).toEqual(Either.right(null));
+    expect(Decoders.literal(9223372036854775807n).decode("9223372036854775807")).toEqual(
+      Either.right(9223372036854775807n),
+    );
     expectLeftIssues(Decoders.literal("x").decode("y"), [
       { path: "", message: 'Expected literal "x".' },
     ]);
@@ -610,6 +613,25 @@ describe("http decoder - combinators", () => {
     );
     expectLeftIssues(decoder.decode({ version: 3 }), [
       { path: ".version", message: "Unknown discriminator value: 3." },
+    ]);
+  });
+
+  test("Decoders.discriminated handles bigint discriminator values", () => {
+    const max = 9223372036854775807n;
+    const maxDecoder = Decoders.object<{ version: 9223372036854775807n; data: string }>({
+      version: Decoders.literal(max),
+      data: Decoders.string,
+    });
+    const decoder = Decoders.discriminated<{ version: 9223372036854775807n; data: string }>(
+      "version",
+      { [String(max)]: maxDecoder },
+    );
+
+    expect(decoder.decode({ version: max, data: "exact" })).toEqual(
+      Either.right({ version: max, data: "exact" }),
+    );
+    expectLeftIssues(decoder.decode({ version: max - 1n }), [
+      { path: ".version", message: "Unknown discriminator value: 9223372036854775806n." },
     ]);
   });
 
@@ -1476,6 +1498,20 @@ describe("content-type body dispatch", () => {
     );
   });
 
+  test("parses exact unsafe JSON integers written with decimal exponents", async () => {
+    const result = await decodeBody(
+      new Request("http://localhost/integers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "9.223372036854775807e18",
+      }),
+      { json: Decoders.strictLiteral(9223372036854775807n) },
+      { contentTypes: ["application/json"] },
+    );
+
+    expect(result).toEqual(Either.right(9223372036854775807n));
+  });
+
   test("rejects JSON integer tokens wider than uint64 before decoding", async () => {
     for (const token of [`1${"0".repeat(20)}`, "9".repeat(100_000)]) {
       const result = await decodeBody(
@@ -1606,6 +1642,9 @@ describe("strict JSON-mode decoders", () => {
     expect(Decoders.strictLiteral("x").decode("x")).toEqual(succeed("x"));
     expect(Decoders.strictLiteral(true).decode(true)).toEqual(succeed(true));
     expect(Decoders.strictLiteral(null).decode(null)).toEqual(succeed(null));
+    expect(Decoders.strictLiteral(9223372036854775807n).decode(9223372036854775807n)).toEqual(
+      succeed(9223372036854775807n),
+    );
   });
 
   test("Decoders.strictLiteral rejects string-encoded values", () => {
@@ -1618,6 +1657,9 @@ describe("strict JSON-mode decoders", () => {
     ]);
     expectLeftIssues(Decoders.strictLiteral(null).decode("null"), [
       { path: "", message: "Expected literal null." },
+    ]);
+    expectLeftIssues(Decoders.strictLiteral(9223372036854775807n).decode("9223372036854775807"), [
+      { path: "", message: "Expected literal 9223372036854775807n." },
     ]);
   });
 
