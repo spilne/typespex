@@ -24,9 +24,9 @@ describe("release package validation", () => {
       tag: undefined,
       outputDirectory: undefined,
     });
-    expect(() =>
-      parseArguments(["--package-check", "--publish", "--tag", "v0.1.1"]),
-    ).toThrow("cannot be combined with --publish");
+    expect(() => parseArguments(["--package-check", "--publish", "--tag", "v0.1.1"])).toThrow(
+      "cannot be combined with --publish",
+    );
   });
 
   test("keeps dependency order explicit", () => {

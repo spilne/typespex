@@ -126,14 +126,12 @@ function objectJsonSerializer<A extends object>(
   properties: readonly JsonObjectProperty<A>[],
   options: JsonObjectSerializerOptions<A> = {},
 ): JsonSerializer<A> {
-  const erased = properties.map(
-    (property): ErasedJsonObjectProperty => ({
-      property: property.property,
-      wireName: property.wireName,
-      serializer: property.serializer as JsonSerializer<unknown>,
-      optional: property.optional === true,
-    }),
-  );
+  const erased = properties.map((property): ErasedJsonObjectProperty => ({
+    property: property.property,
+    wireName: property.wireName,
+    serializer: property.serializer as JsonSerializer<unknown>,
+    optional: property.optional === true,
+  }));
   validateObjectSchema(erased);
 
   const declaredProperties = new Set(erased.map((property) => property.property));

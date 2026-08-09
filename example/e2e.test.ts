@@ -60,7 +60,12 @@ function createTestServer() {
   return { router, store };
 }
 
-function req(method: string, path: string, body?: unknown, headers?: Record<string, string>): Request {
+function req(
+  method: string,
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+): Request {
   const init: RequestInit = { method, headers: { ...headers } };
   if (body !== undefined) {
     (init.headers as Record<string, string>)["content-type"] = "application/json";
@@ -69,7 +74,11 @@ function req(method: string, path: string, body?: unknown, headers?: Record<stri
   return new Request(`http://localhost${path}`, init);
 }
 
-async function createItem(router: { handle(r: Request): Promise<Response> }, name: string, tag?: string): Promise<Pet> {
+async function createItem(
+  router: { handle(r: Request): Promise<Response> },
+  name: string,
+  tag?: string,
+): Promise<Pet> {
   const res = await router.handle(req("POST", "/pets", { name, tag }));
   return res.json();
 }
@@ -244,9 +253,7 @@ describe("e2e: full request pipeline", () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: expect.stringContaining("tag") }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("tag") })]),
       );
     });
 
@@ -290,10 +297,7 @@ describe("e2e: full request pipeline", () => {
       const body = await res.json();
       const paths = body.issues.map((i: any) => i.path);
       expect(paths).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("name"),
-          expect.stringContaining("tag"),
-        ]),
+        expect.arrayContaining([expect.stringContaining("name"), expect.stringContaining("tag")]),
       );
     });
 

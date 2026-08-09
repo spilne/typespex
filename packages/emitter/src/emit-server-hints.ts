@@ -71,10 +71,7 @@ export type TypeSpecAuthScheme = TypeSpecAuthSchemeBase &
     | { readonly type: "noAuth" }
   );`.split("\n");
 
-export function emitServerHints(
-  ctx: EmitterCtx,
-  httpOperations: HttpOperation[],
-): string {
+export function emitServerHints(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
   const definitions = collectHintDefinitions(ctx, httpOperations);
 
   const lines: string[] = [];
@@ -99,10 +96,7 @@ export function emitServerHints(
   return lines.join("\n");
 }
 
-export function emitHintEntries(
-  ctx: EmitterCtx,
-  target: Type,
-): EmittedHintEntry[] {
+export function emitHintEntries(ctx: EmitterCtx, target: Type): EmittedHintEntry[] {
   const entries: EmittedHintEntry[] = [];
   const doc = getDoc(ctx.program, target);
   if (doc !== undefined) {
@@ -285,9 +279,7 @@ function emitCustomDecoratorHintEntry(
   };
 }
 
-function customHintDefinition(
-  decorator: DecoratorApplication,
-): HintDefinition | undefined {
+function customHintDefinition(decorator: DecoratorApplication): HintDefinition | undefined {
   return resolveCustomHint(decorator)?.definition;
 }
 
@@ -324,9 +316,7 @@ function isBuiltinDecorator(id: string): boolean {
   return id.startsWith("TypeSpec.");
 }
 
-function marshalDecoratorArguments(
-  decorator: DecoratorApplication,
-): JsonLike | undefined {
+function marshalDecoratorArguments(decorator: DecoratorApplication): JsonLike | undefined {
   const args = decorator.args
     .map((arg) => marshalJsValue(arg.jsValue))
     .filter((x): x is JsonLike => x !== undefined);
@@ -360,7 +350,7 @@ function marshalJsValue(value: unknown): JsonLike | undefined {
 
   if (Array.isArray(value)) {
     const marshalled = value.map(marshalJsValue);
-    return marshalled.every((x) => x !== undefined) ? marshalled as JsonLike[] : undefined;
+    return marshalled.every((x) => x !== undefined) ? (marshalled as JsonLike[]) : undefined;
   }
 
   if (typeof value === "object") {

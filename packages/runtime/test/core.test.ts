@@ -29,9 +29,7 @@ describe("HttpError", () => {
     const response = error.toResponse();
 
     expect(response.status).toBe(422);
-    expect(await response.text()).toBe(
-      '{"limit":9223372036854775807,"digest":"AQL/"}',
-    );
+    expect(await response.text()).toBe('{"limit":9223372036854775807,"digest":"AQL/"}');
   });
 
   test("toResponse with plain message (no body)", () => {
@@ -143,7 +141,10 @@ describe("Hints", () => {
   test("createHints entries() iterates all pairs", () => {
     const a = createHintKey<string>("a");
     const b = createHintKey<number>("b");
-    const hints = createHints([[a, "hello"], [b, 42]]);
+    const hints = createHints([
+      [a, "hello"],
+      [b, 42],
+    ]);
     const entries = [...hints.entries()];
     expect(entries).toHaveLength(2);
   });

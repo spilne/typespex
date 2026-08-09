@@ -3,7 +3,11 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 
 const createPetSchema = z.object({
-  name: z.string().min(1).max(80).regex(/^[A-Za-z]/, "Must start with a letter."),
+  name: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^[A-Za-z]/, "Must start with a letter."),
   tag: z.string().max(40).optional(),
 });
 

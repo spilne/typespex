@@ -5,7 +5,6 @@ export type Either<E, A> =
 
 /** Constructors and combinators for `Either`. */
 export const Either = {
-
   left<E>(left: E): Either<E, never> {
     return { _tag: "Left", left };
   },
@@ -14,43 +13,29 @@ export const Either = {
     return { _tag: "Right", right };
   },
 
-  map<E, A, B>(
-    either: Either<E, A>,
-    f: (value: A) => B,
-  ): Either<E, B> {
+  map<E, A, B>(either: Either<E, A>, f: (value: A) => B): Either<E, B> {
     return either._tag === "Right" ? { _tag: "Right", right: f(either.right) } : either;
   },
 
-  flatMap<E, A, E2, B>(
-    either: Either<E, A>,
-    f: (value: A) => Either<E2, B>,
-  ): Either<E | E2, B> {
+  flatMap<E, A, E2, B>(either: Either<E, A>, f: (value: A) => Either<E2, B>): Either<E | E2, B> {
     return either._tag === "Right" ? f(either.right) : either;
   },
 
-  getOrElse<E, A>(
-    either: Either<E, A>,
-    fallback: A,
-  ): A {
+  getOrElse<E, A>(either: Either<E, A>, fallback: A): A {
     if (either._tag === "Right") {
       return either.right;
     }
     return fallback;
   },
 
-  getOrElseEval<E, A>(
-    either: Either<E, A>,
-    fallback: () => A,
-  ): A {
+  getOrElseEval<E, A>(either: Either<E, A>, fallback: () => A): A {
     if (either._tag === "Right") {
       return either.right;
     }
     return fallback();
   },
 
-  getOrElseThrow<E extends Error, A>(
-    either: Either<E, A>
-  ): A {
+  getOrElseThrow<E extends Error, A>(either: Either<E, A>): A {
     if (either._tag === "Right") {
       return either.right;
     }
@@ -58,30 +43,19 @@ export const Either = {
   },
 
   /** Pattern-match both branches of an `Either`. */
-  fold<E, A, B>(
-    either: Either<E, A>,
-    onLeft: (e: E) => B,
-    onRight: (a: A) => B,
-  ): B {
+  fold<E, A, B>(either: Either<E, A>, onLeft: (e: E) => B, onRight: (a: A) => B): B {
     return either._tag === "Right" ? onRight(either.right) : onLeft(either.left);
   },
 
   /** Transform the left (error) side of an `Either`. */
-  mapLeft<E, A, E2>(
-    either: Either<E, A>,
-    f: (e: E) => E2,
-  ): Either<E2, A> {
+  mapLeft<E, A, E2>(either: Either<E, A>, f: (e: E) => E2): Either<E2, A> {
     return either._tag === "Left" ? { _tag: "Left", left: f(either.left) } : either;
   },
 
   /** Try an alternative when the `Either` is a `Left`. */
-  orElse<E, A, E2>(
-    either: Either<E, A>,
-    f: () => Either<E2, A>,
-  ): Either<E | E2, A> {
+  orElse<E, A, E2>(either: Either<E, A>, f: () => Either<E2, A>): Either<E | E2, A> {
     return either._tag === "Right" ? either : f();
   },
-
 };
 
 /** Narrows an `Either` to its left branch. */

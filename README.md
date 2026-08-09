@@ -552,11 +552,14 @@ bun install --frozen-lockfile
 Run the same primary checks used by CI:
 
 ```sh
+bun run format:check
 bun run build
 bun run typecheck
 bun run test
 bun run check:generated
 ```
+
+Run `bun run format` to apply the committed formatting rules.
 
 The complete example is in [`example/`](./example), with its implementation in
 [`example/server.ts`](./example/server.ts).
