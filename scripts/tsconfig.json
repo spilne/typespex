@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "inlineSources": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "rootDir": ".",
+    "sourceMap": false,
+    "types": ["node"],
+    "typeRoots": ["../packages/shim-node/node_modules/@types"]
+  },
+  "include": ["release-packages.ts"]
+}
