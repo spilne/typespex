@@ -37,16 +37,6 @@ model Dog { barks: boolean; }
 }
 `;
 
-const visibilitySpec = `${header("VisibilityApi")}
-model Item {
-  @visibility(Lifecycle.Read) id: string;
-  name: string;
-}
-@route("/items") interface Items {
-  @post create(@body body: Item): Item;
-}
-`;
-
 const authSpec = `${header("AuthApi")}
 model Item { id: string; }
 @useAuth(BearerAuth)
@@ -122,7 +112,6 @@ describe("unsupported decorator diagnostics", () => {
       "Pet",
       "discriminated-api",
     ],
-    ["visibility", "diag-visibility", visibilitySpec, "ignored-visibility", "id", "visibility-api"],
     ["@useAuth", "diag-auth", authSpec, "ignored-auth", "authentication", "auth-api"],
   ] as const) {
     test(`${decorator} fails generation`, () => {

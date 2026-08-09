@@ -2,6 +2,7 @@ import type { EmitterCtx } from "./ctx.js";
 import type { HttpOperation } from "@typespec/http";
 import { emitResultResponseEncoder } from "./emit-server-common.js";
 import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
+import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import {
   type InputDecoderEntry,
   type DecoderEmission,
@@ -24,6 +25,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     }
   }
   const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
+  const payloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
   const usesJsonSerializers =
     jsonSerializerDeclarations.length > 0 ||
     [...responseEncoders.values()].some((encoder) => encoder.includes("JsonSerializers."));
@@ -54,8 +56,8 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     );
   }
   lines.push("");
-  if (emission.payloadTypeAliases.length > 0) {
-    lines.push(...emission.payloadTypeAliases);
+  if (payloadTypeAliases.length > 0) {
+    lines.push(...payloadTypeAliases);
     lines.push("");
   }
   if (jsonSerializerDeclarations.length > 0) {

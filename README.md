@@ -354,6 +354,11 @@ values are converted to RFC 3339 handler strings, while numeric duration values 
 handler strings. Raw binary bodies contain exact bytes and cannot apply a textual scalar encoding;
 use a textual or JSON media type instead.
 
+Lifecycle visibility is projected into each operation's handler-facing request and response
+shape. HTTP method defaults and explicit `@parameterVisibility`/`@returnTypeVisibility` overrides
+are honored, including configured PATCH optionality and collection-item rules. Canonical generated
+model types remain complete while operation-local payload aliases describe the actual wire contract.
+
 Raw file responses accept a Web `File`, validate its media type, and use its name for a safe
 `Content-Disposition` filename. Empty optional media types and names omit those response headers;
 a filename relocated to a modeled response header suppresses the default `Content-Disposition`.
@@ -367,7 +372,7 @@ configured.
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
 diagnostics cover custom or location-incompatible scalar encodings, non-JSON encoded property
-names, visibility decorators, `@discriminated` union envelopes, and standard `@useAuth` metadata.
+names, `@discriminated` union envelopes, and standard `@useAuth` metadata.
 They also reject ambiguous nested response unions that require different JSON transforms,
 parameter serialization styles, media/body shape combinations, and output layouts that the
 generated runtime cannot represent

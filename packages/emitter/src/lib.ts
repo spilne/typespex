@@ -96,17 +96,17 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`@discriminated union "${"name"}" is not supported by @typespex/emitter; generating this service would use the wrong envelope format.`,
       },
     },
-    "ignored-visibility": {
-      severity: "error",
-      messages: {
-        default: paramMessage`Visibility decorators on "${"name"}" are not supported by @typespex/emitter; generating this service would expose the wrong request or response shape.`,
-      },
-    },
     "ignored-auth": {
       severity: "error",
       messages: {
         default:
           "@useAuth is not supported by @typespex/emitter; generating this service would omit required authentication metadata.",
+      },
+    },
+    "unsupported-visibility-filter": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Return visibility for operation "${"operation"}" uses all/none constraints that @typespex/emitter cannot represent safely.`,
       },
     },
     "unsupported-http-parameter": {

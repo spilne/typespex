@@ -121,14 +121,12 @@ function objectJsonSerializer<A extends object>(
   properties: readonly JsonObjectProperty<A>[],
   options: JsonObjectSerializerOptions<A> = {},
 ): JsonSerializer<A> {
-  const erased = properties.map(
-    (property): ErasedJsonObjectProperty => ({
-      property: property.property,
-      wireName: property.wireName,
-      serializer: property.serializer as JsonSerializer<unknown>,
-      optional: property.optional === true,
-    }),
-  );
+  const erased = properties.map((property): ErasedJsonObjectProperty => ({
+    property: property.property,
+    wireName: property.wireName,
+    serializer: property.serializer as JsonSerializer<unknown>,
+    optional: property.optional === true,
+  }));
   validateObjectSchema(erased);
 
   const declaredProperties = new Set(erased.map((property) => property.property));
@@ -136,7 +134,7 @@ function objectJsonSerializer<A extends object>(
   const additionalProperties = options.additionalProperties as JsonSerializer<unknown> | undefined;
 
   return JsonSerializer.of((value, path) => {
-    const source = expectPlainObject(value, path);
+    const source = expectObject(value, path);
     const output: Record<string, unknown> = Object.create(null);
 
     for (const property of erased) {
@@ -270,12 +268,17 @@ function serializeNested<A>(serializer: JsonSerializer<A>, value: A, path: strin
 }
 
 function expectPlainObject(value: unknown, path: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new JsonSerializationError(path, "Expected an object.");
-  }
-  const prototype = Object.getPrototypeOf(value);
+  const object = expectObject(value, path);
+  const prototype = Object.getPrototypeOf(object);
   if (prototype !== Object.prototype && prototype !== null) {
     throw new JsonSerializationError(path, "Expected a plain object.");
+  }
+  return object;
+}
+
+function expectObject(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new JsonSerializationError(path, "Expected an object.");
   }
   return value as Record<string, unknown>;
 }

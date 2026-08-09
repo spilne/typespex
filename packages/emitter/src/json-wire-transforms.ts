@@ -7,6 +7,7 @@ import {
   getPayloadCollection,
   payloadItemProjection,
   payloadModelProperties,
+  payloadProjectionFiltersProperties,
   payloadPropertyOptional,
   payloadTypeToTs,
   type PayloadProjection,
@@ -215,6 +216,7 @@ function computeJsonWireTransformChangesType(
   encodingContext: ScalarEncodingContext,
   seen: Map<Type, Set<string>>,
 ): boolean {
+  if (projection && payloadProjectionFiltersProperties(ctx, type, projection)) return true;
   if (type.kind === "Scalar") {
     return resolveScalarEncoding(ctx, type, target, encodingContext).status === "supported";
   }

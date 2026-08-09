@@ -26,11 +26,8 @@ import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
 
-const VISIBILITY_DECORATOR_NAMES = new Set(["@visibility", "@invisible", "@removeVisibility"]);
-
 interface ServiceDecoratorReports {
   readonly encodedNames: Set<ModelProperty>;
-  readonly visibility: Set<ModelProperty>;
   readonly discriminated: Set<Union>;
 }
 
@@ -47,7 +44,6 @@ export function reportIgnoredDecorators(
 ): void {
   const reported: ServiceDecoratorReports = {
     encodedNames: new Set(),
-    visibility: new Set(),
     discriminated: new Set(),
   };
   let authReported = false;
@@ -69,7 +65,6 @@ export function reportIgnoredDecorators(
 
     for (const parameter of operation.parameters.parameters) {
       checkHttpParameter(ctx, parameter);
-      checkProperty(ctx, reported, traversal, parameter.param, parameter.param.name);
       walkType(
         ctx,
         reported,
@@ -109,9 +104,6 @@ function checkRequestBody(
   const body = traversal.operation.parameters.body;
   if (!body) return;
 
-  if (body.property) {
-    checkProperty(ctx, reported, traversal, body.property, body.property.name);
-  }
   if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
 
   if (body.bodyKind === "file") {
@@ -490,33 +482,10 @@ function walkModel(
   }
   for (const property of walkPropertiesInherited(model)) {
     const nestedPath = `${propertyPath}.${property.name}`;
-    checkProperty(ctx, reported, traversal, property, nestedPath);
     walkType(ctx, reported, traversal, property.type, nestedPath, property);
   }
   if (additionalProperties && !isNeverAdditionalProperties(model)) {
     walkType(ctx, reported, traversal, additionalProperties, `${propertyPath}.*`);
-  }
-}
-
-function checkProperty(
-  ctx: EmitterCtx,
-  reported: ServiceDecoratorReports,
-  traversal: OperationTraversal,
-  property: ModelProperty,
-  propertyPath: string,
-): void {
-  if (
-    !reported.visibility.has(property) &&
-    property.decorators.some((decorator) =>
-      VISIBILITY_DECORATOR_NAMES.has(decorator.definition?.name ?? ""),
-    )
-  ) {
-    reported.visibility.add(property);
-    $lib.reportDiagnostic(ctx.program, {
-      code: "ignored-visibility",
-      format: { name: property.name },
-      target: property,
-    });
   }
 }
 
