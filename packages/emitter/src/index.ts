@@ -257,5 +257,8 @@ function capitalize(value: string): string {
 }
 
 function sanitizeNameSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_") || "Service";
+  const sanitized = value.replace(/[^A-Za-z0-9._-]/g, "_") || "Service";
+  // A literal dot segment would collapse or escape the configured output directory.
+  if (sanitized === "." || sanitized === "..") return sanitized.replaceAll(".", "_");
+  return sanitized;
 }

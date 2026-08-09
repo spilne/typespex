@@ -117,6 +117,24 @@ describe("service layout", () => {
     expect(r.readFile(dir, "server-router.gen.ts")).toMatchSnapshot();
   });
 
+  test("keeps dot-segment folder patterns inside the emitter output directory", () => {
+    for (const [name, pattern, safeDirectory] of [
+      ["current", ".", "_"],
+      ["parent", "..", "__"],
+    ] as const) {
+      const r = compileFixture(
+        `safe-${name}-segment-folder`,
+        billingSpec,
+        `    service-folder-pattern: "${pattern}"\n`,
+      );
+
+      expect(r.listFiles(safeDirectory)).toEqual(
+        generatedArtifacts.map(([, fileName]) => fileName).sort(),
+      );
+      expect(r.fileExists(pattern, "models.ts")).toBe(false);
+    }
+  });
+
   test("rejects layouts that overwrite another service", () => {
     const r = compileFixtureExpectingDiagnostics(
       "multi-flat-collision",
