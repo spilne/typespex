@@ -130,25 +130,28 @@ function normalizeRouteSelection(
   const names = new Set<string>();
   const headers: RouteSelection["headers"][number][] = selection.headers.map(
     (header: RouteSelection["headers"][number]) => {
+      if (typeof header !== "object" || header === null || typeof header.name !== "string") {
+        throw invalidRouteSelection(method, path);
+      }
       const name = header.name.trim().toLowerCase();
       const kind = header.kind ?? "exact";
       if (name.length === 0 || names.has(name) || (kind !== "exact" && kind !== "media-type")) {
-        throw new Error(`Invalid route selection: ${method} ${path}`);
+        throw invalidRouteSelection(method, path);
       }
       names.add(name);
 
       if (!Array.isArray(header.values) || header.values.length === 0) {
-        throw new Error(`Invalid route selection: ${method} ${path}`);
+        throw invalidRouteSelection(method, path);
       }
       const values = [
         ...new Set(
           header.values.map((value: string) => {
             if (typeof value !== "string" || value.length === 0) {
-              throw new Error(`Invalid route selection: ${method} ${path}`);
+              throw invalidRouteSelection(method, path);
             }
             if (kind === "exact") return value;
             const mediaRange = parseMediaRange(value);
-            if (!mediaRange) throw new Error(`Invalid route selection: ${method} ${path}`);
+            if (!mediaRange) throw invalidRouteSelection(method, path);
             return `${mediaRange.type}/${mediaRange.subtype}`;
           }),
         ),
@@ -157,6 +160,10 @@ function normalizeRouteSelection(
     },
   );
   return { headers };
+}
+
+function invalidRouteSelection(method: string, path: string): Error {
+  return new Error(`Invalid route selection: ${method} ${path}`);
 }
 
 function routeSelectionMatches(selection: RouteSelection | undefined, headers: Headers): boolean {

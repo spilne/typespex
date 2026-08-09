@@ -575,6 +575,19 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       );
     });
 
+    test("reports malformed shared-route selectors with route context", () => {
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/reports",
+            selection: { headers: [{}] },
+            route: "invalid",
+          } as any,
+        ]),
+      ).toThrow("Invalid route selection: GET /reports");
+    });
+
     test("rejects static routes that are equivalent after path canonicalization", () => {
       for (const paths of [
         ["/café", "/caf%C3%A9"],
