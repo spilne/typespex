@@ -1,7 +1,7 @@
 {
   "name": "typespex",
   "private": true,
-  "packageManager": "bun@1.3.13",
+  "packageManager": "bun@1.3.14",
   "workspaces": ["packages/*", "example", "bench"],
   "scripts": {
     "audit:dependencies": "bun audit --audit-level=moderate --ignore=GHSA-w5hq-g745-h8pq",
