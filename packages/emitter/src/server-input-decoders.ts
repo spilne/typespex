@@ -1,19 +1,7 @@
 import type { HttpOperation, HttpOperationMultipartBody, HttpOperationPart } from "@typespec/http";
-import type { Enum, Model, ModelProperty, Numeric, Scalar, Type, Union } from "@typespec/compiler";
-import {
-  getDiscriminator,
-  getMaxItems,
-  getMaxLength,
-  getMaxValueAsNumeric,
-  getMaxValueExclusiveAsNumeric,
-  getMinItems,
-  getMinLength,
-  getMinValueAsNumeric,
-  getMinValueExclusiveAsNumeric,
-  getPatternData,
-  isArrayModelType,
-  walkPropertiesInherited,
-} from "@typespec/compiler";
+import { isHeader } from "@typespec/http";
+import type { Enum, Model, ModelProperty, Scalar, Type, Union } from "@typespec/compiler";
+import { getDiscriminator, isArrayModelType, walkPropertiesInherited } from "@typespec/compiler";
 import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
 import { buildInputType } from "./emit-server-common.js";
@@ -35,7 +23,8 @@ import {
   payloadTypeToTs,
   type PayloadProjection,
 } from "./payload-context.js";
-import { scalarToTs } from "./scalar-map.js";
+import { getIntrinsicScalarName } from "./scalar-map.js";
+import { emitScalarEncodingDecoder, resolveScalarEncoding } from "./scalar-encoding.js";
 import {
   getRequestInputPlan,
   shouldFlattenBodyType,
@@ -49,6 +38,7 @@ import {
   tsPropertyAccess,
   tsPropertyDeclaration,
 } from "./typescript-names.js";
+import { decodedTypeKind, emitValidatorsForTarget } from "./validation-emission.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
@@ -429,7 +419,7 @@ function emitBodyDecoderExpression(
     body.type,
     mode,
     new Set(),
-    undefined,
+    body.property,
     getEffectiveRequestBodyProjection(ctx, op),
   );
 }
@@ -509,7 +499,7 @@ function emitMultipartPartDecoder(
 ): string {
   return kind === "file"
     ? "Decoders.file"
-    : emitDecoderExpression(ctx, dec, part.body.type, kind, new Set());
+    : emitDecoderExpression(ctx, dec, part.body.type, kind, new Set(), part.body.property);
 }
 
 function multipartPartKinds(part: HttpOperationPart): readonly MultipartPartKind[] {
@@ -594,11 +584,12 @@ function emitDecoderExpression(
   seenTypes: ReadonlySet<Type> = new Set(),
   target?: ModelProperty,
   projection?: PayloadProjection,
+  encodingTarget: ModelProperty | undefined = target,
 ): string {
   let expression: string;
   switch (type.kind) {
     case "Scalar":
-      expression = emitScalarDecoder(type, mode);
+      expression = emitScalarDecoder(ctx, type, mode, encodingTarget);
       break;
 
     case "Model":
@@ -614,6 +605,7 @@ function emitDecoderExpression(
           seenTypes,
           undefined,
           payloadItemProjection(projection),
+          encodingTarget,
         )})`;
         break;
       }
@@ -626,6 +618,7 @@ function emitDecoderExpression(
           seenTypes,
           undefined,
           payloadItemProjection(projection),
+          encodingTarget,
         )})`;
         break;
       }
@@ -633,7 +626,7 @@ function emitDecoderExpression(
       break;
 
     case "Union":
-      expression = emitUnionDecoder(ctx, dec, type, mode, seenTypes, projection);
+      expression = emitUnionDecoder(ctx, dec, type, mode, seenTypes, projection, encodingTarget);
       break;
 
     case "Enum":
@@ -688,6 +681,7 @@ function emitDecoderExpression(
             seenTypes,
             undefined,
             payloadItemProjection(projection),
+            encodingTarget,
           ),
         )
         .join(", ")}])`;
@@ -702,11 +696,12 @@ function emitDecoderExpression(
         seenTypes,
         undefined,
         projection,
+        encodingTarget,
       );
       break;
 
     case "ModelProperty":
-      return emitDecoderExpression(ctx, dec, type.type, mode, seenTypes, type, projection);
+      return emitDecoderExpression(ctx, dec, type.type, mode, seenTypes, type, projection, type);
 
     default:
       expression = "Decoders.unknown";
@@ -716,13 +711,33 @@ function emitDecoderExpression(
   return applyValidationDecorators(ctx, expression, type, target);
 }
 
-function emitScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
+function emitScalarDecoder(
+  ctx: EmitterCtx,
+  scalar: Scalar,
+  mode: DecoderMode,
+  target?: ModelProperty,
+): string {
+  const context =
+    mode === "binary" ? "binary" : target && isHeader(ctx.program, target) ? "header" : "value";
+  const encoding = resolveScalarEncoding(ctx, scalar, target, context);
+  if (encoding.status === "supported") {
+    const wireDecoder = applyValidationDecorators(
+      ctx,
+      emitUnencodedScalarDecoder(encoding.plan.wireType, mode),
+      encoding.plan.wireType,
+    );
+    return emitScalarEncodingDecoder(encoding.plan, wireDecoder);
+  }
+  return emitUnencodedScalarDecoder(scalar, mode);
+}
+
+function emitUnencodedScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
   const strict = mode === "json" || mode === "binary";
   const integer = strict ? "Decoders.strictInteger" : "Decoders.integer";
   const number = strict ? "Decoders.strictNumber" : "Decoders.number";
   const bigint = strict ? "Decoders.strictBigint" : "Decoders.bigint";
 
-  switch (intrinsicScalarName(scalar)) {
+  switch (getIntrinsicScalarName(scalar)) {
     case "int8":
       return withNumericRange(integer, "-128", "127");
     case "uint8":
@@ -766,15 +781,6 @@ function emitScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
     default:
       return mode === "text" ? "Decoders.string" : "Decoders.unknown";
   }
-}
-
-function intrinsicScalarName(scalar: Scalar): string {
-  let current: Scalar | undefined = scalar;
-  while (current) {
-    if (current.namespace?.name === "TypeSpec") return current.name;
-    current = current.baseScalar;
-  }
-  return scalar.name;
 }
 
 function withNumericRange(decoder: string, min: string, max: string): string {
@@ -887,6 +893,7 @@ function emitUnionDecoder(
   mode: DecoderMode,
   seenTypes: ReadonlySet<Type>,
   projection?: PayloadProjection,
+  encodingTarget?: ModelProperty,
 ): string {
   const typeName = union.name ? getGeneratedTypeName(ctx, union, "Union") : undefined;
   if (typeName && seenTypes.has(union)) {
@@ -894,7 +901,7 @@ function emitUnionDecoder(
   }
 
   const nextSeen = typeName ? new Set([...seenTypes, union]) : seenTypes;
-  return emitUnionDecoderBody(ctx, dec, union, mode, nextSeen, projection);
+  return emitUnionDecoderBody(ctx, dec, union, mode, nextSeen, projection, encodingTarget);
 }
 
 function emitUnionDecoderBody(
@@ -904,6 +911,7 @@ function emitUnionDecoderBody(
   mode: DecoderMode,
   seenTypes: ReadonlySet<Type>,
   projection?: PayloadProjection,
+  encodingTarget?: ModelProperty,
 ): string {
   if (mode === "json" && !payloadProjectionChangesType(ctx, union, projection)) {
     const discriminated = emitDiscriminatedUnionDecoder(ctx, dec, union, seenTypes);
@@ -911,7 +919,16 @@ function emitUnionDecoderBody(
   }
   const variants = [...union.variants.values()]
     .map((variant) =>
-      emitDecoderExpression(ctx, dec, variant.type, mode, seenTypes, undefined, projection),
+      emitDecoderExpression(
+        ctx,
+        dec,
+        variant.type,
+        mode,
+        seenTypes,
+        undefined,
+        projection,
+        encodingTarget,
+      ),
     )
     .join(", ");
   return `Decoders.union<${payloadTypeToTs(ctx, union, projection)}>([${variants}])`;
@@ -1110,96 +1127,4 @@ function applyValidationDecorators(
 
   if (validators.length === 0) return expression;
   return `${expression}.validate(${validators.join(", ")})`;
-}
-
-function emitValidatorsForTarget(ctx: EmitterCtx, target: Type, kind: DecodedTypeKind): string[] {
-  const program = ctx.program;
-  const validators: string[] = [];
-
-  const minValue = getMinValueAsNumeric(program, target);
-  if (minValue) {
-    validators.push(`Validators.minValue(${emitNumericValue(minValue, kind === "bigint")})`);
-  }
-
-  const maxValue = getMaxValueAsNumeric(program, target);
-  if (maxValue) {
-    validators.push(`Validators.maxValue(${emitNumericValue(maxValue, kind === "bigint")})`);
-  }
-
-  const minValueExclusive = getMinValueExclusiveAsNumeric(program, target);
-  if (minValueExclusive) {
-    validators.push(
-      `Validators.minValueExclusive(${emitNumericValue(minValueExclusive, kind === "bigint")})`,
-    );
-  }
-
-  const maxValueExclusive = getMaxValueExclusiveAsNumeric(program, target);
-  if (maxValueExclusive) {
-    validators.push(
-      `Validators.maxValueExclusive(${emitNumericValue(maxValueExclusive, kind === "bigint")})`,
-    );
-  }
-
-  const minLength = getMinLength(program, target);
-  if (minLength !== undefined) {
-    validators.push(`Validators.minLength(${minLength})`);
-  }
-
-  const maxLength = getMaxLength(program, target);
-  if (maxLength !== undefined) {
-    validators.push(`Validators.maxLength(${maxLength})`);
-  }
-
-  const minItems = getMinItems(program, target);
-  if (minItems !== undefined) {
-    validators.push(`Validators.minItems(${minItems})`);
-  }
-
-  const maxItems = getMaxItems(program, target);
-  if (maxItems !== undefined) {
-    validators.push(`Validators.maxItems(${maxItems})`);
-  }
-
-  const pattern = getPatternData(program, target);
-  if (pattern) {
-    validators.push(
-      `Validators.pattern(${JSON.stringify(pattern.pattern)}${pattern.validationMessage ? `, ${JSON.stringify(pattern.validationMessage)}` : ""})`,
-    );
-  }
-
-  return validators;
-}
-
-type DecodedTypeKind = "number" | "bigint" | "string" | "bytes" | "array" | "other";
-
-function decodedTypeKind(ctx: EmitterCtx, type: Type): DecodedTypeKind {
-  switch (type.kind) {
-    case "Scalar": {
-      const ts = scalarToTs(type);
-      if (ts === "number" || ts === "bigint" || ts === "string") return ts;
-      if (ts === "Uint8Array") return "bytes";
-      return "other";
-    }
-    case "Model":
-      return isArrayModelType(ctx.program, type) ? "array" : "other";
-    case "Tuple":
-      return "array";
-    case "ModelProperty":
-      return decodedTypeKind(ctx, type.type);
-    case "String":
-      return "string";
-    case "Number":
-      return "number";
-    default:
-      return "other";
-  }
-}
-
-function emitNumericValue(value: Numeric, preferBigInt: boolean): string {
-  if (preferBigInt && value.isInteger) {
-    return `${value.toString()}n`;
-  }
-
-  const numberValue = value.asNumber();
-  return numberValue === null ? `Number(${JSON.stringify(value.toString())})` : String(numberValue);
 }

@@ -335,11 +335,24 @@ should still configure transport-level limits and request deadlines in their tru
 hosting runtime.
 
 Modeled success and error values are encoded using their declared status, headers, body, and media
-type. Full-range `int64` and `uint64` handler values use `bigint` and are emitted as exact,
-unquoted JSON numeric tokens; clients interpret those tokens according to their JSON number
-implementation. Inbound JSON integer tokens longer than 20 digits are rejected before handler
-decoding to bound precise-integer parsing. TypeSpec `bytes` map to `Uint8Array` and are base64
-strings when nested in JSON.
+type. Full-range `int64` and `uint64` handler values use `bigint` and, without an explicit
+encoding, are emitted as exact, unquoted JSON numeric tokens; clients interpret those tokens
+according to their JSON number implementation. Inbound JSON integer tokens longer than 20 digits
+are rejected before handler decoding to bound precise-integer parsing. TypeSpec `bytes` map to
+`Uint8Array` and default to base64 strings when nested in JSON.
+
+Standard TypeSpec `@encode` contracts are applied at every scalar boundary: JSON and text bodies,
+path, query, header, and cookie parameters, multipart scalar parts, and modeled response headers.
+Numeric and boolean values can be string-encoded; date-times support `rfc3339`, `rfc7231`, and
+`unixTimestamp`; durations support `ISO8601`, `seconds`, and `milliseconds`; bytes support
+`base64` and unpadded `base64url`. Encodings declared on a scalar are inherited and a property
+encoding takes precedence. Unannotated HTTP values follow TypeSpec's protocol defaults:
+date-times use RFC 7231 in headers and RFC 3339 elsewhere, durations use ISO 8601, and bytes use
+base64 whenever the wire location is textual. Handler types stay semantic: date-times and
+durations are strings, bytes are `Uint8Array`, and 64-bit integers are `bigint`. Date-time wire
+values are converted to RFC 3339 handler strings, while numeric duration values become ISO 8601
+handler strings. Raw binary bodies contain exact bytes and cannot apply a textual scalar encoding;
+use a textual or JSON media type instead.
 
 Raw file responses accept a Web `File`, validate its media type, and use its name for a safe
 `Content-Disposition` filename. Empty optional media types and names omit those response headers;
@@ -353,10 +366,11 @@ configured.
 ## Current Contract Boundaries
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
-diagnostics cover unsupported `@encode`, non-JSON encoded property names, visibility decorators,
-`@discriminated` union envelopes, and standard `@useAuth` metadata. They also reject ambiguous
-nested response unions that require different JSON transforms, parameter serialization styles,
-media/body shape combinations, and output layouts that the generated runtime cannot represent
+diagnostics cover custom or location-incompatible scalar encodings, non-JSON encoded property
+names, visibility decorators, `@discriminated` union envelopes, and standard `@useAuth` metadata.
+They also reject ambiguous nested response unions that require different JSON transforms,
+parameter serialization styles, media/body shape combinations, and output layouts that the
+generated runtime cannot represent
 safely. Authentication and authorization enforcement should currently be implemented in
 application middleware. Supported response bodies are JSON, `text/*`,
 `application/octet-stream`, resolved raw `File` media types, and empty responses. Multipart

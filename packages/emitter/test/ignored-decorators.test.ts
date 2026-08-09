@@ -20,7 +20,7 @@ namespace ${title};
 
 const encodeSpec = `${header("EncodeApi")}
 model Event {
-  @encode("unixTimestamp", int32)
+  @encode("epochDay", int32)
   createdAt: utcDateTime;
 }
 @route("/events") interface Events {
@@ -65,7 +65,7 @@ model Item { id: string; createdAt: utcDateTime; }
 const inheritedScalarEncodeSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
-@encode("unixTimestamp", int32)
+@encode("epochDay", int32)
 scalar EncodedInstant extends utcDateTime;
 scalar DerivedInstant extends EncodedInstant;
 @service namespace ScalarApi {
@@ -77,7 +77,7 @@ scalar DerivedInstant extends EncodedInstant;
 const sharedScalarEncodeSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
-@encode("unixTimestamp", int32)
+@encode("epochDay", int32)
 scalar EncodedInstant extends utcDateTime;
 @service namespace SharedScalarApi {
   model Event { createdAt: EncodedInstant; }
@@ -97,7 +97,7 @@ using TypeSpec.Http;
 
 @service namespace UnsupportedService {
   model Event {
-    @encode("unixTimestamp", int32)
+    @encode("epochDay", int32)
     createdAt: utcDateTime;
   }
   @route("/events") @post op create(@body body: Event): Event;
@@ -106,7 +106,14 @@ using TypeSpec.Http;
 
 describe("unsupported decorator diagnostics", () => {
   for (const [decorator, fixture, source, diagnosticCode, target, serviceDir] of [
-    ["@encode", "diag-encode", encodeSpec, "ignored-encode", "createdAt", "encode-api"],
+    [
+      "custom @encode",
+      "diag-encode",
+      encodeSpec,
+      "unsupported-scalar-encoding",
+      "createdAt",
+      "encode-api",
+    ],
     [
       "@discriminated",
       "diag-discriminated",
@@ -140,7 +147,7 @@ describe("unsupported decorator diagnostics", () => {
     );
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
 
-    expect(diagnostics).toContain("ignored-encode");
+    expect(diagnostics).toContain("unsupported-scalar-encoding");
     expect(diagnostics).toContain("main.tsp:5:8");
     expect(diagnostics).toContain("scalar EncodedInstant extends utcDateTime;");
     expect(result.listFiles("scalar-api")).toEqual([]);
@@ -153,13 +160,11 @@ describe("unsupported decorator diagnostics", () => {
     );
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
 
-    expect(diagnostics.match(/@typespex\/emitter\/ignored-encode:/g) ?? []).toHaveLength(2);
-    expect(diagnostics).toContain(
-      'operation "create" would use the wrong wire format for property "body.createdAt"',
-    );
-    expect(diagnostics).toContain(
-      'operation "update" would use the wrong wire format for property "body.createdAt"',
-    );
+    expect(
+      diagnostics.match(/@typespex\/emitter\/unsupported-scalar-encoding:/g) ?? [],
+    ).toHaveLength(2);
+    expect(diagnostics).toContain('operation "create" uses it at "body.createdAt"');
+    expect(diagnostics).toContain('operation "update" uses it at "body.createdAt"');
     expect(result.listFiles("shared-scalar-api")).toEqual([]);
   });
 
@@ -170,7 +175,7 @@ describe("unsupported decorator diagnostics", () => {
     );
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
 
-    expect(diagnostics).toContain("ignored-encode");
+    expect(diagnostics).toContain("unsupported-scalar-encoding");
     expect(result.listFiles("clean-service")).toEqual([]);
     expect(result.listFiles("unsupported-service")).toEqual([]);
   });
@@ -262,7 +267,8 @@ describe("unsupported request body serialization", () => {
     );
 
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
-    expect(diagnostics).toContain("ignored-encode");
+    expect(diagnostics).toContain("unsupported-request-body");
+    expect(diagnostics).toContain("binary bodies cannot apply scalar encoding");
     expect(diagnostics).toContain("body");
     expect(result.listFiles("explicit-body-encode-api")).toEqual([]);
   });
