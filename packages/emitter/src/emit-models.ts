@@ -7,13 +7,17 @@ import type {
   Union,
   UnionVariant,
 } from "@typespec/compiler";
-import { isArrayModelType, isRecordModelType, isTemplateDeclaration } from "@typespec/compiler";
+import { isArrayModelType, isTemplateDeclaration } from "@typespec/compiler";
 import { SyntaxKind, type TypeReferenceNode } from "@typespec/compiler/ast";
-import { isMetadata } from "@typespec/http";
 import { getGeneratedTypeName, hasGeneratedTypeNameCollision, type EmitterCtx } from "./ctx.js";
 import { isHttpFileModel, isHttpPartModel } from "./http-models.js";
+import { isPureRecordModel } from "./model-indexer.js";
 import { getNamespaceFullName } from "./namespace-names.js";
-import { templateParametersToTs, typeToTs } from "./type-reference.js";
+import {
+  modelAdditionalPropertiesToTs,
+  templateParametersToTs,
+  typeToTs,
+} from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
 
 /**
@@ -50,12 +54,9 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   // Skip built-in TypeSpec models
   if (model.namespace?.name === "TypeSpec") return;
 
-  // Skip array and record model types — they don't need their own interface
-  if (
-    isArrayModelType(ctx.program, model) ||
-    isRecordModelType(ctx.program, model)
-  )
-    return;
+  // Collection aliases do not need their own interface. Mixed record models do:
+  // their declared fields and their explicit indexer carry distinct semantics.
+  if (isArrayModelType(ctx.program, model) || isPureRecordModel(model)) return;
 
   if (ctx.emittedModels.has(model)) return;
   ctx.emittedModels.add(model);
@@ -67,25 +68,26 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   const extendsClause = baseModel ? ` extends ${baseModel}` : "";
   lines.push(`export interface ${modelName}${typeParams}${extendsClause} {`);
   for (const prop of props) {
-    if (isMetadata(ctx.program, prop)) continue;
     const tsType = typeToTs(ctx, prop.type);
     lines.push(`  ${tsPropertyDeclaration(prop.name, tsType, { optional: prop.optional })};`);
   }
+  const indexer = modelAdditionalPropertiesToTs(ctx, model);
+  if (indexer) lines.push(`  ${indexer};`);
   lines.push("}");
   lines.push("");
 }
 
 function getBaseModelReference(ctx: EmitterCtx, model: Model): string | undefined {
   const node = model.node;
-  const baseExpression = node?.kind === SyntaxKind.ModelStatement
-    ? node.extends
-    : undefined;
+  const baseExpression = node?.kind === SyntaxKind.ModelStatement ? node.extends : undefined;
   const resolvedBase = baseExpression
     ? ctx.program.checker.getTypeForNode(baseExpression)
     : undefined;
   const baseModel = resolvedBase?.kind === "Model" ? resolvedBase : model.baseModel;
   if (!baseModel || !shouldEmitBaseModel(ctx, baseModel)) return undefined;
-  const sourceReference = baseExpression ? typeReferenceExpressionToTs(ctx, baseExpression) : undefined;
+  const sourceReference = baseExpression
+    ? typeReferenceExpressionToTs(ctx, baseExpression)
+    : undefined;
   return sourceReference ?? typeToTs(ctx, baseModel);
 }
 
@@ -101,8 +103,8 @@ function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: Expression): s
   const target = referenceTargetToTs(ctx, expression.target);
   if (!target) return undefined;
 
-  const args = expression.arguments.map((arg) =>
-    expressionSourceToTs(ctx, arg.argument) ?? expressionTypeToTs(ctx, arg.argument)
+  const args = expression.arguments.map(
+    (arg) => expressionSourceToTs(ctx, arg.argument) ?? expressionTypeToTs(ctx, arg.argument),
   );
   return args.length > 0 ? `${target}<${args.join(", ")}>` : target;
 }
@@ -159,10 +161,10 @@ function expressionSourceToTs(ctx: EmitterCtx, expression: Expression): string |
 function shouldEmitBaseModel(ctx: EmitterCtx, model: Model): boolean {
   return Boolean(
     model.name &&
-      model.name !== "" &&
-      model.namespace?.name !== "TypeSpec" &&
-      !isArrayModelType(ctx.program, model) &&
-      !isRecordModelType(ctx.program, model),
+    model.name !== "" &&
+    model.namespace?.name !== "TypeSpec" &&
+    !isArrayModelType(ctx.program, model) &&
+    !isPureRecordModel(model),
   );
 }
 
@@ -208,13 +210,16 @@ function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
   const variants = [...union.variants.values()];
   const variantTypes = variants.map((v) => unionVariantToTs(ctx, v)).join(" | ");
 
-  lines.push(`export type ${getGeneratedTypeName(ctx, union, "Union")}${typeParams} = ${variantTypes};`);
+  lines.push(
+    `export type ${getGeneratedTypeName(ctx, union, "Union")}${typeParams} = ${variantTypes};`,
+  );
   lines.push("");
 }
 
 function unionVariantToTs(ctx: EmitterCtx, variant: UnionVariant): string {
-  const source = variant.node?.kind === SyntaxKind.UnionVariant
-    ? expressionSourceToTs(ctx, variant.node.value)
-    : undefined;
+  const source =
+    variant.node?.kind === SyntaxKind.UnionVariant
+      ? expressionSourceToTs(ctx, variant.node.value)
+      : undefined;
   return source ?? typeToTs(ctx, variant.type);
 }

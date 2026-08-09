@@ -7,14 +7,21 @@ import {
   isType,
   walkPropertiesInherited,
 } from "@typespec/compiler";
-import type { HttpOperation, HttpOperationResponse } from "@typespec/http";
+import type {
+  HttpOperation,
+  HttpOperationResponse,
+  HttpOperationResponseContent,
+  HttpPayloadBody,
+  HttpStatusCodeRange,
+} from "@typespec/http";
 import {
   getHeaderFieldName,
   getHeaderFieldOptions,
+  getStatusCodes,
   isHeader,
-  isMetadata,
   isStatusCode,
 } from "@typespec/http";
+import { isJsonMediaType, isTextMediaType, normalizeMediaType } from "./body-media-kinds.js";
 import {
   allocateGeneratedNames,
   getGeneratedTypeName,
@@ -23,17 +30,36 @@ import {
   hasGeneratedTypeNameCollision,
   type EmitterCtx,
 } from "./ctx.js";
-import { getHttpPartType, isHttpFileModel } from "./http-models.js";
+import { getHttpPartType, isHttpFileModel, propertiesShareSource } from "./http-models.js";
 import { $lib } from "./lib.js";
+import {
+  getAdditionalPropertiesValue,
+  isNeverAdditionalProperties,
+  isPureRecordModel,
+} from "./model-indexer.js";
+import { multipartBodyTypeToTs, multipartModelPropertyDeclarations } from "./multipart-input.js";
+import {
+  getPayloadCollection,
+  getPayloadBodyContext,
+  getRequestBodyProjection,
+  getResponseBodyProjection,
+  payloadModelProperties,
+  payloadProjectionChangesType,
+  payloadPropertyOptional,
+  payloadTypeToTs,
+} from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
+import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
 import { isEntityLike } from "./type-guards.js";
 import {
+  isNamedUnionReference,
   isTemplatedScalarReference,
   isTemplatedUnionReference,
   isTypeSpecNamespaceModel,
   typeToTs,
 } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+import { isBytesScalar, isTextResponseType, unsupportedFileContentsReason } from "./wire-types.js";
 
 export interface OperationGroup {
   interfaceName?: string;
@@ -75,11 +101,16 @@ function addModelName(ctx: EmitterCtx, type: Type, names: Set<string>, seen: Set
   if (seen.has(type)) return;
   seen.add(type);
 
-  if (type.kind === "Model" && typeof type.name === "string" && type.name !== "") {
-    if (isArrayModelType(ctx.program, type) || isRecordModelType(ctx.program, type)) {
+  if (type.kind === "Model") {
+    if (isArrayModelType(ctx.program, type)) {
       if (type.indexer) {
         addModelName(ctx, type.indexer.value, names, seen);
       }
+      return;
+    }
+    if (isPureRecordModel(type)) {
+      const additionalType = getAdditionalPropertiesValue(type);
+      if (additionalType) addModelName(ctx, additionalType, names, seen);
       return;
     }
 
@@ -90,10 +121,12 @@ function addModelName(ctx: EmitterCtx, type: Type, names: Set<string>, seen: Set
     }
     if (isHttpFileModel(ctx.program, type)) return;
 
-    if (isTypeSpecNamespaceModel(type)) {
+    if (!type.name || isTypeSpecNamespaceModel(type)) {
       for (const prop of walkPropertiesInherited(type)) {
         addModelName(ctx, prop.type, names, seen);
       }
+      const additionalType = getAdditionalPropertiesValue(type);
+      if (additionalType) addModelName(ctx, additionalType, names, seen);
       return;
     }
 
@@ -111,6 +144,8 @@ function addModelName(ctx: EmitterCtx, type: Type, names: Set<string>, seen: Set
     for (const prop of walkPropertiesInherited(type)) {
       addModelName(ctx, prop.type, names, seen);
     }
+    const additionalType = getAdditionalPropertiesValue(type);
+    if (additionalType) addModelName(ctx, additionalType, names, seen);
   }
 
   if (type.kind === "Union") {
@@ -145,8 +180,7 @@ function addReferencedUnionName(
   names: Set<string>,
   seen: Set<Type>,
 ): void {
-  if (!type.name || (!isTemplatedUnionReference(type) && !hasGeneratedTypeNameCollision(ctx, type)))
-    return;
+  if (!isNamedUnionReference(type) && !hasGeneratedTypeNameCollision(ctx, type)) return;
   names.add(getGeneratedTypeName(ctx, type, "Union"));
   addTemplateArgumentModelNames(ctx, type.templateMapper?.args ?? [], names, seen);
 }
@@ -234,6 +268,7 @@ export function groupOperations(ctx: EmitterCtx, operations: HttpOperation[]): O
 
 export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
+  const inputPlan = getRequestInputPlan(ctx, op);
 
   for (const param of op.parameters.parameters) {
     parts.push(
@@ -249,52 +284,53 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
 
     // Multipart body — build type from parts
     if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {
-      const multipartParts: string[] = [];
       const bodyOptional = body.property?.optional === true;
-      const multiParts = (body as any).parts as ReadonlyArray<{
-        name?: string;
-        body: { type: Type };
-        optional: boolean;
-        multi: boolean;
-      }>;
-      for (const part of multiParts) {
-        if (!part.name) continue;
-        let tsType = typeToTs(ctx, part.body.type);
-        if (part.multi) tsType = `${tsType}[]`;
-        multipartParts.push(
-          tsPropertyDeclaration(part.name, tsType, {
-            optional: part.optional || (bodyOptional && hasNonBodyInput),
+      if (inputPlan.body?.placement === "wrapped") {
+        const multipartType = multipartBodyTypeToTs(ctx, body);
+        parts.push(
+          tsPropertyDeclaration(inputPlan.body.propertyName, multipartType, {
+            optional: bodyOptional,
           }),
         );
+        return `{ ${parts.join("; ")} }`;
       }
       if (bodyOptional && !hasNonBodyInput) {
-        const multipartType =
-          multipartParts.length > 0 ? `{ ${multipartParts.join("; ")} }` : "Record<string, never>";
+        const multipartType = multipartBodyTypeToTs(ctx, body);
         return `${multipartType} | undefined`;
       }
-      parts.push(...multipartParts);
+      if (body.multipartKind === "tuple") {
+        return multipartBodyTypeToTs(ctx, body);
+      }
+      parts.push(...multipartModelPropertyDeclarations(ctx, body, bodyOptional && hasNonBodyInput));
     } else {
       const bodyType = body.type;
       const bodyOptional = body.property?.optional === true;
+      const projection = getRequestBodyProjection(ctx, op);
+      // Materialize the complete projected reference even when the public
+      // handler shape is flattened. Recursive decoder declarations may need
+      // the projection-specific alias registered by this call.
+      const bodyTypeTs = payloadTypeToTs(ctx, bodyType, projection);
       if (parts.length === 0) {
-        const bodyTypeTs = typeToTs(ctx, bodyType);
         return bodyOptional ? `${bodyTypeTs} | undefined` : bodyTypeTs;
       }
 
-      if (shouldFlattenBodyType(ctx, bodyType)) {
-        for (const prop of walkPropertiesInherited(bodyType)) {
-          if (isMetadata(ctx.program, prop)) continue;
+      if (inputPlan.body?.placement === "flattened" && shouldFlattenBodyType(ctx, bodyType)) {
+        for (const prop of payloadModelProperties(bodyType, projection)) {
           parts.push(
-            tsPropertyDeclaration(prop.name, typeToTs(ctx, prop.type), {
-              optional: bodyOptional || prop.optional,
+            tsPropertyDeclaration(prop.name, payloadTypeToTs(ctx, prop.type, projection), {
+              optional: bodyOptional || payloadPropertyOptional(prop, projection),
             }),
           );
         }
       } else {
         parts.push(
-          tsPropertyDeclaration("body", typeToTs(ctx, bodyType), {
-            optional: bodyOptional,
-          }),
+          tsPropertyDeclaration(
+            inputPlan.body?.placement === "wrapped" ? inputPlan.body.propertyName : "body",
+            bodyTypeTs,
+            {
+              optional: bodyOptional,
+            },
+          ),
         );
       }
     }
@@ -339,6 +375,19 @@ export function buildResultType(ctx: EmitterCtx, op: HttpOperation): string {
 
 function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | undefined {
   if (op.responses.length !== 1) return undefined;
+  const [response] = op.responses;
+  if (response.responses.length !== 1 || hasResponseEnvelopeMetadata(response)) {
+    return undefined;
+  }
+
+  const [content] = response.responses;
+  const body = content?.body;
+  if (
+    !body ||
+    payloadProjectionChangesType(ctx, body.type, getResponseBodyProjection(ctx, content))
+  ) {
+    return undefined;
+  }
 
   const returnType = op.operation.returnType;
   if (returnType.kind === "Union" && isTemplatedUnionReference(returnType)) {
@@ -353,24 +402,12 @@ function operationReturnAliasToTs(ctx: EmitterCtx, op: HttpOperation): string | 
   return undefined;
 }
 
-export function shouldFlattenBodyType(ctx: EmitterCtx, type: Type): type is Model {
-  return (
-    type.kind === "Model" &&
-    !isArrayModelType(ctx.program, type) &&
-    !isRecordModelType(ctx.program, type)
-  );
-}
-
 function responseTypeToTs(ctx: EmitterCtx, resp: HttpOperationResponse): string {
   if (resp.type.kind !== "Model" || !hasResponseEnvelopeMetadata(resp)) {
     return typeToTs(ctx, resp.type);
   }
 
-  if (resp.type.name && !hasHandlerVisibleMetadata(resp)) {
-    return typeToTs(ctx, resp.type);
-  }
-
-  const hiddenProperties = getHiddenResponsePropertyNames(resp);
+  const hiddenProperties = getHiddenResponsePropertyNames(ctx, resp);
   const parts: string[] = [];
   for (const prop of resp.type.properties.values()) {
     if (hiddenProperties.has(prop.name)) continue;
@@ -390,22 +427,20 @@ function hasResponseEnvelopeMetadata(resp: HttpOperationResponse): boolean {
         prop.kind === "header" ||
         prop.kind === "statusCode" ||
         prop.kind === "contentType" ||
-        prop.kind === "body",
+        prop.kind === "body" ||
+        prop.kind === "bodyRoot",
     ),
   );
 }
 
-function hasHandlerVisibleMetadata(resp: HttpOperationResponse): boolean {
-  return resp.responses.some((content) =>
-    content.properties.some((prop) => prop.kind === "header" || prop.kind === "body"),
-  );
-}
-
-function getHiddenResponsePropertyNames(resp: HttpOperationResponse): Set<string> {
+function getHiddenResponsePropertyNames(ctx: EmitterCtx, resp: HttpOperationResponse): Set<string> {
   const hidden = new Set<string>();
   for (const content of resp.responses) {
     for (const prop of content.properties) {
-      if (prop.kind === "statusCode" || prop.kind === "contentType") {
+      if (
+        prop.kind === "contentType" ||
+        (prop.kind === "statusCode" && !isDynamicStatusProperty(ctx, prop.property))
+      ) {
         hidden.add(prop.property.name);
       }
     }
@@ -413,8 +448,90 @@ function getHiddenResponsePropertyNames(resp: HttpOperationResponse): Set<string
   return hidden;
 }
 
-export function toColonPath(path: string): string {
-  return path.replace(/\{([^}]+)\}/g, ":$1");
+export function reportUnsupportedResponseStatusContracts(
+  ctx: EmitterCtx,
+  operations: readonly HttpOperation[],
+): void {
+  for (const op of operations) {
+    const checkedProperties = new Set<ModelProperty>();
+    for (const response of op.responses) {
+      const statusProperties = response.responses.flatMap((content) =>
+        content.properties
+          .filter((property) => property.kind === "statusCode")
+          .map((property) => property.property),
+      );
+
+      if (statusProperties.length === 0) {
+        if (response.statusCodes === "*") {
+          reportUnsupportedStatus(
+            ctx,
+            op,
+            'wildcard status "*" has no @statusCode property that can provide the actual response status',
+          );
+        } else if (typeof response.statusCodes === "object") {
+          reportUnsupportedStatus(
+            ctx,
+            op,
+            `range ${formatStatusContract(response.statusCodes)} has no @statusCode property that can provide the actual response status`,
+          );
+        } else {
+          const reason = unsupportedFetchStatusReason(response.statusCodes);
+          if (reason) reportUnsupportedStatus(ctx, op, reason);
+        }
+        continue;
+      }
+
+      for (const property of statusProperties) {
+        if (checkedProperties.has(property)) continue;
+        checkedProperties.add(property);
+        for (const status of getStatusCodes(ctx.program, property)) {
+          if (status === "*") {
+            reportUnsupportedStatus(
+              ctx,
+              op,
+              'wildcard status "*" cannot be selected by Fetch Response',
+              property,
+            );
+            continue;
+          }
+          const reason = unsupportedFetchStatusReason(status);
+          if (reason) reportUnsupportedStatus(ctx, op, reason, property);
+        }
+      }
+    }
+  }
+}
+
+function unsupportedFetchStatusReason(status: ResponseStatusContract): string | undefined {
+  if (typeof status === "number") {
+    return Number.isInteger(status) && status >= 200 && status <= 599
+      ? undefined
+      : `status ${status} is outside Fetch Response's supported integer range 200–599`;
+  }
+  return Number.isInteger(status.start) &&
+    Number.isInteger(status.end) &&
+    status.start >= 200 &&
+    status.end <= 599 &&
+    status.start <= status.end
+    ? undefined
+    : `range ${formatStatusContract(status)} is outside Fetch Response's supported integer range 200–599`;
+}
+
+function formatStatusContract(status: HttpStatusCodeRange): string {
+  return `${status.start}–${status.end}`;
+}
+
+function reportUnsupportedStatus(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  reason: string,
+  target: ModelProperty | undefined = undefined,
+): void {
+  $lib.reportDiagnostic(ctx.program, {
+    code: "unsupported-response-status-code",
+    format: { operationName: op.operation.name, reason },
+    target: target ?? op.operation,
+  });
 }
 
 /** Response encoder expression used in generated result encoder objects. */
@@ -453,7 +570,7 @@ export function emitResultResponseEncoder(
     return `ResponseEncoders.empty(${response.statusCode})`;
   }
 
-  const kind = classifyResponseContentType(ctx, op, response.contentType);
+  const kind = classifyResponseVariant(ctx, op, response);
   if (kind === "unsupported") {
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
@@ -479,13 +596,26 @@ export function emitResultResponseEncoder(
 }
 
 function shouldUseVariantEncoder(response: SuccessResponseVariant): boolean {
-  return response.bodyProperty !== undefined || response.omitProperties.length > 0;
+  return (
+    !response.hasBody ||
+    response.body?.bodyKind === "file" ||
+    response.dynamicStatus !== undefined ||
+    response.bodyProperty !== undefined ||
+    response.omitProperties.length > 0
+  );
 }
 
 interface SuccessResponseVariant {
   readonly statusCode: number;
+  readonly dynamicStatus?: DynamicResponseStatusPlan;
   readonly isVoid: boolean;
+  readonly hasBody: boolean;
+  readonly body?: HttpPayloadBody;
   readonly contentType: string | undefined;
+  readonly fileContentTypes: readonly string[];
+  readonly fileContentTypeRequired: boolean;
+  readonly fileNameRequired: boolean;
+  readonly emitFileContentDisposition: boolean;
   readonly headers: ResponseHeader[];
   readonly bodyProperty?: string;
   readonly omitProperties: readonly string[];
@@ -495,19 +625,31 @@ interface SuccessResponseVariant {
   readonly hiddenProperties: ReadonlySet<string>;
 }
 
+type ResponseStatusContract = number | HttpStatusCodeRange;
+
+interface DynamicResponseStatusPlan {
+  readonly property: ModelProperty;
+  readonly allowed: readonly ResponseStatusContract[];
+}
+
 function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessResponseVariant[] {
   const variants: SuccessResponseVariant[] = [];
 
   for (const resp of op.responses) {
     const statusCode = resolveResponseStatusCode(ctx, resp);
     const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
-    const hiddenProperties = getHiddenResponsePropertyNames(resp);
+    const hiddenProperties = getHiddenResponsePropertyNames(ctx, resp);
 
     if (isVoid || resp.responses.length === 0) {
       variants.push({
         statusCode: isVoid && statusCode === 200 ? 204 : statusCode,
         isVoid,
+        hasBody: false,
         contentType: undefined,
+        fileContentTypes: [],
+        fileContentTypeRequired: false,
+        fileNameRequired: false,
+        emitFileContentDisposition: true,
         headers: [],
         omitProperties: [],
         type: resp.type,
@@ -526,7 +668,16 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
     // the first.
     for (const content of resp.responses) {
       const body = content.body;
-      const declaredContentTypes = body?.contentTypes.length ? body.contentTypes : [undefined];
+      const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
+      const bodyProperty = getResponseBodyProperty(ctx, content);
+      const emitFileContentDisposition =
+        body?.bodyKind !== "file" || !isFileNameResponseHeader(body, content);
+      const declaredContentTypes =
+        body?.bodyKind === "file"
+          ? [undefined]
+          : body?.contentTypes.length
+            ? body.contentTypes
+            : [undefined];
       const headers = collectResponseHeadersFromContent(ctx, content);
       const metadataProperties = content.properties.filter(
         (prop) =>
@@ -544,10 +695,18 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
       for (const contentType of declaredContentTypes) {
         variants.push({
           statusCode,
+          dynamicStatus,
           isVoid: false,
+          hasBody: body !== undefined,
+          body,
           contentType,
+          fileContentTypes: body?.bodyKind === "file" ? body.contentTypes : [],
+          fileContentTypeRequired: body?.bodyKind === "file" && !body.contentTypeProperty.optional,
+          fileNameRequired:
+            body?.bodyKind === "file" && !body.filename.optional && emitFileContentDisposition,
+          emitFileContentDisposition,
           headers,
-          bodyProperty: body?.property?.name,
+          bodyProperty,
           omitProperties: metadataProperties.map((prop) => prop.property.name),
           type: body?.type ?? resp.type,
           model: variantModel,
@@ -558,63 +717,257 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
     }
   }
 
-  return variants;
+  return deduplicateDynamicStatusVariants(variants);
+}
+
+function isFileNameResponseHeader(
+  body: Extract<HttpPayloadBody, { bodyKind: "file" }>,
+  content: HttpOperationResponseContent,
+): boolean {
+  return content.properties.some(
+    (property) =>
+      property.kind === "header" && propertiesShareSource(property.property, body.filename),
+  );
+}
+
+function getDynamicResponseStatusPlan(
+  ctx: EmitterCtx,
+  content: HttpOperationResponseContent,
+): DynamicResponseStatusPlan | undefined {
+  const property = content.properties.find(
+    (candidate) => candidate.kind === "statusCode",
+  )?.property;
+  if (!property) return undefined;
+
+  const allowed = getStatusCodes(ctx.program, property).filter(
+    (status): status is ResponseStatusContract => status !== "*",
+  );
+  if (allowed.length === 1 && typeof allowed[0] === "number") return undefined;
+  return allowed.length > 0 ? { property, allowed } : undefined;
+}
+
+function isDynamicStatusProperty(ctx: EmitterCtx, property: ModelProperty): boolean {
+  const allowed = getStatusCodes(ctx.program, property);
+  return allowed.length !== 1 || typeof allowed[0] !== "number";
+}
+
+function deduplicateDynamicStatusVariants(
+  variants: readonly SuccessResponseVariant[],
+): SuccessResponseVariant[] {
+  const deduplicated: SuccessResponseVariant[] = [];
+  for (const variant of variants) {
+    if (
+      variant.dynamicStatus &&
+      deduplicated.some(
+        (existing) =>
+          existing.dynamicStatus?.property === variant.dynamicStatus?.property &&
+          existing.tsType === variant.tsType &&
+          existing.hasBody === variant.hasBody &&
+          existing.body?.bodyKind === variant.body?.bodyKind &&
+          existing.contentType === variant.contentType &&
+          stringArraysEqual(existing.fileContentTypes, variant.fileContentTypes) &&
+          existing.bodyProperty === variant.bodyProperty &&
+          stringArraysEqual(existing.omitProperties, variant.omitProperties) &&
+          responseHeadersEqual(existing.headers, variant.headers),
+      )
+    ) {
+      continue;
+    }
+    deduplicated.push(variant);
+  }
+  return deduplicated;
+}
+
+function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function responseHeadersEqual(
+  left: readonly ResponseHeader[],
+  right: readonly ResponseHeader[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (value, index) =>
+        value.property === right[index]?.property &&
+        value.header === right[index]?.header &&
+        value.explode === right[index]?.explode,
+    )
+  );
 }
 
 /**
  * Handler-facing TypeScript type for a single content variant of a response.
  * For a single-content response with no envelope metadata, this is just the
  * underlying body type. Otherwise it's an envelope `{ body: T; ...headers }`
- * synthesized from this content's body and the response model's headers, with
- * statusCode/contentType always stripped (the runtime sets them).
+ * synthesized from this content's body and the response model's metadata.
+ * Fixed status and content type values are stripped; a ranged/union status is
+ * retained because the handler supplies the concrete response status.
  */
 function responseContentToTs(
   ctx: EmitterCtx,
   resp: HttpOperationResponse,
   content: HttpOperationResponse["responses"][number],
 ): string {
-  if (resp.type.kind !== "Model" || !hasResponseEnvelopeMetadata(resp)) {
-    // resp.type reflects only one variant when TypeSpec collapses a
-    // same-status union into a single response with one content entry per
-    // variant body — the content's own body type is the accurate one.
-    return typeToTs(ctx, content.body?.type ?? resp.type);
+  const body = content.body;
+  const headers = content.properties.filter((property) => property.kind === "header");
+  const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
+  const bodyProperty = getResponseBodyProperty(ctx, content);
+  if (!body) {
+    const parts: string[] = [];
+    if (dynamicStatus) {
+      parts.push(
+        tsPropertyDeclaration(
+          dynamicStatus.property.name,
+          typeToTs(ctx, dynamicStatus.property.type),
+          { optional: false },
+        ),
+      );
+    }
+    parts.push(...responsePropertyDeclarations(ctx, headers));
+    return objectTypeFromParts(parts);
   }
 
-  // Named model with no handler-visible metadata AND only one content entry
-  // can keep referring to the model by name. Multi-content responses always
-  // synthesize per-content envelopes because the bodies differ.
-  if (resp.type.name && !hasHandlerVisibleMetadata(resp) && resp.responses.length === 1) {
-    return typeToTs(ctx, resp.type);
+  const projection = getResponseBodyProjection(ctx, content);
+  const bodyContext = getPayloadBodyContext(body, content.properties);
+
+  if (!bodyProperty && bodyContext !== "explicit" && headers.length === 0 && !dynamicStatus) {
+    // A single implicit response can project the named source model directly.
+    // TypeSpec often gives `content.body.type` as an already-filtered anonymous
+    // model, which would otherwise discard reusable recursive/generic identity.
+    const sourceBodyType =
+      bodyContext === "implicit" && resp.responses.length === 1 && resp.type.kind === "Model"
+        ? resp.type
+        : body.type;
+    return payloadTypeToTs(ctx, sourceBodyType, projection);
   }
 
   const parts: string[] = [];
-  for (const prop of content.properties) {
-    if (prop.kind === "statusCode" || prop.kind === "contentType") continue;
-    const tsType =
-      prop.kind === "body" && content.body
-        ? typeToTs(ctx, content.body.type)
-        : typeToTs(ctx, prop.property.type);
+  if (bodyProperty) {
     parts.push(
-      tsPropertyDeclaration(prop.property.name, tsType, {
-        optional: prop.property.optional,
+      tsPropertyDeclaration(bodyProperty, payloadTypeToTs(ctx, body.type, projection), {
+        optional: body.property?.optional === true,
+      }),
+    );
+  } else if (shouldFlattenBodyType(ctx, body.type)) {
+    for (const property of payloadModelProperties(body.type, projection)) {
+      parts.push(
+        tsPropertyDeclaration(property.name, payloadTypeToTs(ctx, property.type, projection), {
+          optional:
+            body.property?.optional === true || payloadPropertyOptional(property, projection),
+        }),
+      );
+    }
+  } else if (headers.length === 0) {
+    return payloadTypeToTs(ctx, body.type, projection);
+  } else {
+    parts.push(
+      tsPropertyDeclaration("body", payloadTypeToTs(ctx, body.type, projection), {
+        optional: body.property?.optional === true,
       }),
     );
   }
-  return parts.length === 0 ? "Record<string, never>" : `{ ${parts.join("; ")} }`;
+
+  if (dynamicStatus) {
+    parts.push(
+      tsPropertyDeclaration(
+        dynamicStatus.property.name,
+        typeToTs(ctx, dynamicStatus.property.type),
+        { optional: false },
+      ),
+    );
+  }
+
+  for (const header of headers) {
+    parts.push(
+      tsPropertyDeclaration(header.property.name, typeToTs(ctx, header.property.type), {
+        optional: header.property.optional,
+      }),
+    );
+  }
+  return objectTypeFromParts(parts);
+}
+
+/**
+ * Selects an envelope property when flattening a `@bodyRoot` payload would
+ * collide with response metadata. Keeping the body nested preserves both
+ * values and prevents metadata omission from deleting a same-named body
+ * field during serialization.
+ */
+function getResponseBodyProperty(
+  ctx: EmitterCtx,
+  content: HttpOperationResponseContent,
+): string | undefined {
+  const body = content.body;
+  if (!body) return undefined;
+  if (body.bodyKind === "file") {
+    const hasVisibleMetadata = content.properties.some(
+      (property) =>
+        property.kind === "header" ||
+        (property.kind === "statusCode" && isDynamicStatusProperty(ctx, property.property)),
+    );
+    return hasVisibleMetadata ? (body.property?.name ?? "body") : undefined;
+  }
+  if (body.bodyKind !== "single") return undefined;
+
+  const bodyContext = getPayloadBodyContext(body, content.properties);
+  if (bodyContext === "explicit") return body.property?.name ?? "body";
+  if (bodyContext !== "root" || !body.property) return undefined;
+
+  const metadataNames = new Set(
+    content.properties
+      .filter(
+        (property) =>
+          property.kind === "header" ||
+          property.kind === "statusCode" ||
+          property.kind === "contentType",
+      )
+      .map((property) => property.property.name),
+  );
+  if (metadataNames.size === 0) return undefined;
+
+  if (!shouldFlattenBodyType(ctx, body.type)) return body.property.name;
+
+  const additionalProperties = getAdditionalPropertiesValue(body.type);
+  if (additionalProperties && !isNeverAdditionalProperties(body.type)) {
+    return body.property.name;
+  }
+
+  const projection = getResponseBodyProjection(ctx, content);
+  const collides = payloadModelProperties(body.type, projection).some((property) =>
+    metadataNames.has(property.name),
+  );
+  return collides ? body.property.name : undefined;
 }
 
 function collectResponseHeadersFromContent(
   ctx: EmitterCtx,
   content: HttpOperationResponse["responses"][number] | undefined,
 ): ResponseHeader[] {
-  if (!content?.headers) return [];
-  return Object.values(content.headers)
-    .filter((prop) => isHeader(ctx.program, prop))
-    .map((prop) => ({
-      property: prop.name,
-      header: getHeaderFieldName(ctx.program, prop).toLowerCase(),
-      explode: getHeaderFieldOptions(ctx.program, prop).explode === true,
+  if (!content) return [];
+  return content.properties
+    .filter((property) => property.kind === "header")
+    .map(({ property }) => ({
+      property: property.name,
+      header: getHeaderFieldName(ctx.program, property).toLowerCase(),
+      explode: getHeaderFieldOptions(ctx.program, property).explode === true,
     }));
+}
+
+function responsePropertyDeclarations(
+  ctx: EmitterCtx,
+  properties: readonly HttpOperationResponse["responses"][number]["properties"][number][],
+): string[] {
+  return properties.map(({ property }) =>
+    tsPropertyDeclaration(property.name, typeToTs(ctx, property.type), {
+      optional: property.optional,
+    }),
+  );
+}
+
+function objectTypeFromParts(parts: readonly string[]): string {
+  return parts.length > 0 ? `{ ${parts.join("; ")} }` : "Record<string, never>";
 }
 
 interface ResponseBranch {
@@ -653,6 +1006,14 @@ function collectBranches(
     const [response] = voidResponses;
     branches.push({ response, condition: "result === undefined" });
     pending.delete(response);
+  }
+
+  const statusBranches = resolveDynamicStatusBranches(ctx, [...pending]);
+  if (statusBranches === "ambiguous") return [];
+  if (statusBranches) {
+    branches.push(...statusBranches);
+    for (const branch of statusBranches) pending.delete(branch.response);
+    if (pending.size === 0) return branches;
   }
 
   // Envelope body-shape discriminator: when the remaining variants are
@@ -712,11 +1073,152 @@ function collectBranches(
   return [];
 }
 
+function resolveDynamicStatusBranches(
+  ctx: EmitterCtx,
+  responses: readonly SuccessResponseVariant[],
+): ResponseBranch[] | "ambiguous" | undefined {
+  if (responses.length < 2) return undefined;
+
+  const dynamicResponses = responses.filter((response) => response.dynamicStatus);
+  if (dynamicResponses.length === 0) return undefined;
+  const fixedResponses = responses.filter((response) => !response.dynamicStatus);
+  // Status alone cannot distinguish multiple fixed variants. Leave the full
+  // set to the existing body/discriminator dispatch in that case.
+  if (fixedResponses.length > 1) return undefined;
+
+  for (let left = 0; left < dynamicResponses.length; left += 1) {
+    for (let right = left + 1; right < dynamicResponses.length; right += 1) {
+      const leftStatus = dynamicResponses[left].dynamicStatus!;
+      const rightStatus = dynamicResponses[right].dynamicStatus!;
+      if (
+        leftStatus.property.name === rightStatus.property.name &&
+        statusContractsOverlap(leftStatus.allowed, rightStatus.allowed)
+      ) {
+        return undefined;
+      }
+    }
+  }
+
+  const statusProperties = [
+    ...new Set(dynamicResponses.map((response) => response.dynamicStatus!.property.name)),
+  ];
+
+  // A same-named body/header property on another variant would make presence
+  // of the dynamic status property ambiguous. Fall back to shape dispatch.
+  for (const response of responses) {
+    const ownStatusProperty = response.dynamicStatus?.property.name;
+    for (const property of statusProperties) {
+      if (
+        property !== ownStatusProperty &&
+        responseExposesHandlerProperty(ctx, response, property)
+      ) {
+        // An indexed direct body can legally materialize every discriminator
+        // property and overlap all later shape predicates. Treat that case as
+        // terminal ambiguity instead of silently falling through.
+        return responseHasOpenHandlerProperties(response) ? "ambiguous" : undefined;
+      }
+    }
+  }
+
+  const branches = dynamicResponses.map((response) => ({
+    response,
+    condition: emitDynamicStatusCondition(
+      response.dynamicStatus!,
+      statusProperties.filter((property) => property !== response.dynamicStatus!.property.name),
+    ),
+  }));
+  const [fixedResponse] = fixedResponses;
+  if (fixedResponse) {
+    branches.push({
+      response: fixedResponse,
+      condition: emitAbsentStatusPropertiesCondition(statusProperties),
+    });
+  }
+  return branches;
+}
+
+function statusContractsOverlap(
+  left: readonly ResponseStatusContract[],
+  right: readonly ResponseStatusContract[],
+): boolean {
+  return left.some((leftStatus) =>
+    right.some((rightStatus) => {
+      const leftRange =
+        typeof leftStatus === "number" ? { start: leftStatus, end: leftStatus } : leftStatus;
+      const rightRange =
+        typeof rightStatus === "number" ? { start: rightStatus, end: rightStatus } : rightStatus;
+      return leftRange.start <= rightRange.end && rightRange.start <= leftRange.end;
+    }),
+  );
+}
+
+function emitDynamicStatusCondition(
+  status: DynamicResponseStatusPlan,
+  excludedProperties: readonly string[] = [],
+): string {
+  const property = JSON.stringify(status.property.name);
+  const value = `(result as Record<string, unknown>)[${property}]`;
+  const allowed = status.allowed
+    .map((entry) =>
+      typeof entry === "number"
+        ? `${value} === ${entry}`
+        : `(${value} as number) >= ${entry.start} && (${value} as number) <= ${entry.end}`,
+    )
+    .map((condition) => `(${condition})`)
+    .join(" || ");
+  const excluded = excludedProperties
+    .map((name) => `!Object.prototype.hasOwnProperty.call(result, ${JSON.stringify(name)})`)
+    .join(" && ");
+  return [
+    `typeof result === "object"`,
+    `result !== null`,
+    `Object.prototype.hasOwnProperty.call(result, ${property})`,
+    `typeof ${value} === "number"`,
+    `(${allowed})`,
+    excluded,
+  ]
+    .filter(Boolean)
+    .join(" && ");
+}
+
+function emitAbsentStatusPropertiesCondition(properties: readonly string[]): string {
+  const absent = properties
+    .map((property) => `!Object.prototype.hasOwnProperty.call(result, ${JSON.stringify(property)})`)
+    .join(" && ");
+  return `typeof result !== "object" || result === null || (${absent})`;
+}
+
+function responseHasOpenHandlerProperties(response: SuccessResponseVariant): boolean {
+  return (
+    response.bodyProperty === undefined &&
+    response.model !== undefined &&
+    getAdditionalPropertiesValue(response.model) !== undefined &&
+    !isNeverAdditionalProperties(response.model)
+  );
+}
+
+function responseExposesHandlerProperty(
+  ctx: EmitterCtx,
+  response: SuccessResponseVariant,
+  propertyName: string,
+): boolean {
+  if (response.headers.some((header) => header.property === propertyName)) return true;
+  if (response.bodyProperty !== undefined) return response.bodyProperty === propertyName;
+
+  if (responseHasOpenHandlerProperties(response)) return true;
+
+  const property = getResponseProperty(response, propertyName);
+  return property !== undefined && !isResponseDispatchMetadata(ctx, response, propertyName);
+}
+
 function emitDirectTypeCondition(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
 ): string | undefined {
   const subject = subjectExpr(response);
+  if (response.body?.bodyKind === "file") {
+    return wrapSubjectGuard(response, `typeof File !== "undefined" && ${subject} instanceof File`);
+  }
   if (response.model && isArrayModelType(ctx.program, response.model)) {
     return wrapSubjectGuard(response, `Array.isArray(${subject})`);
   }
@@ -1029,7 +1531,7 @@ function emitResponseDecisionEncoder(
   branches.forEach((branch) => {
     const kind = branch.response.isVoid
       ? "empty"
-      : classifyResponseContentType(ctx, op, branch.response.contentType);
+      : classifyResponseVariant(ctx, op, branch.response);
     const branchEncoder =
       kind === "unsupported"
         ? emitUnsupportedEncoder(
@@ -1052,9 +1554,15 @@ function emitResponseVariant(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   response: SuccessResponseVariant,
 ): string {
-  const fields = [`status: ${response.statusCode}`];
+  const fields = [`status: ${emitResponseStatus(response)}`];
   if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
   if (response.contentType) fields.push(`contentType: ${JSON.stringify(response.contentType)}`);
+  if (response.fileContentTypes.length > 0) {
+    fields.push(`contentTypes: ${JSON.stringify(response.fileContentTypes)}`);
+  }
+  if (response.fileContentTypeRequired) fields.push("requireFileContentType: true");
+  if (response.fileNameRequired) fields.push("requireFileName: true");
+  if (!response.emitFileContentDisposition) fields.push("emitFileContentDisposition: false");
   if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
   if (response.headers.length > 0) {
     const headers = response.headers
@@ -1073,7 +1581,97 @@ function emitResponseVariant(
   return `{ ${fields.join(", ")} }`;
 }
 
-type ResponseEncoderKind = "json" | "text" | "bytes" | "empty" | "unsupported";
+function emitResponseStatus(response: SuccessResponseVariant): string {
+  if (!response.dynamicStatus) return String(response.statusCode);
+  const allowed = response.dynamicStatus.allowed
+    .map((status) =>
+      typeof status === "number"
+        ? String(status)
+        : `{ start: ${status.start}, end: ${status.end} }`,
+    )
+    .join(", ");
+  return `{ property: ${JSON.stringify(response.dynamicStatus.property.name)}, allowed: [${allowed}] }`;
+}
+
+type ResponseEncoderKind = "json" | "text" | "bytes" | "file" | "empty" | "unsupported";
+
+function classifyResponseVariant(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  response: SuccessResponseVariant,
+): ResponseEncoderKind {
+  if (!response.hasBody) return "empty";
+
+  const body = response.body;
+  if (body?.bodyKind === "file") {
+    const reason = unsupportedFileContentsReason(ctx.program, body);
+    if (!reason) return "file";
+    reportUnsupportedResponseBody(ctx, op, response, reason);
+    return "unsupported";
+  }
+  if (body && body.bodyKind !== "single") {
+    reportUnsupportedResponseBody(
+      ctx,
+      op,
+      response,
+      `${body.bodyKind} bodies require a dedicated response encoder`,
+    );
+    return "unsupported";
+  }
+
+  const kind = classifyResponseContentType(ctx, op, response.contentType);
+  if (kind === "unsupported") return kind;
+
+  const reason = incompatibleResponseBodyReason(response, kind);
+  if (!reason) return kind;
+
+  reportUnsupportedResponseBody(ctx, op, response, reason);
+  return "unsupported";
+}
+
+function reportUnsupportedResponseBody(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  response: SuccessResponseVariant,
+  reason: string,
+): void {
+  $lib.reportDiagnostic(ctx.program, {
+    code: "unsupported-response-body",
+    format: {
+      contentType:
+        response.body?.bodyKind === "file"
+          ? response.fileContentTypes.join(", ") || "*/*"
+          : (response.contentType ?? "application/json"),
+      operationName: op.operation.name,
+      reason,
+    },
+    target: response.body?.property ?? op.operation,
+  });
+}
+
+function incompatibleResponseBodyReason(
+  response: SuccessResponseVariant,
+  kind: Exclude<ResponseEncoderKind, "empty" | "unsupported">,
+): string | undefined {
+  const body = response.body;
+  if (!body) return "a response encoder was selected for an absent body";
+  if (body.bodyKind !== "single") return `${body.bodyKind} bodies are not single-value bodies`;
+
+  switch (kind) {
+    case "json":
+      return undefined;
+    case "text":
+      return isTextResponseType(body.type)
+        ? undefined
+        : "text responses require a scalar, literal, enum, or union of those types";
+    case "bytes":
+      return isBytesScalar(body.type)
+        ? undefined
+        : "binary responses require the TypeSpec bytes scalar";
+    case "file":
+      return "file responses require a resolved TypeSpec HTTP File body";
+  }
+}
 
 /**
  * Maps an HTTP response content type to the matching `ResponseEncoders` kind.
@@ -1087,11 +1685,12 @@ function classifyResponseContentType(
   ctx: EmitterCtx,
   op: HttpOperation,
   contentType: string | undefined,
-): ResponseEncoderKind {
+): Exclude<ResponseEncoderKind, "empty"> {
   if (!contentType) return "json";
-  if (contentType.includes("json")) return "json";
-  if (contentType === "text/plain" || contentType.startsWith("text/")) return "text";
-  if (contentType === "application/octet-stream") return "bytes";
+  const mediaType = normalizeMediaType(contentType);
+  if (mediaType && isJsonMediaType(mediaType)) return "json";
+  if (mediaType && isTextMediaType(mediaType)) return "text";
+  if (mediaType === "application/octet-stream") return "bytes";
 
   $lib.reportDiagnostic(ctx.program, {
     code: "unsupported-response-content-type",
@@ -1113,6 +1712,8 @@ function encoderForKind(
       return `ResponseEncoders.text(${status})`;
     case "bytes":
       return `ResponseEncoders.bytes(${status})`;
+    case "file":
+      return `ResponseEncoders.file(${status})`;
     case "json":
       return `ResponseEncoders.json<${tsType}>(${status})`;
   }

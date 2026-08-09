@@ -10,17 +10,19 @@ import {
   buildResultType,
   collectModelImports,
   groupOperations,
-  toColonPath,
 } from "./emit-server-common.js";
+import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import {
   emitHintEntries,
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
+import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
 
 export interface ServerEmission {
   readonly serviceName: string;
   readonly modelImports: readonly string[];
+  readonly payloadTypeAliases: readonly string[];
   readonly groups: readonly ServerEmissionGroup[];
 }
 
@@ -39,6 +41,7 @@ export interface ServerOperationEmission {
   readonly resultType: string;
   readonly method: string;
   readonly path: string;
+  readonly routePattern: RoutePattern;
   readonly serviceHints: readonly EmittedHintEntry[];
   readonly namespaces: readonly ServerNamespaceEmission[];
   readonly operationHints: readonly EmittedHintEntry[];
@@ -78,7 +81,7 @@ export function buildServerEmission(
           operation,
           operationNames.get(operation)!,
           operationIds.get(operation)!,
-        )
+        ),
       ),
     };
   });
@@ -86,6 +89,7 @@ export function buildServerEmission(
   return {
     serviceName: ctx.serviceName,
     modelImports: collectModelImports(ctx, httpOperations),
+    payloadTypeAliases: getPayloadTypeAliasDeclarations(ctx),
     groups,
   };
 }
@@ -97,6 +101,12 @@ function buildOperationEmission(
   operationId: string,
 ): ServerOperationEmission {
   const operationName = operation.operation.name;
+  const lowered = lowerUriTemplate(operation);
+  if (!lowered.ok) {
+    throw new Error(
+      `URI template preflight did not reject ${JSON.stringify(operation.uriTemplate)}: ${lowered.reason}`,
+    );
+  }
   return {
     name: operationName,
     propertyName,
@@ -104,13 +114,16 @@ function buildOperationEmission(
     inputType: buildInputType(ctx, operation),
     resultType: buildResultType(ctx, operation),
     method: operation.verb.toUpperCase(),
-    path: toColonPath(operation.path),
+    path: lowered.value.path,
+    routePattern: lowered.value.routePattern,
     serviceHints: emitHintEntries(ctx, ctx.service.namespace),
-    namespaces: getOperationNamespaces(ctx.service.namespace, operation.operation.namespace).map((namespace) => ({
-      name: namespace.name,
-      fullName: getNamespaceFullName(namespace),
-      hints: emitHintEntries(ctx, namespace),
-    })),
+    namespaces: getOperationNamespaces(ctx.service.namespace, operation.operation.namespace).map(
+      (namespace) => ({
+        name: namespace.name,
+        fullName: getNamespaceFullName(namespace),
+        hints: emitHintEntries(ctx, namespace),
+      }),
+    ),
     operationHints: emitHintEntries(ctx, operation.operation),
     httpOperation: operation,
   };
@@ -162,7 +175,7 @@ function allocateOperationIds(
   const allocated = new Map<HttpOperation, string>();
   const used = new Set<string>();
   const ordered = [...operations].sort((a, b) =>
-    operationStableKey(a).localeCompare(operationStableKey(b))
+    operationStableKey(a).localeCompare(operationStableKey(b)),
   );
   for (const operation of ordered) {
     const legacyId = legacyIds.get(operation)!;
@@ -193,31 +206,35 @@ function operationQualifiedName(operation: HttpOperation): string {
     getNamespaceFullName(operation.operation.namespace),
     operation.operation.interface?.name,
     operation.operation.name,
-  ].filter((part): part is string => Boolean(part)).join(".");
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(".");
 }
 
 function operationStableKey(operation: HttpOperation): string {
-  return `${operationQualifiedName(operation)}:${operation.verb}:${operation.path}`;
+  return `${operationQualifiedName(operation)}:${operation.verb}:${operation.uriTemplate}`;
 }
 
-export function collectReferencedModelImports(
-  emission: ServerEmission,
-): string[] {
+export function collectReferencedModelImports(emission: ServerEmission): string[] {
   const available = new Set(emission.modelImports);
   const imported = new Set<string>();
 
+  for (const alias of emission.payloadTypeAliases) {
+    collectFromText(alias);
+  }
   for (const group of emission.groups) {
     for (const operation of group.operations) {
-      for (const text of [operation.inputType, operation.resultType]) {
-        for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
-          const name = match[0];
-          if (available.has(name)) {
-            imported.add(name);
-          }
-        }
-      }
+      collectFromText(operation.inputType);
+      collectFromText(operation.resultType);
     }
   }
 
   return [...imported].sort();
+
+  function collectFromText(text: string): void {
+    for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+      const name = match[0];
+      if (available.has(name)) imported.add(name);
+    }
+  }
 }

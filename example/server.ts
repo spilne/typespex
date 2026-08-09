@@ -5,12 +5,17 @@ import { createPetStoreServerRouter } from "./generated/pet-store/server-router.
 
 // In-memory pet store
 const pets = new Map<string, { id: string; name: string; tag?: string }>();
+const logRequests = Bun.env.TYPESPEX_BENCHMARK !== "1";
 
 // Pure business logic handlers — zero HTTP awareness
 const serverImpl: PetStoreServer<MatchedRequestContext> = {
   Pets: {
     async list({ limit, offset }, ctx) {
-      console.log(`[${ctx.match.endpoint.operation.operationId}] limit=${limit} offset=${offset}`);
+      if (logRequests) {
+        console.log(
+          `[${ctx.match.endpoint.operation.operationId}] limit=${limit} offset=${offset}`,
+        );
+      }
       const all = [...pets.values()];
       const start = offset ?? 0;
       const end = limit ? start + limit : undefined;
@@ -18,14 +23,18 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
     },
 
     async create(input, ctx) {
-      console.log(`[${ctx.match.endpoint.operation.operationId}] creating pet: ${input.name}`);
+      if (logRequests) {
+        console.log(`[${ctx.match.endpoint.operation.operationId}] creating pet: ${input.name}`);
+      }
       const pet = { id: crypto.randomUUID(), ...input };
       pets.set(pet.id, pet);
       return pet;
     },
 
     async read({ petId }, ctx) {
-      console.log(`[${ctx.match.endpoint.operation.operationId}] reading pet: ${petId}`);
+      if (logRequests) {
+        console.log(`[${ctx.match.endpoint.operation.operationId}] reading pet: ${petId}`);
+      }
       const pet = pets.get(petId);
       if (!pet) {
         return {
@@ -37,7 +46,9 @@ const serverImpl: PetStoreServer<MatchedRequestContext> = {
     },
 
     async delete({ petId }, ctx) {
-      console.log(`[${ctx.match.endpoint.operation.operationId}] deleting pet: ${petId}`);
+      if (logRequests) {
+        console.log(`[${ctx.match.endpoint.operation.operationId}] deleting pet: ${petId}`);
+      }
       const pet = pets.get(petId);
       if (!pet) {
         return {

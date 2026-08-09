@@ -81,6 +81,7 @@ export const PublicApiOperations = {
         operationId: "PublicApi.listItems",
         method: "GET" as const,
         path: "/items",
+        routePattern: { segments: [[{ kind: "literal", value: "items" }]], trailingSlash: false },
         hints: emptyHints(),
       },
     },
@@ -148,6 +149,10 @@ export const BillingAPIOperations = {
         operationId: "BillingAPI.listInvoices",
         method: "GET" as const,
         path: "/invoices",
+        routePattern: {
+          segments: [[{ kind: "literal", value: "invoices" }]],
+          trailingSlash: false,
+        },
         hints: emptyHints(),
       },
     },

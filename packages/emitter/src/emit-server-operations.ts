@@ -1,8 +1,6 @@
 import type { EmitterCtx } from "./ctx.js";
 import type { HttpOperation } from "@typespec/http";
-import {
-  emitResultResponseEncoder,
-} from "./emit-server-common.js";
+import { emitResultResponseEncoder } from "./emit-server-common.js";
 import {
   type InputDecoderEntry,
   type DecoderEmission,
@@ -11,11 +9,9 @@ import {
 } from "./server-input-decoders.js";
 import { buildServerEmission } from "./server-emission.js";
 import { tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
+import type { RoutePattern } from "./uri-template.js";
 
-export function emitServerOperations(
-  ctx: EmitterCtx,
-  httpOperations: HttpOperation[],
-): string {
+export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
   const emission = buildServerEmission(ctx, httpOperations);
   const lines: string[] = [];
 
@@ -36,9 +32,15 @@ export function emitServerOperations(
   lines.push('} from "@typespex/runtime/server";');
   lines.push(`import * as ServerHints from "./${ctx.fileNames.serverHints}.js";`);
   if (emission.modelImports.length > 0) {
-    lines.push(`import type { ${emission.modelImports.join(", ")} } from "./${ctx.fileNames.models}.js";`);
+    lines.push(
+      `import type { ${emission.modelImports.join(", ")} } from "./${ctx.fileNames.models}.js";`,
+    );
   }
   lines.push("");
+  if (emission.payloadTypeAliases.length > 0) {
+    lines.push(...emission.payloadTypeAliases);
+    lines.push("");
+  }
 
   // --- Input decoders + Operations per group ---
   const emittedHoisted = new Set<string>();
@@ -80,7 +82,9 @@ export function emitServerOperations(
     // Emit grouped output encoders object
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
-      lines.push(`  ${tsObjectKey(operation.propertyName)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`);
+      lines.push(
+        `  ${tsObjectKey(operation.propertyName)}: ${emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType)},`,
+      );
     }
     lines.push("};");
     lines.push("");
@@ -107,9 +111,7 @@ export function emitServerOperations(
 
       emitResultEncoderLine(lines, operation, outputsName);
 
-      lines.push(
-        `  } satisfies ServerOperation<${operation.inputType}, ${operation.resultType}>,`,
-      );
+      lines.push(`  } satisfies ServerOperation<${operation.inputType}, ${operation.resultType}>,`);
       lines.push("");
     }
 
@@ -138,18 +140,23 @@ function emitEndpoint(
     operationId: string;
     method: string;
     path: string;
+    routePattern: RoutePattern;
     operationHints: ReadonlyArray<{ keyExportName: string; valueExpression: string }>;
   },
 ): void {
   lines.push("    endpoint: {");
-  lines.push(`      service: { name: ${JSON.stringify(serviceName)}, hints: ${emitHintsExpression(operation.serviceHints)} },`);
+  lines.push(
+    `      service: { name: ${JSON.stringify(serviceName)}, hints: ${emitHintsExpression(operation.serviceHints)} },`,
+  );
 
   if (operation.namespaces.length === 0) {
     lines.push("      namespaces: [],");
   } else {
     lines.push("      namespaces: [");
     for (const ns of operation.namespaces) {
-      lines.push(`        { name: ${JSON.stringify(ns.name)}, fullName: ${JSON.stringify(ns.fullName)}, hints: ${emitHintsExpression(ns.hints)} },`);
+      lines.push(
+        `        { name: ${JSON.stringify(ns.name)}, fullName: ${JSON.stringify(ns.fullName)}, hints: ${emitHintsExpression(ns.hints)} },`,
+      );
     }
     lines.push("      ],");
   }
@@ -159,6 +166,7 @@ function emitEndpoint(
   lines.push(`        operationId: ${JSON.stringify(operation.operationId)},`);
   lines.push(`        method: ${JSON.stringify(operation.method)} as const,`);
   lines.push(`        path: ${JSON.stringify(operation.path)},`);
+  lines.push(`        routePattern: ${JSON.stringify(operation.routePattern)},`);
   lines.push(`        hints: ${emitHintsExpression(operation.operationHints)},`);
   lines.push("      },");
   lines.push("    },");
@@ -181,7 +189,9 @@ function emitResultEncoderLine(
   if (operation.resultType === "void") {
     lines.push(`    encodeResult: () => ${encoderAccess}.encode(undefined),`);
   } else {
-    lines.push(`    encodeResult: (result: ${operation.resultType}) => ${encoderAccess}.encode(result),`);
+    lines.push(
+      `    encodeResult: (result: ${operation.resultType}) => ${encoderAccess}.encode(result),`,
+    );
   }
 }
 
