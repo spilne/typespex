@@ -7,11 +7,13 @@
     "audit:dependencies": "bun audit --audit-level=moderate --ignore=GHSA-w5hq-g745-h8pq",
     "build": "bun run --filter '*' build",
     "clean": "bun run --filter '*' clean",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && bun run typecheck:release",
+    "typecheck:release": "bun packages/shim-node/node_modules/typescript/bin/tsc --project scripts/tsconfig.json",
     "test": "bun test",
     "generate:example": "./scripts/generate-example.sh",
     "check:generated": "bun run --filter @typespex/emitter build && ./scripts/check-generated-example.sh",
-    "publish:packages": "./scripts/publish-packages.sh"
+    "release:preflight": "./scripts/publish-packages.sh",
+    "publish:packages": "./scripts/publish-packages.sh --publish"
   },
   "overrides": {
     "fast-uri": "3.1.5",
