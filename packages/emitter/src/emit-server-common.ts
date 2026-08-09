@@ -43,6 +43,7 @@ import {
   isPureRecordModel,
 } from "./model-indexer.js";
 import { multipartBodyTypeToTs, multipartModelPropertyDeclarations } from "./multipart-input.js";
+import { numericLiteralExpression, resolveNumericLiteral } from "./numeric-literals.js";
 import {
   getPayloadCollection,
   getPayloadBodyContext,
@@ -1500,13 +1501,19 @@ function emitLiteralFieldBranches(
       return undefined;
     }
     if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
-    const value = String(prop.type.value);
-    if (values.has(value)) return undefined;
-    values.add(value);
+    const numericValue = prop.type.kind === "Number" ? resolveNumericLiteral(prop.type) : undefined;
+    if (numericValue && !numericValue.supported) return undefined;
+    const valueKey = numericValue ? numericValue.key : `string:${prop.type.value}`;
+    if (values.has(valueKey)) return undefined;
+    values.add(valueKey);
     const subject = subjectExpr(response);
     const cast =
       response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
-    const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${JSON.stringify(prop.type.value)}`;
+    const literal =
+      prop.type.kind === "Number"
+        ? numericLiteralExpression(prop.type)
+        : JSON.stringify(prop.type.value);
+    const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${literal}`;
     const guarded =
       response.bodyProperty === undefined
         ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`

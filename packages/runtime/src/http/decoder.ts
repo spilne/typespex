@@ -389,12 +389,19 @@ const neverDecoder: Decoder<never> = Decoder.of(() => {
 // Combinator decoders
 // ---------------------------------------------------------------------------
 
-function literalDecoder<A extends string | number | boolean | null>(value: A): Decoder<A> {
+type LiteralValue = string | number | bigint | boolean | null;
+
+function literalDecoder<A extends LiteralValue>(value: A): Decoder<A> {
   return Decoder.of((input) => {
     if (input === value) return succeed(value);
 
     if (typeof value === "number" && typeof input === "string") {
       if (DECIMAL_NUMBER_PATTERN.test(input) && Number(input) === value) return succeed(value);
+    }
+
+    if (typeof value === "bigint" && typeof input === "string") {
+      const canonical = String(value);
+      if (input === canonical || (value === 0n && input === "-0")) return succeed(value);
     }
 
     if (typeof value === "boolean" && typeof input === "string" && input === String(value)) {
@@ -403,16 +410,20 @@ function literalDecoder<A extends string | number | boolean | null>(value: A): D
 
     if (value === null && input === "null") return succeed(value);
 
-    return fail("", `Expected literal ${JSON.stringify(value)}.`);
+    return fail("", `Expected literal ${formatLiteral(value)}.`);
   });
 }
 
 /** Strict literal decoder for JSON contexts — no string coercion. */
-function strictLiteralDecoder<A extends string | number | boolean | null>(value: A): Decoder<A> {
+function strictLiteralDecoder<A extends LiteralValue>(value: A): Decoder<A> {
   return Decoder.of((input) => {
     if (input === value) return succeed(value);
-    return fail("", `Expected literal ${JSON.stringify(value)}.`);
+    return fail("", `Expected literal ${formatLiteral(value)}.`);
   });
+}
+
+function formatLiteral(value: LiteralValue): string {
+  return typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
 }
 
 /**
@@ -633,17 +644,25 @@ function discriminatedDecoder<A>(
     const tag = Object.prototype.hasOwnProperty.call(object.right, discriminator)
       ? object.right[discriminator]
       : undefined;
-    const key = typeof tag === "string" || typeof tag === "number" ? String(tag) : undefined;
+    const key =
+      typeof tag === "string" || typeof tag === "number" || typeof tag === "bigint"
+        ? String(tag)
+        : undefined;
     const namedVariant =
       key !== undefined && Object.prototype.hasOwnProperty.call(variants, key)
         ? variants[key]
         : undefined;
     const variant = namedVariant ?? (key === undefined ? undefined : options.defaultVariant);
     if (!variant) {
-      return fail(`.${discriminator}`, `Unknown discriminator value: ${JSON.stringify(tag)}.`);
+      return fail(`.${discriminator}`, `Unknown discriminator value: ${formatUnknownValue(tag)}.`);
     }
     return variant.decode(input);
   });
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (typeof value === "bigint") return `${value}n`;
+  return JSON.stringify(value) ?? String(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -1744,7 +1763,46 @@ function parseJsonNumber(value: string): number | bigint {
     const numberValue = Number(value);
     return Number.isSafeInteger(numberValue) ? numberValue : BigInt(value);
   }
+  const exactInteger = exactJsonIntegerWithinLimit(value);
+  if (exactInteger !== undefined) {
+    const numberValue = Number(value);
+    return Number.isSafeInteger(numberValue) ? numberValue : BigInt(exactInteger);
+  }
   return Number(value);
+}
+
+/** Canonicalizes decimal/exponent JSON tokens that are exact bounded integers. */
+function exactJsonIntegerWithinLimit(value: string): string | undefined {
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(value);
+  if (!match) return undefined;
+
+  const sign = match[1] ?? "";
+  const integerPart = match[2]!;
+  const fractionalPart = match[3] ?? "";
+  const exponent = Number(match[4] ?? "0");
+  if (!Number.isSafeInteger(exponent)) return undefined;
+
+  const combined = `${integerPart}${fractionalPart}`;
+  const decimalIndex = integerPart.length + exponent;
+  let integerDigits: string;
+  let trailingZeros = 0;
+
+  if (decimalIndex <= 0) {
+    if (/[^0]/.test(combined)) return undefined;
+    integerDigits = "0";
+  } else if (decimalIndex < combined.length) {
+    if (/[^0]/.test(combined.substring(decimalIndex))) return undefined;
+    integerDigits = combined.substring(0, decimalIndex);
+  } else {
+    integerDigits = combined;
+    trailingZeros = decimalIndex - combined.length;
+  }
+
+  const significant = integerDigits.replace(/^0+/, "") || "0";
+  const digitCount = significant === "0" ? 1 : significant.length + trailingZeros;
+  if (digitCount > MAX_LOSSLESS_JSON_INTEGER_DIGITS) return undefined;
+  if (significant === "0") return "0";
+  return `${sign}${significant}${"0".repeat(trailingZeros)}`;
 }
 
 /**

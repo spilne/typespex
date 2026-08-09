@@ -21,6 +21,7 @@ import { getServerHttpOperations } from "./operation-surface.js";
 import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
+import { reportUnsupportedNumericLiterals } from "./report-unsupported-numeric-literals.js";
 
 async function formatTs(fileName: string, content: string): Promise<string> {
   try {
@@ -67,6 +68,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
     reportIgnoredDecorators(ctx, httpOperations);
     reportRequestInputCollisions(ctx, httpOperations);
     reportUnsupportedResponseStatusContracts(ctx, httpOperations);
+    reportUnsupportedNumericLiterals(ctx, httpOperations);
   }
 
   if (program.hasError()) return;

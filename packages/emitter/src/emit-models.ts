@@ -21,6 +21,7 @@ import {
   typeToTs,
 } from "./type-reference.js";
 import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+import { enumMemberLiteralExpression } from "./numeric-literals.js";
 
 /**
  * Emit TypeScript interfaces for all models used by the service.
@@ -178,13 +179,7 @@ function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {
 
   const members = [...enumType.members.values()];
   const memberTypes = members
-    .map((m) =>
-      typeof m.value === "string"
-        ? JSON.stringify(m.value)
-        : m.value != null
-          ? String(m.value)
-          : JSON.stringify(m.name),
-    )
+    .map((member) => enumMemberLiteralExpression(ctx.program, member))
     .join(" | ");
 
   lines.push(`export type ${getGeneratedTypeName(ctx, enumType, "Enum")} = ${memberTypes};`);

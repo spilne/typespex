@@ -38,6 +38,12 @@ export const $lib = createTypeSpecLibrary({
         default: "Unsupported type encountered, emitting 'unknown'",
       },
     },
+    "unsupported-numeric-literal": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Numeric literal "${"value"}" cannot be represented safely by @typespex/emitter: ${"reason"}.`,
+      },
+    },
     "no-services": {
       severity: "warning",
       messages: {

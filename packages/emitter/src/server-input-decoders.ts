@@ -54,6 +54,11 @@ import {
   tsPropertyDeclaration,
 } from "./typescript-names.js";
 import { decodedTypeKind, emitValidatorsForTarget } from "./validation-emission.js";
+import {
+  enumMemberLiteralExpression,
+  numericLiteralExpression,
+  resolveNumericLiteral,
+} from "./numeric-literals.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
@@ -685,7 +690,7 @@ function emitDecoderExpression(
       break;
 
     case "Enum":
-      expression = emitEnumDecoder(type, mode);
+      expression = emitEnumDecoder(ctx, type, mode);
       break;
 
     case "String": {
@@ -696,7 +701,7 @@ function emitDecoderExpression(
 
     case "Number": {
       const lit = mode === "json" ? "Decoders.strictLiteral" : "Decoders.literal";
-      expression = `${lit}(${String(type.value)})`;
+      expression = `${lit}(${numericLiteralExpression(type)})`;
       break;
     }
 
@@ -1159,7 +1164,7 @@ function emitStructuralDiscriminatedUnionDecoder(
   if (!models) return undefined;
 
   const field =
-    getDiscriminator(ctx.program, union)?.propertyName ?? inferCommonLiteralField(models);
+    getDiscriminator(ctx.program, union)?.propertyName ?? inferCommonLiteralField(ctx, models);
   if (!field) return undefined;
 
   const wireFields = models.map((model) => {
@@ -1174,7 +1179,7 @@ function emitStructuralDiscriminatedUnionDecoder(
   const entries: string[] = [];
   const tags = new Set<string>();
   for (const model of models) {
-    const tag = literalTagValue(model, field);
+    const tag = literalTagValue(ctx, model, field);
     if (tag === undefined || tags.has(tag)) return undefined;
     tags.add(tag);
     entries.push(
@@ -1200,14 +1205,14 @@ function discriminatableModels(ctx: EmitterCtx, union: Union): Model[] | undefin
  * First property of the first variant that is a required literal in every
  * variant with values distinct across them.
  */
-function inferCommonLiteralField(models: readonly Model[]): string | undefined {
+function inferCommonLiteralField(ctx: EmitterCtx, models: readonly Model[]): string | undefined {
   const [first, ...rest] = models;
   for (const prop of walkPropertiesInherited(first!)) {
-    const value = literalTagValue(first!, prop.name);
+    const value = literalTagValue(ctx, first!, prop.name);
     if (value === undefined) continue;
     const values = new Set([value]);
     const viable = rest.every((model) => {
-      const tag = literalTagValue(model, prop.name);
+      const tag = literalTagValue(ctx, model, prop.name);
       if (tag === undefined || values.has(tag)) return false;
       values.add(tag);
       return true;
@@ -1218,12 +1223,14 @@ function inferCommonLiteralField(models: readonly Model[]): string | undefined {
 }
 
 /** The model's required literal value for `field`, stringified for tag lookup. */
-function literalTagValue(model: Model, field: string): string | undefined {
+function literalTagValue(ctx: EmitterCtx, model: Model, field: string): string | undefined {
   for (const prop of walkPropertiesInherited(model)) {
     if (prop.name !== field) continue;
     if (prop.optional) return undefined;
     if (prop.type.kind !== "String" && prop.type.kind !== "Number") return undefined;
-    return String(prop.type.value);
+    return prop.type.kind === "Number"
+      ? resolveNumericLiteral(prop.type).exactValue
+      : prop.type.value;
   }
   return undefined;
 }
@@ -1267,11 +1274,10 @@ function nextUnemittedLazyDecoder(dec: DecoderEmitContext): LazyDecoderEmission 
   return undefined;
 }
 
-function emitEnumDecoder(enumType: Enum, mode: DecoderMode): string {
+function emitEnumDecoder(ctx: EmitterCtx, enumType: Enum, mode: DecoderMode): string {
   const lit = mode === "json" ? "Decoders.strictLiteral" : "Decoders.literal";
   const members = [...enumType.members.values()].map((member) => {
-    const value = member.value ?? member.name;
-    return `${lit}(${JSON.stringify(value)})`;
+    return `${lit}(${enumMemberLiteralExpression(ctx.program, member)})`;
   });
   return `Decoders.union([${members.join(", ")}])`;
 }
