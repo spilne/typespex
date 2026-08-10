@@ -318,9 +318,29 @@ describe("URI-template lowering", () => {
   });
 
   test("strict parser rejects malformed and unknown expressions", async () => {
-    const { lowerUriTemplateText } = await import("../dist/uri-template.js");
+    const { lowerUriTemplate, lowerUriTemplateText } = await import("../dist/uri-template.js");
     const path = new Set(["x"]);
     const query = new Set<string>();
+
+    const operation = (uriTemplate: string) =>
+      ({
+        uriTemplate,
+        parameters: {
+          parameters: [
+            {
+              type: "path",
+              name: "x",
+              style: "path",
+              allowReserved: false,
+              param: { optional: false, type: { kind: "String", value: "" } },
+            },
+          ],
+        },
+      }) as never;
+    const simpleStyle = lowerUriTemplate(operation("/simple/{x}"));
+    expect(simpleStyle.ok && simpleStyle.value.slashExpandedPathNames).toEqual([]);
+    const slashStyle = lowerUriTemplate(operation("/slash{/x}"));
+    expect(slashStyle.ok && slashStyle.value.slashExpandedPathNames).toEqual(["x"]);
 
     expect(lowerUriTemplateText("/malformed/{x", path, query)).toEqual({
       ok: false,

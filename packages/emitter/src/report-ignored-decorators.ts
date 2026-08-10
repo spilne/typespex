@@ -387,11 +387,7 @@ function isSupportedPathStyleParameter(
   }
   const lowered = lowerUriTemplate(operation);
   if (!lowered.ok) return false;
-  return lowered.value.routePatterns.some((pattern) =>
-    pattern.segments.some((segment) =>
-      segment.some((token) => token.kind === "parameter" && token.name === parameter.name),
-    ),
-  );
+  return lowered.value.slashExpandedPathNames?.includes(parameter.name) === true;
 }
 
 function unsupportedParameterTypeReason(ctx: EmitterCtx, type: Type): string | undefined {
