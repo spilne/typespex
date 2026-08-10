@@ -16,7 +16,13 @@ const HTTP_SPECS_INTEGRITY =
   "sha512-TOspHYLAoR0iKFlYEKYRUbjtOaHvhT//m+IrgAtfVmk1FPfA6Qoap7wiI7kk46xT+E/uKsyyTAfNMMbiQsn0+w==";
 const HTTP_SPECS_PACKAGE = `@typespec/http-specs@${HTTP_SPECS_VERSION}`;
 const HTTP_SPECS_TARBALL = `typespec-http-specs-${HTTP_SPECS_VERSION}.tgz`;
-const SCENARIOS = ["parameters/basic", "parameters/query", "type/array", "type/model/empty"];
+const SCENARIOS = [
+  "parameters/basic",
+  "parameters/query",
+  "payload/multipart",
+  "type/array",
+  "type/model/empty",
+];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");

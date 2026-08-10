@@ -208,6 +208,34 @@ describe("schema-aware multipart decoding", () => {
     );
   });
 
+  test("decodes one JSON array part without treating it as repeated parts", async () => {
+    const result = await decodeBody(
+      multipartRequest("multipart/form-data", "json-array", [
+        {
+          headers: [
+            'Content-Disposition: form-data; name="values"',
+            "Content-Type: application/json",
+          ],
+          body: '["one","two"]',
+        },
+      ]),
+      {
+        multipart: Decoders.multipartFormData<{ values: string[] }>([
+          {
+            name: "values",
+            property: "values",
+            kind: "json",
+            decoder: Decoders.strictArray(Decoders.string),
+            contentTypes: ["application/json"],
+          },
+        ]),
+      },
+      { contentTypes: ["multipart/form-data"] },
+    );
+
+    expect(result).toEqual(Either.right({ values: ["one", "two"] }));
+  });
+
   test("uses a relocated per-part header for File.name and ignores disposition filename", async () => {
     const result = await decodeBody(
       multipartRequest("multipart/form-data", "file", [

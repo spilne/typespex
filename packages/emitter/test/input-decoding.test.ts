@@ -192,6 +192,25 @@ interface Uploads {
 }
 `;
 
+const multipartArrayPartSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "MultipartArrayApi" })
+namespace MultipartArrayApi;
+
+model Address { city: string; }
+
+@route("/upload")
+@post
+op upload(
+  @multipartBody body: {
+    previousAddresses: HttpPart<Address[]>;
+    addresses: HttpPart<Address>[];
+  },
+): void;
+`;
+
 const contentTypeSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -428,6 +447,17 @@ describe("input decoding", () => {
 
     expect(r.readFile("upload-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("upload-api", "server.ts")).toMatchSnapshot();
+  });
+
+  test("typechecks single array-valued and repeated multipart parts", () => {
+    const r = compileFixture("multipart-array-parts", multipartArrayPartSpec);
+    const operations = r.readFile("multipart-array-api", "server-operations.ts");
+
+    expect(operations).toContain("decoder: Decoders.strictArray(");
+    expect(operations).toContain('property: "previousAddresses"');
+    expect(operations).toContain("multi: true");
+    expect(operations).toContain('property: "addresses"');
+    r.typecheck("multipart-array-api");
   });
 
   test("tagged unions dispatch via Decoders.discriminated", () => {
