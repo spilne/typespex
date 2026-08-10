@@ -235,6 +235,27 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("required-slash-path-collision-api")).toEqual([]);
   });
 
+  test("rejects collisions against standard slash array expansions", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "standard-slash-array-path-collision",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace StandardSlashArrayPathCollisionApi;
+
+        @route("/items{/names}") @get op slash(@path names: string[]): void;
+        @route("/items/{id}") @get op simple(@path id: string): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("StandardSlashArrayPathCollisionApi.slash");
+    expect(diagnostics).toContain("StandardSlashArrayPathCollisionApi.simple");
+    expect(result.listFiles("standard-slash-array-path-collision-api")).toEqual([]);
+  });
+
   test("rejects collisions against exploded scalar simple expansions", () => {
     const result = compileFixtureExpectingDiagnostics(
       "exploded-simple-path-collision",
