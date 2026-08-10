@@ -182,6 +182,7 @@ function generateScenario(seed: number): GeneratedScenario {
   ]);
   const leftMode = `left-${randomWord(random)}`;
   const rightMode = `right-${randomWord(random)}`;
+  const restPrefix = `rest-${randomWord(random)}`;
 
   const mixedPattern: RoutePattern = {
     segments: [
@@ -206,6 +207,19 @@ function generateScenario(seed: number): GeneratedScenario {
     },
     { method, path: `/${root}/fixed/:tail`, route: "left-static" },
     { method, path: `/${root}/:head/fixed`, route: "right-static" },
+    {
+      method,
+      path: `/${root}/${restPrefix}{/parts*}`,
+      routePattern: {
+        segments: [
+          [{ kind: "literal", value: root }],
+          [{ kind: "literal", value: restPrefix }],
+          [{ kind: "rest", name: "parts" }],
+        ],
+        trailingSlash: false,
+      },
+      route: "rest",
+    },
     { method, path: `/${root}/trail`, route: "without-trailing-slash" },
     {
       method,
@@ -287,6 +301,21 @@ function generateScenario(seed: number): GeneratedScenario {
       expected: { route: "right-static", pathParams: { head: "other" } },
     },
     {
+      label: "terminal rest preserves raw multi-segment spelling",
+      method,
+      pathname: `/${root}/${restPrefix}/${parameterValue}/a%2Fb`,
+      expected: {
+        route: "rest",
+        pathParams: { parts: `${parameterValue}/a%2Fb` },
+      },
+    },
+    {
+      label: "terminal rest does not consume zero segments",
+      method,
+      pathname: `/${root}/${restPrefix}`,
+      expected: { route: "parameter", pathParams: { value: restPrefix } },
+    },
+    {
       label: "route without trailing slash",
       method,
       pathname: `/${root}/trail`,
@@ -355,6 +384,7 @@ function generateScenario(seed: number): GeneratedScenario {
     "trail",
     "shared",
     "documents",
+    restPrefix,
     "item",
     `missing-${randomWord(random)}`,
   ];

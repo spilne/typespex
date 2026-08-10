@@ -131,6 +131,16 @@ describe("http request decoders (sync)", () => {
       }),
     ).toEqual(Either.right(["a", "b;param=c"]));
 
+    const slashDecoder = RequestDecoders.path("slashValues", Decoders.array(Decoders.string), {
+      array: true,
+      arraySeparator: "/",
+    });
+    expect(
+      decodeRequestInput(slashDecoder, new Request("http://localhost/items"), {
+        slashValues: "a/b%2Fc",
+      }),
+    ).toEqual(Either.right(["a", "b/c"]));
+
     const malformed = decodeRequestInput(decoder, new Request("http://localhost/items"), {
       labelValues: "a.%E0%A4%A",
     });

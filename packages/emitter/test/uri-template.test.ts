@@ -77,6 +77,9 @@ namespace UriTemplateApi;
 @route("/slash-array/array{/param}")
 @get op slashArray(@path param: string[]): void;
 
+@route("/slash-array-explode/array{/param*}")
+@get op slashArrayExplode(@path param: string[]): void;
+
 @route("/simple-explode/item{name*}")
 @get op simpleExplode(@path name: string): void;
 
@@ -163,8 +166,8 @@ namespace InvalidUriTemplateApi;
 @route("/matrix-multiple/item{;x,y}")
 @get op multipleMatrix(@path x: string, @path y: string): void;
 
-@route("/slash-array-explode/array{/x*}")
-@get op explodedSlashArray(@path x: string[]): void;
+@route("/slash-array-nonterminal/array{/x*}/tail")
+@get op nonterminalSlashArray(@path x: string[]): void;
 
 @route("/slash-array-optional/array{/x}")
 @get op optionalSlashArray(@path x?: string[]): void;
@@ -259,6 +262,14 @@ describe("URI-template lowering", () => {
         [{ kind: "literal", value: "slash-array" }],
         [{ kind: "literal", value: "array" }],
         [{ kind: "parameter", name: "param" }],
+      ],
+      trailingSlash: false,
+    });
+    expect(emittedRoutePattern(operations, "/slash-array-explode/array{/param*}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "slash-array-explode" }],
+        [{ kind: "literal", value: "array" }],
+        [{ kind: "rest", name: "param" }],
       ],
       trailingSlash: false,
     });
@@ -386,6 +397,7 @@ describe("URI-template lowering", () => {
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
       slashArray: capture("slashArray"),
+      slashArrayExplode: capture("slashArrayExplode"),
       simpleExplode: capture("simpleExplode"),
       simpleArray: capture("simpleArray"),
       label: capture("label"),
@@ -461,6 +473,18 @@ describe("URI-template lowering", () => {
     expect((await router.handle(new Request("http://localhost/slash-array/array"))).status).toBe(
       404,
     );
+
+    expect(
+      (await router.handle(new Request("http://localhost/slash-array-explode/array/a/b%2Fc")))
+        .status,
+    ).toBe(204);
+    expect(received.get("slashArrayExplode")).toEqual({ param: ["a", "b/c"] });
+    expect(
+      (await router.handle(new Request("http://localhost/slash-array-explode/array"))).status,
+    ).toBe(404);
+    expect(
+      (await router.handle(new Request("http://localhost/slash-array-explode/array/a/"))).status,
+    ).toBe(404);
 
     expect(
       (await router.handle(new Request("http://localhost/simple-explode/itema%2Fb"))).status,
@@ -582,7 +606,7 @@ describe("URI-template lowering", () => {
       'matrix-expanded path variable "x" must have a scalar or scalar-array wire shape',
     );
     expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
-    expect(diagnostics).toContain("exploded slash path arrays are not supported");
+    expect(diagnostics).toContain("path material appears after an exploded slash expansion");
     expect(diagnostics).toContain('slash-expanded scalar-array path variable "x" must be required');
     expect(result.listFiles("invalid-uri-template-api")).toEqual([]);
   });
@@ -982,8 +1006,26 @@ describe("URI-template lowering", () => {
     expect(
       lowerUriTemplateText("/slash-array/array{/x*}", path, query, new Set(), new Set(), path),
     ).toEqual({
+      ok: true,
+      value: {
+        path: "/slash-array/array{/x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "slash-array" }],
+              [{ kind: "literal", value: "array" }],
+              [{ kind: "rest", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/slash-array/array{/x*}/tail", path, query, new Set(), new Set(), path),
+    ).toEqual({
       ok: false,
-      reason: "exploded slash path arrays are not supported",
+      reason: "path material appears after an exploded slash expansion",
     });
     expect(
       lowerUriTemplateText("/slash-array/array{/x}", path, query, new Set(), path, path),

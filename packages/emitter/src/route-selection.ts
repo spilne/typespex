@@ -225,7 +225,9 @@ function routePatternStructure(pattern: RoutePattern): string {
       segment.map((token) =>
         token.kind === "literal"
           ? ["literal", canonicalizeRouteLiteral(token.value)]
-          : ["parameter"],
+          : token.kind === "parameter"
+            ? ["parameter"]
+            : ["rest"],
       ),
     ),
     trailingSlash: pattern.trailingSlash,
