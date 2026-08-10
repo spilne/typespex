@@ -165,6 +165,26 @@ describe("unsupported HTTP parameter serialization", () => {
     expect(result.listFiles("object-query-api")).toEqual([]);
   });
 
+  test("rejects path records with non-scalar values", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "nested-record-path",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service namespace NestedRecordPathApi {
+        @route("/lookup{filter}") @get
+        op read(@path filter: Record<string[]>): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain("unsupported-http-parameter");
+    expect(diagnostics).toContain("records may contain only scalar, literal, or enum values");
+    expect(result.listFiles("nested-record-path-api")).toEqual([]);
+  });
+
   test("rejects path styles the generated matcher cannot represent", () => {
     const result = compileFixtureExpectingDiagnostics(
       "path-style",

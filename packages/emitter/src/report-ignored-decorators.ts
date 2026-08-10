@@ -20,6 +20,7 @@ import {
 } from "./model-indexer.js";
 import { getSameEndpointOverloads } from "./operation-surface.js";
 import {
+  getPayloadCollection,
   getRequestBodyProjection,
   payloadItemProjection,
   payloadModelProperties,
@@ -355,7 +356,7 @@ function checkHttpParameter(
   operation: HttpOperation,
   parameter: HttpOperationParameter,
 ): void {
-  const typeReason = unsupportedParameterTypeReason(ctx, parameter.param.type);
+  const typeReason = unsupportedParameterTypeReason(ctx, parameter);
   if (typeReason) {
     reportUnsupportedParameter(ctx, parameter, typeReason);
     return;
@@ -406,9 +407,22 @@ function isSupportedNonSimplePathParameter(
   }
 }
 
-function unsupportedParameterTypeReason(ctx: EmitterCtx, type: Type): string | undefined {
+function unsupportedParameterTypeReason(
+  ctx: EmitterCtx,
+  parameter: HttpOperationParameter,
+): string | undefined {
+  const type = parameter.param.type;
   if (type.kind === "Model") {
     if (!isArrayModelType(ctx.program, type)) {
+      const collection = getPayloadCollection(ctx, type);
+      if (collection?.kind === "record") {
+        if (!isWireScalarType(ctx, collection.value)) {
+          return "records may contain only scalar, literal, or enum values";
+        }
+        if (parameter.type === "path" && parameter.style === "simple" && !parameter.explode) {
+          return undefined;
+        }
+      }
       return "object and record values require location-specific serialization that is not implemented";
     }
     if (!type.indexer || !isWireScalarType(ctx, type.indexer.value)) {

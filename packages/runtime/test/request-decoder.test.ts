@@ -155,6 +155,99 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("path records split raw components before percent decoding", () => {
+    const decoder = RequestDecoders.path("values", Decoders.record(Decoders.integer), {
+      record: true,
+    });
+
+    const decoded = decodeRequestInput(decoder, new Request("http://localhost/items"), {
+      values: "a%2Cb,1,__proto__,2,constructor,3",
+    });
+
+    expect(decoded._tag).toBe("Right");
+    if (decoded._tag === "Right") {
+      expect(decoded.right["a,b"]).toBe(1);
+      expect(decoded.right["__proto__"]).toBe(2);
+      expect(decoded.right.constructor).toBe(3);
+      expect(Object.getPrototypeOf(decoded.right)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(decoded.right, "__proto__")).toBe(true);
+    }
+  });
+
+  test("path records reject malformed pairs, encodings, and duplicate decoded keys", () => {
+    const decoder = RequestDecoders.path("values", Decoders.record(Decoders.integer), {
+      record: true,
+    });
+    const request = new Request("http://localhost/items");
+
+    expect(decodeRequestInput(decoder, request, { values: "a,1,b" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values",
+            message: 'Expected alternating record keys and values separated by ",".',
+          },
+        ]),
+      ),
+    );
+    expect(decodeRequestInput(decoder, request, { values: "a,%E0%A4%A" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values[1]",
+            message: "Expected a valid percent-encoded path segment.",
+          },
+        ]),
+      ),
+    );
+    expect(decodeRequestInput(decoder, request, { values: "a,1,%61,2" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values[2]",
+            message: 'Duplicate record key "a".',
+          },
+        ]),
+      ),
+    );
+  });
+
+  test("path records support exploded entries and configured raw separators", () => {
+    const decoder = RequestDecoders.path("values", Decoders.record(Decoders.integer), {
+      explode: true,
+      record: true,
+      recordSeparator: "/",
+    });
+    const request = new Request("http://localhost/items");
+
+    expect(
+      decodeRequestInput(decoder, request, {
+        values: "a=1/b%2Fc=2",
+      }),
+    ).toEqual(Either.right({ a: 1, "b/c": 2 }));
+    expect(decodeRequestInput(decoder, request, { values: "" })).toEqual(Either.right({}));
+    expect(decodeRequestInput(decoder, request, { values: "a=1/b" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values[1]",
+            message: "Expected an exploded record entry in key=value form.",
+          },
+        ]),
+      ),
+    );
+    expect(decodeRequestInput(decoder, request, { values: "%E0%A4%A=1" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values[0]",
+            message: "Expected a valid percent-encoded path segment.",
+          },
+        ]),
+      ),
+    );
+  });
+
   test("path array separators require a non-empty array configuration", () => {
     expect(() => RequestDecoders.path("values", Decoders.string, { arraySeparator: "." })).toThrow(
       "Path array separators require array decoding.",
@@ -165,6 +258,26 @@ describe("http request decoders (sync)", () => {
         arraySeparator: "",
       }),
     ).toThrow("Path array separators must not be empty.");
+  });
+
+  test("path record options require a non-empty record configuration", () => {
+    expect(() =>
+      RequestDecoders.path("values", Decoders.record(Decoders.string), {
+        array: true,
+        record: true,
+      }),
+    ).toThrow("Path parameters cannot use array and record decoding together.");
+    expect(() =>
+      RequestDecoders.path("values", Decoders.record(Decoders.string), {
+        recordSeparator: ".",
+      }),
+    ).toThrow("Path record separators require record decoding.");
+    expect(() =>
+      RequestDecoders.path("values", Decoders.record(Decoders.string), {
+        record: true,
+        recordSeparator: "",
+      }),
+    ).toThrow("Path record separators must not be empty.");
   });
 
   test("array parameters follow their HTTP comma and explode formats", () => {
