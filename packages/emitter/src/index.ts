@@ -267,9 +267,15 @@ function capitalize(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1).toLowerCase()}`;
 }
 
+const WINDOWS_RESERVED_DEVICE_STEM = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+
 function sanitizeNameSegment(value: string): string {
-  const sanitized = value.replace(/[^A-Za-z0-9._-]/g, "_") || "Service";
-  // A literal dot segment would collapse or escape the configured output directory.
-  if (sanitized === "." || sanitized === "..") return sanitized.replaceAll(".", "_");
+  let sanitized = value.replace(/[^A-Za-z0-9._-]/g, "_") || "Service";
+  // Trailing periods are stripped by ordinary Windows path handling. Replacing
+  // them also keeps literal `.` / `..` segments inside the output directory.
+  sanitized = sanitized.replace(/\.+$/, (periods) => "_".repeat(periods.length));
+  // Device names remain reserved with any extension, so change the stem rather
+  // than appending a suffix after the first period.
+  if (WINDOWS_RESERVED_DEVICE_STEM.test(sanitized)) sanitized = `_${sanitized}`;
   return sanitized;
 }

@@ -42,6 +42,16 @@ namespace BillingAPI {
 }
 `;
 
+const windowsReservedServiceSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "Reserved Service" })
+namespace CON {
+  @route("/health") @get op health(): string;
+}
+`;
+
 const duplicateLeafServiceSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -133,6 +143,27 @@ describe("service layout", () => {
       );
       expect(r.fileExists(pattern, "models.ts")).toBe(false);
     }
+  });
+
+  test("makes Windows-reserved and trailing-period path segments portable", () => {
+    const defaultLayout = compileFixture("reserved-service-folder", windowsReservedServiceSpec);
+
+    expect(defaultLayout.listFiles("_con")).toEqual(
+      generatedArtifacts.map(([, fileName]) => fileName).sort(),
+    );
+    expect(defaultLayout.fileExists("con", "models.ts")).toBe(false);
+
+    const customLayout = compileFixture(
+      "reserved-layout-patterns",
+      billingSpec,
+      '    service-folder-pattern: "NUL.generated."\n    file-name-pattern: "COM1.{file}."\n',
+    );
+    const safeDirectory = "_NUL.generated_";
+
+    expect(customLayout.listFiles(safeDirectory)).toEqual(
+      generatedArtifacts.map(([fileName]) => `_COM1.${fileName}_.ts`).sort(),
+    );
+    expect(customLayout.fileExists("NUL.generated.", "COM1.models..ts")).toBe(false);
   });
 
   test("rejects layouts that overwrite another service", () => {
