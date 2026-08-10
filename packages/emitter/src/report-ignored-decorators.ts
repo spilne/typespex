@@ -421,7 +421,7 @@ function unsupportedParameterTypeReason(
         }
         if (
           parameter.type === "path" &&
-          (parameter.style === "simple" || (parameter.style === "path" && !parameter.explode))
+          (parameter.style === "simple" || parameter.style === "path")
         ) {
           return undefined;
         }

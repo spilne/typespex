@@ -300,14 +300,11 @@ function lowerUriTemplateTextInternal(
           `slash-expanded scalar-record path variable ${JSON.stringify(name)} must be required`,
         );
       }
-      if (scalarRecord && exploded) {
-        return failure("exploded slash record expansions are not supported");
-      }
       if (optional && exploded) {
         return failure("exploded optional slash expansions are not supported");
       }
       slashExpandedPathNames?.add(name);
-      if (scalarArray && exploded) {
+      if ((scalarArray || scalarRecord) && exploded) {
         segments.push(segment);
         segment = [{ kind: "rest", name }];
         explodedSlashParameter = name;

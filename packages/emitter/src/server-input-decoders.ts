@@ -165,7 +165,10 @@ export function emitDecoder(
       param.param.type.kind === "Model" ? getPayloadCollection(ctx, param.param.type) : undefined;
     if (collection?.kind === "record") {
       optionValues.push("record: true");
-      if (param.explode) optionValues.push("explode: true");
+      if (param.explode) {
+        optionValues.push("explode: true");
+        if (param.style === "path") optionValues.push('recordSeparator: "/"');
+      }
     } else if (isArrayInputType(ctx, param.param.type)) {
       optionValues.push("array: true");
       if (param.style === "path" && param.explode) {
