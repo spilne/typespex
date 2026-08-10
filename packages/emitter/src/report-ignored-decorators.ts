@@ -369,13 +369,22 @@ function checkHttpParameter(
       parameter,
       `path style "${parameter.style}" cannot be matched by the generated router`,
     );
-  } else if (parameter.allowReserved) {
+  } else if (parameter.allowReserved && !isSupportedReservedPathParameter(operation, parameter)) {
     reportUnsupportedParameter(
       ctx,
       parameter,
-      "allowReserved path values can contain route separators that the generated router cannot capture",
+      "allowReserved path values require one required scalar in a complete terminal path segment",
     );
   }
+}
+
+function isSupportedReservedPathParameter(
+  operation: HttpOperation,
+  parameter: HttpOperationParameter,
+): boolean {
+  if (parameter.type !== "path") return false;
+  const lowered = lowerUriTemplate(operation);
+  return lowered.ok && lowered.value.reservedExpandedPathNames?.includes(parameter.name) === true;
 }
 
 function isSupportedNonSimplePathParameter(
