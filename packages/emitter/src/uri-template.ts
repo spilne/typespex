@@ -19,6 +19,8 @@ export interface LoweredUriTemplate {
   readonly routePatterns: readonly RoutePattern[];
   /** Path parameters proven to use the RFC 6570 slash operator. */
   readonly slashExpandedPathNames?: readonly string[];
+  /** Path parameters proven to use the RFC 6570 label operator. */
+  readonly labelExpandedPathNames?: readonly string[];
 }
 
 export type UriTemplateLowering =
@@ -72,6 +74,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     }
   }
   const slashExpandedPathNames = new Set<string>();
+  const labelExpandedPathNames = new Set<string>();
   const lowered = lowerUriTemplateTextInternal(
     operation.uriTemplate,
     pathNames,
@@ -79,6 +82,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     scalarPathNames,
     optionalPathNames,
     slashExpandedPathNames,
+    labelExpandedPathNames,
   );
   if (!lowered.ok) return lowered;
   return {
@@ -86,6 +90,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     value: {
       ...lowered.value,
       slashExpandedPathNames: [...slashExpandedPathNames],
+      labelExpandedPathNames: [...labelExpandedPathNames],
     },
   };
 }
@@ -114,6 +119,7 @@ function lowerUriTemplateTextInternal(
   scalarPathNames: ReadonlySet<string>,
   optionalPathNames: ReadonlySet<string>,
   slashExpandedPathNames?: Set<string>,
+  labelExpandedPathNames?: Set<string>,
 ): UriTemplateLowering {
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
@@ -246,6 +252,35 @@ function lowerUriTemplateTextInternal(
         continue;
       }
       optionalSlashParameter = name;
+      cursor = closing.index + 1;
+      continue;
+    }
+    if (operator === ".") {
+      const exploded = variables.endsWith("*");
+      const labelVariables = exploded ? variables.slice(0, -1) : variables;
+      const parsed = parseExpressionVariables(
+        labelVariables,
+        pathNames,
+        seenPathVariables,
+        "path",
+        false,
+      );
+      if (!parsed.ok) return parsed;
+      if (parsed.names.length !== 1) {
+        return failure("label expansions must contain exactly one path variable");
+      }
+      const name = parsed.names[0]!;
+      if (optionalPathNames.has(name)) {
+        return failure(`label-expanded path variable ${JSON.stringify(name)} must be required`);
+      }
+      if (!scalarPathNames.has(name)) {
+        return failure(
+          `label-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+        );
+      }
+      labelExpandedPathNames?.add(name);
+      appendLiteralToken(segment, ".");
+      segment.push({ kind: "parameter", name });
       cursor = closing.index + 1;
       continue;
     }

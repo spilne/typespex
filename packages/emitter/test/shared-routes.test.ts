@@ -256,6 +256,27 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("exploded-simple-path-collision-api")).toEqual([]);
   });
 
+  test("rejects collisions against scalar label expansions", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "scalar-label-path-collision",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace ScalarLabelPathCollisionApi;
+
+        @route("/items{.name}") @get op label(@path name: string): void;
+        @route("/items.{id}") @get op simple(@path id: string): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("ScalarLabelPathCollisionApi.label");
+    expect(diagnostics).toContain("ScalarLabelPathCollisionApi.simple");
+    expect(result.listFiles("scalar-label-path-collision-api")).toEqual([]);
+  });
+
   test("does not treat constraints on different headers as mutually exclusive", () => {
     const result = compileFixtureExpectingDiagnostics(
       "different-header-shared-routes",
