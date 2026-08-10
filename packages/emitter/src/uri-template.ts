@@ -17,6 +17,8 @@ export interface LoweredUriTemplate {
   readonly path: string;
   /** Concrete matcher routes represented by the path template. */
   readonly routePatterns: readonly RoutePattern[];
+  /** Path parameters proven to use the RFC 6570 slash operator. */
+  readonly slashExpandedPathNames?: readonly string[];
 }
 
 export type UriTemplateLowering =
@@ -69,13 +71,23 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
       optionalPathNames.add(parameter.name);
     }
   }
-  return lowerUriTemplateText(
+  const slashExpandedPathNames = new Set<string>();
+  const lowered = lowerUriTemplateTextInternal(
     operation.uriTemplate,
     pathNames,
     queryNames,
     scalarPathNames,
     optionalPathNames,
+    slashExpandedPathNames,
   );
+  if (!lowered.ok) return lowered;
+  return {
+    ok: true,
+    value: {
+      ...lowered.value,
+      slashExpandedPathNames: [...slashExpandedPathNames],
+    },
+  };
 }
 
 /** Exposed for focused parser tests without constructing compiler HTTP types. */
@@ -85,6 +97,23 @@ export function lowerUriTemplateText(
   queryNames: ReadonlySet<string>,
   scalarPathNames: ReadonlySet<string> = pathNames,
   optionalPathNames: ReadonlySet<string> = new Set(),
+): UriTemplateLowering {
+  return lowerUriTemplateTextInternal(
+    template,
+    pathNames,
+    queryNames,
+    scalarPathNames,
+    optionalPathNames,
+  );
+}
+
+function lowerUriTemplateTextInternal(
+  template: string,
+  pathNames: ReadonlySet<string>,
+  queryNames: ReadonlySet<string>,
+  scalarPathNames: ReadonlySet<string>,
+  optionalPathNames: ReadonlySet<string>,
+  slashExpandedPathNames?: Set<string>,
 ): UriTemplateLowering {
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
@@ -183,8 +212,10 @@ export function lowerUriTemplateText(
       return failure("path material appears after an optional slash expansion");
     }
     if (operator === "/") {
+      const exploded = variables.endsWith("*");
+      const slashVariables = exploded ? variables.slice(0, -1) : variables;
       const parsed = parseExpressionVariables(
-        variables,
+        slashVariables,
         pathNames,
         seenPathVariables,
         "path",
@@ -192,19 +223,27 @@ export function lowerUriTemplateText(
       );
       if (!parsed.ok) return parsed;
       if (parsed.names.length !== 1) {
-        return failure("optional slash expansions must contain exactly one path variable");
+        return failure("slash expansions must contain exactly one path variable");
       }
       const name = parsed.names[0]!;
-      if (!optionalPathNames.has(name)) {
-        return failure(`slash-expanded path variable ${JSON.stringify(name)} must be optional`);
-      }
       if (!scalarPathNames.has(name)) {
         return failure(
           `slash-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
         );
       }
       if (segment.length === 0) {
-        return failure("an optional slash expansion must follow a non-empty path segment");
+        return failure("a slash expansion must follow a non-empty path segment");
+      }
+      const optional = optionalPathNames.has(name);
+      if (optional && exploded) {
+        return failure("exploded optional slash expansions are not supported");
+      }
+      slashExpandedPathNames?.add(name);
+      if (!optional) {
+        segments.push(segment);
+        segment = [{ kind: "parameter", name }];
+        cursor = closing.index + 1;
+        continue;
       }
       optionalSlashParameter = name;
       cursor = closing.index + 1;

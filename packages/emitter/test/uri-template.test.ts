@@ -67,6 +67,12 @@ namespace UriTemplateApi;
 
 @route("/optional{/name}")
 @get op optional(@path name?: string): void;
+
+@route("/required{/name}")
+@get op required(@path name: string): void;
+
+@route("/required-explode{/name*}")
+@get op requiredExplode(@path name: string): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -180,6 +186,17 @@ describe("URI-template lowering", () => {
         trailingSlash: false,
       },
     ]);
+    expect(emittedRoutePattern(operations, "/required{/name}")).toEqual({
+      segments: [[{ kind: "literal", value: "required" }], [{ kind: "parameter", name: "name" }]],
+      trailingSlash: false,
+    });
+    expect(emittedRoutePattern(operations, "/required-explode{/name*}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "required-explode" }],
+        [{ kind: "parameter", name: "name" }],
+      ],
+      trailingSlash: false,
+    });
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -201,6 +218,8 @@ describe("URI-template lowering", () => {
       trail: capture("trail"),
       query: capture("query"),
       optional: capture("optional"),
+      required: capture("required"),
+      requiredExplode: capture("requiredExplode"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -248,6 +267,16 @@ describe("URI-template lowering", () => {
     expect((await router.handle(new Request("http://localhost/optional/value"))).status).toBe(204);
     expect(received.get("optional")).toEqual({ name: "value" });
     expect((await router.handle(new Request("http://localhost/optional/"))).status).toBe(404);
+
+    expect((await router.handle(new Request("http://localhost/required/value"))).status).toBe(204);
+    expect(received.get("required")).toEqual({ name: "value" });
+    expect((await router.handle(new Request("http://localhost/required"))).status).toBe(404);
+    expect((await router.handle(new Request("http://localhost/required/"))).status).toBe(404);
+
+    expect(
+      (await router.handle(new Request("http://localhost/required-explode/a%2Fb"))).status,
+    ).toBe(204);
+    expect(received.get("requiredExplode")).toEqual({ name: "a/b" });
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -289,9 +318,29 @@ describe("URI-template lowering", () => {
   });
 
   test("strict parser rejects malformed and unknown expressions", async () => {
-    const { lowerUriTemplateText } = await import("../dist/uri-template.js");
+    const { lowerUriTemplate, lowerUriTemplateText } = await import("../dist/uri-template.js");
     const path = new Set(["x"]);
     const query = new Set<string>();
+
+    const operation = (uriTemplate: string) =>
+      ({
+        uriTemplate,
+        parameters: {
+          parameters: [
+            {
+              type: "path",
+              name: "x",
+              style: "path",
+              allowReserved: false,
+              param: { optional: false, type: { kind: "String", value: "" } },
+            },
+          ],
+        },
+      }) as never;
+    const simpleStyle = lowerUriTemplate(operation("/simple/{x}"));
+    expect(simpleStyle.ok && simpleStyle.value.slashExpandedPathNames).toEqual([]);
+    const slashStyle = lowerUriTemplate(operation("/slash{/x}"));
+    expect(slashStyle.ok && slashStyle.value.slashExpandedPathNames).toEqual(["x"]);
 
     expect(lowerUriTemplateText("/malformed/{x", path, query)).toEqual({
       ok: false,
@@ -305,9 +354,35 @@ describe("URI-template lowering", () => {
       ok: false,
       reason: 'unknown path variable "other"',
     });
-    expect(lowerUriTemplateText("/reserved/{/x}", path, query)).toEqual({
-      ok: false,
-      reason: 'slash-expanded path variable "x" must be optional',
+    expect(lowerUriTemplateText("/required{/x}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/required{/x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "required" }],
+              [{ kind: "parameter", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/required{/x*}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/required{/x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "required" }],
+              [{ kind: "parameter", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
     });
     expect(lowerUriTemplateText("/optional{/x}", path, query, path, new Set(["x"]))).toEqual({
       ok: true,
@@ -332,6 +407,22 @@ describe("URI-template lowering", () => {
       ok: false,
       reason: "path material appears after an optional slash expansion",
     });
+    expect(lowerUriTemplateText("/optional{/x*}", path, query, path, new Set(["x"]))).toEqual({
+      ok: false,
+      reason: "exploded optional slash expansions are not supported",
+    });
+    expect(lowerUriTemplateText("/required/{/x}", path, query)).toEqual({
+      ok: false,
+      reason: "a slash expansion must follow a non-empty path segment",
+    });
+    expect(lowerUriTemplateText("/required{/x:2}", path, query)).toEqual({
+      ok: false,
+      reason: 'modifier ":2" on path variable "x" is not supported',
+    });
+    expect(lowerUriTemplateText("/required{/x}", path, query, new Set())).toEqual({
+      ok: false,
+      reason: 'slash-expanded path variable "x" must have a scalar wire shape',
+    });
     expect(
       lowerUriTemplateText(
         "/optional{/x,y}",
@@ -342,7 +433,7 @@ describe("URI-template lowering", () => {
       ),
     ).toEqual({
       ok: false,
-      reason: "optional slash expansions must contain exactly one path variable",
+      reason: "slash expansions must contain exactly one path variable",
     });
     expect(lowerUriTemplateText("/query/{x}{?q*}", path, new Set(["q"]))).toEqual({
       ok: true,
