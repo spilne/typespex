@@ -293,13 +293,17 @@ function lowerUriTemplateTextInternal(
         return failure("label expansions must contain exactly one path variable");
       }
       const name = parsed.names[0]!;
+      const scalarArray = scalarArrayPathNames.has(name);
       if (optionalPathNames.has(name)) {
         return failure(`label-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name)) {
+      if (!scalarPathNames.has(name) && !scalarArray) {
         return failure(
-          `label-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+          `label-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
+      }
+      if (scalarArray && exploded) {
+        return failure("exploded label path arrays are not supported");
       }
       labelExpandedPathNames?.add(name);
       appendLiteralToken(segment, ".");

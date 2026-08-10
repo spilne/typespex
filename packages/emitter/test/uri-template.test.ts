@@ -89,6 +89,9 @@ namespace UriTemplateApi;
 @route("/label-explode/item{.name*}")
 @get op labelExplode(@path name: string): void;
 
+@route("/label-array/array{.param}")
+@get op labelArray(@path param: string[]): void;
+
 @route("/matrix/item{;name}")
 @get op matrix(@path name: string): void;
 
@@ -136,8 +139,11 @@ namespace InvalidUriTemplateApi;
 @route("/label-optional/item{.x}")
 @get op optionalLabel(@path x?: string): void;
 
-@route("/label-collection/item{.x}")
-@get op collectionLabel(@path x: string[]): void;
+@route("/label-record/item{.x}")
+@get op recordLabel(@path x: Record<string>): void;
+
+@route("/label-array-explode/item{.x*}")
+@get op explodedArrayLabel(@path x: string[]): void;
 
 @route("/label-multiple/item{.x,y}")
 @get op multipleLabel(@path x: string, @path y: string): void;
@@ -290,6 +296,16 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/label-array/array{.param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "label-array" }],
+        [
+          { kind: "literal", value: "array." },
+          { kind: "parameter", name: "param" },
+        ],
+      ],
+      trailingSlash: false,
+    });
     expect(emittedRoutePattern(operations, "/matrix/item{;name}")).toEqual({
       segments: [
         [{ kind: "literal", value: "matrix" }],
@@ -338,6 +354,7 @@ describe("URI-template lowering", () => {
       simpleArray: capture("simpleArray"),
       label: capture("label"),
       labelExplode: capture("labelExplode"),
+      labelArray: capture("labelArray"),
       matrix: capture("matrix"),
       matrixExplode: capture("matrixExplode"),
     } as any);
@@ -436,6 +453,14 @@ describe("URI-template lowering", () => {
     expect(received.get("labelExplode")).toEqual({ name: "" });
 
     expect(
+      (await router.handle(new Request("http://localhost/label-array/array.a,b%2Cc"))).status,
+    ).toBe(204);
+    expect(received.get("labelArray")).toEqual({ param: ["a", "b,c"] });
+    expect((await router.handle(new Request("http://localhost/label-array/array"))).status).toBe(
+      404,
+    );
+
+    expect(
       (await router.handle(new Request("http://localhost/matrix/item;name=a%2Fb"))).status,
     ).toBe(204);
     expect(received.get("matrix")).toEqual({ name: "a/b" });
@@ -479,7 +504,10 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain("nested '{'");
     expect(diagnostics).toContain("path material appears after a query expansion");
     expect(diagnostics).toContain('label-expanded path variable "x" must be required');
-    expect(diagnostics).toContain('label-expanded path variable "x" must have a scalar wire shape');
+    expect(diagnostics).toContain(
+      'label-expanded path variable "x" must have a scalar or scalar-array wire shape',
+    );
+    expect(diagnostics).toContain("exploded label path arrays are not supported");
     expect(diagnostics).toContain("label expansions must contain exactly one path variable");
     expect(diagnostics).toContain('matrix-expanded path variable "x" must be required');
     expect(diagnostics).toContain(
@@ -672,7 +700,37 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/label/item{.x}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'label-expanded path variable "x" must have a scalar wire shape',
+      reason: 'label-expanded path variable "x" must have a scalar or scalar-array wire shape',
+    });
+    expect(
+      lowerUriTemplateText("/label/array{.x}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/label/array{.x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "label" }],
+              [
+                { kind: "literal", value: "array." },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/label/array{.x*}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: false,
+      reason: "exploded label path arrays are not supported",
+    });
+    expect(lowerUriTemplateText("/label/item{.x}", path, query, new Set(), path, path)).toEqual({
+      ok: false,
+      reason: 'label-expanded path variable "x" must be required',
     });
     expect(lowerUriTemplateText("/label/item{.x}", path, query, path, new Set(["x"]))).toEqual({
       ok: false,
