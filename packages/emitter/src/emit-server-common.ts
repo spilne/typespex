@@ -1929,7 +1929,7 @@ function classifyResponseVariant(
     return "unsupported";
   }
 
-  const kind = classifyResponseContentType(ctx, op, response.contentType);
+  const kind = classifyResponseContentType(ctx, op, response);
   if (kind === "unsupported") return kind;
 
   const reason = incompatibleResponseBodyReason(ctx, response, kind);
@@ -1999,22 +1999,37 @@ function incompatibleResponseBodyReason(
 
 /**
  * Maps an HTTP response content type to the matching `ResponseEncoders` kind.
- * Unrecognized types (e.g. `application/xml`, `multipart/*`) report a hard
- * diagnostic and return `"unsupported"`; callers emit a placeholder encoder
- * that throws at runtime so we never silently coerce a non-conforming
- * response to JSON. Missing content types default to JSON without warning
- * — TypeSpec doesn't require operations to declare one.
+ * A concrete media type on a bytes body selects the raw bytes encoder,
+ * allowing contracts such as image/png while preserving the declared
+ * Content-Type. Malformed types, wildcard ranges, and other unrecognized
+ * types (e.g. application/xml on a model body) report a hard diagnostic and
+ * return `"unsupported"`; callers emit a placeholder encoder that throws at
+ * runtime so we never silently coerce a non-conforming response to JSON.
+ * Missing content types default to JSON without warning — TypeSpec doesn't
+ * require operations to declare one.
  */
 function classifyResponseContentType(
   ctx: EmitterCtx,
   op: HttpOperation,
-  contentType: string | undefined,
+  response: SuccessResponseVariant,
 ): Exclude<ResponseEncoderKind, "empty"> {
+  const contentType = response.contentType;
   if (!contentType) return "json";
   const mediaType = normalizeMediaType(contentType);
-  if (mediaType && isJsonMediaType(mediaType)) return "json";
-  if (mediaType && isTextMediaType(mediaType)) return "text";
+  if (!mediaType || isWildcardMediaType(mediaType)) {
+    $lib.reportDiagnostic(ctx.program, {
+      code: "unsupported-response-content-type",
+      format: { contentType, operationName: op.operation.name },
+      target: op.operation,
+    });
+    return "unsupported";
+  }
+  if (isJsonMediaType(mediaType)) return "json";
+  if (isTextMediaType(mediaType)) return "text";
   if (mediaType === "application/octet-stream") return "bytes";
+  if (response.body?.bodyKind === "single" && isBytesScalar(response.body.type)) {
+    return "bytes";
+  }
 
   $lib.reportDiagnostic(ctx.program, {
     code: "unsupported-response-content-type",
@@ -2022,6 +2037,11 @@ function classifyResponseContentType(
     target: op.operation,
   });
   return "unsupported";
+}
+
+function isWildcardMediaType(mediaType: string): boolean {
+  const [type, subtype] = mediaType.split("/", 2);
+  return type === "*" || subtype === "*";
 }
 
 function encoderForKind(
