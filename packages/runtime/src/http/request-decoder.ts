@@ -35,6 +35,10 @@ export interface RequestParameterDecodeOptions {
 export interface PathParameterDecodeOptions extends RequestParameterDecodeOptions {
   /** Raw separator for array-valued path captures. Defaults to a comma. */
   readonly arraySeparator?: string;
+  /** Decode an RFC 6570 record: alternating components normally, or key=value entries when exploded. */
+  readonly record?: boolean;
+  /** Raw separator between record components. Defaults to a comma. */
+  readonly recordSeparator?: string;
 }
 
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
@@ -65,22 +69,34 @@ export function requiredPath<A>(
   decoder: Decoder<A>,
   options: PathParameterDecodeOptions = {},
 ): RequestDecoder<A> {
+  if (options.array && options.record) {
+    throw new TypeError("Path parameters cannot use array and record decoding together.");
+  }
   if (options.arraySeparator !== undefined && !options.array) {
     throw new TypeError("Path array separators require array decoding.");
   }
   if (options.arraySeparator === "") {
     throw new TypeError("Path array separators must not be empty.");
   }
+  if (options.recordSeparator !== undefined && !options.record) {
+    throw new TypeError("Path record separators require record decoding.");
+  }
+  if (options.recordSeparator === "") {
+    throw new TypeError("Path record separators must not be empty.");
+  }
   const arraySeparator = options.arraySeparator ?? ",";
+  const recordSeparator = options.recordSeparator ?? ",";
   const prefix = `$path.${name}`;
   return createRequestDecoder((input) => {
     const raw = input.pathParams[name];
-    const decodedValue: DecoderResult<string | string[]> | undefined =
+    const decodedValue: DecoderResult<string | string[] | Record<string, string>> | undefined =
       raw === undefined
         ? undefined
-        : options.array
-          ? uriDecodeArray(raw.split(arraySeparator))
-          : uriDecode(raw);
+        : options.record
+          ? uriDecodeRecord(raw, recordSeparator, options.explode === true)
+          : options.array
+            ? uriDecodeArray(raw.split(arraySeparator))
+            : uriDecode(raw);
     if (decodedValue !== undefined && isLeft(decodedValue)) {
       return prefixIssues(decodedValue, prefix);
     }
@@ -459,6 +475,59 @@ function uriDecodeArray(values: readonly string[]): DecoderResult<string[]> {
     const decoded = uriDecode(value);
     return isLeft(decoded) ? prefixIssues(decoded, `[${index}]`) : decoded;
   });
+}
+
+function uriDecodeRecord(
+  raw: string,
+  separator: string,
+  exploded: boolean,
+): DecoderResult<Record<string, string>> {
+  const result: Record<string, string> = {};
+  if (raw === "") return Either.right(result);
+
+  const components = raw.split(separator);
+  if (!exploded && components.length % 2 !== 0) {
+    return fail(
+      "",
+      `Expected alternating record keys and values separated by ${JSON.stringify(separator)}.`,
+    );
+  }
+
+  const entries: Array<readonly [string, string, number]> = [];
+  if (exploded) {
+    for (let index = 0; index < components.length; index += 1) {
+      const component = components[index]!;
+      const equals = component.indexOf("=");
+      if (equals === -1) {
+        return fail(`[${index}]`, "Expected an exploded record entry in key=value form.");
+      }
+      entries.push([component.slice(0, equals), component.slice(equals + 1), index]);
+    }
+  } else {
+    for (let index = 0; index < components.length; index += 2) {
+      entries.push([components[index]!, components[index + 1]!, index]);
+    }
+  }
+
+  for (const [rawKey, rawValue, componentIndex] of entries) {
+    const key = uriDecode(rawKey);
+    if (isLeft(key)) return prefixIssues(key, `[${componentIndex}]`);
+    const value = uriDecode(rawValue);
+    if (isLeft(value)) {
+      return prefixIssues(value, exploded ? `[${componentIndex}]` : `[${componentIndex + 1}]`);
+    }
+    if (Object.prototype.hasOwnProperty.call(result, key.right)) {
+      return fail(`[${componentIndex}]`, `Duplicate record key ${JSON.stringify(key.right)}.`);
+    }
+    Object.defineProperty(result, key.right, {
+      configurable: true,
+      enumerable: true,
+      value: value.right,
+      writable: true,
+    });
+  }
+
+  return Either.right(result);
 }
 
 const EMPTY_COOKIES: Record<string, string> = Object.freeze(Object.create(null));

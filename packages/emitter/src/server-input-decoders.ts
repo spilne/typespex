@@ -161,7 +161,11 @@ export function emitDecoder(
     );
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     const optionValues: string[] = [];
-    if (isArrayInputType(ctx, param.param.type)) {
+    const collection =
+      param.param.type.kind === "Model" ? getPayloadCollection(ctx, param.param.type) : undefined;
+    if (collection?.kind === "record") {
+      optionValues.push("record: true");
+    } else if (isArrayInputType(ctx, param.param.type)) {
       optionValues.push("array: true");
       if (param.style === "path" && param.explode) {
         optionValues.push('arraySeparator: "/"');

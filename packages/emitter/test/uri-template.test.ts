@@ -95,6 +95,9 @@ namespace UriTemplateApi;
 @route("/simple-array/array{param*}")
 @get op simpleArray(@path param: string[]): void;
 
+@route("/simple-record/record{param}")
+@get op simpleRecord(@path param: Record<int32>): void;
+
 @route("/label/item{.name}")
 @get op label(@path name: string): void;
 
@@ -321,6 +324,19 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/simple-record/record{param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "simple-record" }],
+        [
+          { kind: "literal", value: "record" },
+          { kind: "parameter", name: "param" },
+        ],
+      ],
+      trailingSlash: false,
+    });
+    expect(operations).toMatch(
+      /simpleRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true \},\s*\)\.map/,
+    );
     expect(emittedRoutePattern(operations, "/label/item{.name}")).toEqual({
       segments: [
         [{ kind: "literal", value: "label" }],
@@ -430,6 +446,7 @@ describe("URI-template lowering", () => {
       slashArrayExplode: capture("slashArrayExplode"),
       simpleExplode: capture("simpleExplode"),
       simpleArray: capture("simpleArray"),
+      simpleRecord: capture("simpleRecord"),
       label: capture("label"),
       labelExplode: capture("labelExplode"),
       labelArray: capture("labelArray"),
@@ -545,6 +562,25 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/simple-array/arraya,b%2Cc"))).status,
     ).toBe(204);
     expect(received.get("simpleArray")).toEqual({ param: ["a", "b,c"] });
+
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record/recorda,1,b,2"))).status,
+    ).toBe(204);
+    expect(received.get("simpleRecord")).toEqual({ param: { a: 1, b: 2 } });
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record/recorda%2Cb,1"))).status,
+    ).toBe(204);
+    expect(received.get("simpleRecord")).toEqual({ param: { "a,b": 1 } });
+    expect((await router.handle(new Request("http://localhost/simple-record/record"))).status).toBe(
+      204,
+    );
+    expect(received.get("simpleRecord")).toEqual({ param: {} });
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record/recorda,1,b"))).status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record/recorda,1,%61,2"))).status,
+    ).toBe(400);
 
     expect((await router.handle(new Request("http://localhost/label/item.a%2Fb"))).status).toBe(
       204,
