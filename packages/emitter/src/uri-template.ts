@@ -15,7 +15,8 @@ export interface RoutePattern {
 export interface LoweredUriTemplate {
   /** Readable path portion of the URI template, without query expansions. */
   readonly path: string;
-  readonly routePattern: RoutePattern;
+  /** Concrete matcher routes represented by the path template. */
+  readonly routePatterns: readonly RoutePattern[];
 }
 
 export type UriTemplateLowering =
@@ -49,6 +50,7 @@ export function reportUnsupportedUriTemplates(
 export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering {
   const pathNames = new Set<string>();
   const scalarPathNames = new Set<string>();
+  const optionalPathNames = new Set<string>();
   const queryNames = new Set<string>();
   for (const parameter of operation.parameters.parameters) {
     const names =
@@ -63,8 +65,17 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     if (parameter.type === "path" && isScalarWireType(parameter.param.type)) {
       scalarPathNames.add(parameter.name);
     }
+    if (parameter.type === "path" && parameter.param.optional) {
+      optionalPathNames.add(parameter.name);
+    }
   }
-  return lowerUriTemplateText(operation.uriTemplate, pathNames, queryNames, scalarPathNames);
+  return lowerUriTemplateText(
+    operation.uriTemplate,
+    pathNames,
+    queryNames,
+    scalarPathNames,
+    optionalPathNames,
+  );
 }
 
 /** Exposed for focused parser tests without constructing compiler HTTP types. */
@@ -73,6 +84,7 @@ export function lowerUriTemplateText(
   pathNames: ReadonlySet<string>,
   queryNames: ReadonlySet<string>,
   scalarPathNames: ReadonlySet<string> = pathNames,
+  optionalPathNames: ReadonlySet<string> = new Set(),
 ): UriTemplateLowering {
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
@@ -85,6 +97,7 @@ export function lowerUriTemplateText(
   let pathEnd = template.length;
   const seenPathVariables = new Set<string>();
   const seenQueryVariables = new Set<string>();
+  let optionalSlashParameter: string | undefined;
 
   const appendLiteral = (literal: string): UriTemplateLowering | undefined => {
     if (literal.includes("?") || literal.includes("#")) {
@@ -124,6 +137,9 @@ export function lowerUriTemplateText(
       if (queryStarted) {
         return failure("path material appears after a query expansion");
       }
+      if (optionalSlashParameter !== undefined) {
+        return failure("path material appears after an optional slash expansion");
+      }
       const literalFailure = appendLiteral(literal);
       if (literalFailure) return literalFailure;
       cursor = end;
@@ -162,6 +178,37 @@ export function lowerUriTemplateText(
 
     if (queryStarted) {
       return failure("path material appears after a query expansion");
+    }
+    if (optionalSlashParameter !== undefined) {
+      return failure("path material appears after an optional slash expansion");
+    }
+    if (operator === "/") {
+      const parsed = parseExpressionVariables(
+        variables,
+        pathNames,
+        seenPathVariables,
+        "path",
+        false,
+      );
+      if (!parsed.ok) return parsed;
+      if (parsed.names.length !== 1) {
+        return failure("optional slash expansions must contain exactly one path variable");
+      }
+      const name = parsed.names[0]!;
+      if (!optionalPathNames.has(name)) {
+        return failure(`slash-expanded path variable ${JSON.stringify(name)} must be optional`);
+      }
+      if (!scalarPathNames.has(name)) {
+        return failure(
+          `slash-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+        );
+      }
+      if (segment.length === 0) {
+        return failure("an optional slash expansion must follow a non-empty path segment");
+      }
+      optionalSlashParameter = name;
+      cursor = closing.index + 1;
+      continue;
     }
     if (operator !== undefined) {
       return failure(`URI-template operator ${JSON.stringify(operator)} is not supported in paths`);
@@ -206,7 +253,16 @@ export function lowerUriTemplateText(
     ok: true,
     value: {
       path,
-      routePattern: { segments, trailingSlash },
+      routePatterns:
+        optionalSlashParameter === undefined
+          ? [{ segments, trailingSlash }]
+          : [
+              { segments, trailingSlash: false },
+              {
+                segments: [...segments, [{ kind: "parameter", name: optionalSlashParameter }]],
+                trailingSlash: false,
+              },
+            ],
     },
   };
 }

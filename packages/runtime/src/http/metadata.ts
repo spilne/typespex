@@ -25,6 +25,11 @@ export interface OperationMeta {
   readonly path: string;
   /** Structured matcher route. Falls back to legacy `path` when omitted. */
   readonly routePattern?: RoutePattern;
+  /**
+   * Multiple concrete matcher routes represented by one URI template.
+   * When present, this non-empty list takes precedence over `routePattern`.
+   */
+  readonly routePatterns?: readonly RoutePattern[];
   /** Explicit request metadata used to distinguish this operation on a shared route. */
   readonly routeSelection?: RouteSelection;
   readonly hints: Hints;

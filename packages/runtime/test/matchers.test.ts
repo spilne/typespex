@@ -38,6 +38,42 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(m!.pathParams).toEqual({ petId: "abc-123" });
     });
 
+    test("multiple concrete patterns can target one logical route", () => {
+      const optional = create([
+        {
+          method: "GET",
+          path: "/optional{/name}",
+          routePattern: {
+            segments: [[{ kind: "literal", value: "optional" }]],
+            trailingSlash: false,
+          },
+          route: "optional",
+        },
+        {
+          method: "GET",
+          path: "/optional{/name}",
+          routePattern: {
+            segments: [
+              [{ kind: "literal", value: "optional" }],
+              [{ kind: "parameter", name: "name" }],
+            ],
+            trailingSlash: false,
+          },
+          route: "optional",
+        },
+      ]);
+
+      expect(optional.match("GET", "/optional")).toEqual({
+        route: "optional",
+        pathParams: {},
+      });
+      expect(optional.match("GET", "/optional/value")).toEqual({
+        route: "optional",
+        pathParams: { name: "value" },
+      });
+      expect(optional.match("GET", "/optional/")).toBeNull();
+    });
+
     test("two params", () => {
       const m = matcher.match("GET", "/users/u-1/posts/p-2");
       expect(m!.pathParams).toEqual({ userId: "u-1", postId: "p-2" });

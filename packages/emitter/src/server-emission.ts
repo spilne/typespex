@@ -43,7 +43,7 @@ export interface ServerOperationEmission {
   readonly resultType: string;
   readonly method: string;
   readonly path: string;
-  readonly routePattern: RoutePattern;
+  readonly routePatterns: readonly RoutePattern[];
   readonly routeSelection?: RouteSelectionEmission;
   readonly serviceHints: readonly EmittedHintEntry[];
   readonly namespaces: readonly ServerNamespaceEmission[];
@@ -121,7 +121,7 @@ function buildOperationEmission(
     resultType: buildResultType(ctx, operation),
     method: operation.verb.toUpperCase(),
     path: lowered.value.path,
-    routePattern: lowered.value.routePattern,
+    routePatterns: lowered.value.routePatterns,
     routeSelection,
     serviceHints: emitHintEntries(ctx, ctx.service.namespace),
     namespaces: getOperationNamespaces(ctx.service.namespace, operation.operation.namespace).map(
