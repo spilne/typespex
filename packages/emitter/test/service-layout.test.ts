@@ -69,6 +69,21 @@ namespace Support {
 }
 `;
 
+const caseVariantServiceSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "Upper-case service" })
+namespace Foo {
+  @route("/upper") @get op upper(): string;
+}
+
+@service(#{ title: "Lower-case service" })
+namespace foo {
+  @route("/lower") @get op lower(): string;
+}
+`;
+
 const generatedArtifacts = [
   ["models", "models.ts"],
   ["server-hints", "server-hints.ts"],
@@ -191,6 +206,22 @@ describe("service layout", () => {
     expect(diagnostics).toContain('"Sales.Api.models"');
     expect(diagnostics).toContain('"Support.Api.models"');
     expect(r.listFiles("api")).toEqual([]);
+  });
+
+  test("rejects output paths that differ only by case", () => {
+    const r = compileFixtureExpectingDiagnostics(
+      "case-only-service-collision",
+      caseVariantServiceSpec,
+      '    service-folder-pattern: "{service}"\n',
+    );
+    const diagnostics = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("duplicate-output-path");
+    expect(diagnostics).toContain('"Foo.models"');
+    expect(diagnostics).toContain('"foo.models"');
+    expect(diagnostics).toContain(resolvePath(r.outputDir, "foo", "models.ts"));
+    expect(r.listFiles("Foo")).toEqual([]);
+    expect(r.listFiles("foo")).toEqual([]);
   });
 
   test("rejects custom patterns that collapse files within one service", () => {
