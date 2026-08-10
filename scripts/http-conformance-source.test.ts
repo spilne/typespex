@@ -46,7 +46,7 @@ describe("TypeSpec HTTP conformance source transform", () => {
     const malformed = structuredScenarioSource.replace("send(@body", "send((@body");
 
     expect(() => removeScenarioRunnerMetadata(malformed, "encode/malformed")).toThrow(
-      "Could not parse TypeSpec HTTP scenario encode/malformed",
+      /Could not parse TypeSpec HTTP scenario encode\/malformed.*First diagnostic: <anonymous file>:\d+:\d+ - error .+: .+/,
     );
   });
 });

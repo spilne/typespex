@@ -1,10 +1,5 @@
-// Use the same integrity-locked compiler instance that compiles the conformance fixtures.
-import {
-  parse,
-  SyntaxKind,
-  visitChildren,
-  type Node,
-} from "../example/node_modules/@typespec/compiler/dist/src/ast/index.js";
+import { formatDiagnostic } from "@typespec/compiler";
+import { parse, SyntaxKind, visitChildren, type Node } from "@typespec/compiler/ast";
 
 interface SourceRange {
   readonly pos: number;
@@ -35,9 +30,10 @@ export function removeScenarioRunnerMetadata(source: string, scenario: string): 
 function removeDecoratorApplications(source: string, name: string, scenario: string): string {
   const script = parse(source);
   if (script.parseDiagnostics.length > 0) {
+    const firstDiagnostic = formatDiagnostic(script.parseDiagnostics[0]);
     throw new Error(
       `Could not parse TypeSpec HTTP scenario ${scenario} before transforming metadata ` +
-        `(${script.parseDiagnostics.length} diagnostics).`,
+        `(${script.parseDiagnostics.length} diagnostics). First diagnostic: ${firstDiagnostic}`,
     );
   }
 
