@@ -32,6 +32,11 @@ export interface RequestParameterDecodeOptions {
   readonly mediaType?: boolean;
 }
 
+export interface PathParameterDecodeOptions extends RequestParameterDecodeOptions {
+  /** Raw separator for array-valued path captures. Defaults to a comma. */
+  readonly arraySeparator?: string;
+}
+
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
 
 // ---------------------------------------------------------------------------
@@ -58,8 +63,15 @@ function createRequestDecoder<A>(
 export function requiredPath<A>(
   name: string,
   decoder: Decoder<A>,
-  options: RequestParameterDecodeOptions = {},
+  options: PathParameterDecodeOptions = {},
 ): RequestDecoder<A> {
+  if (options.arraySeparator !== undefined && !options.array) {
+    throw new TypeError("Path array separators require array decoding.");
+  }
+  if (options.arraySeparator === "") {
+    throw new TypeError("Path array separators must not be empty.");
+  }
+  const arraySeparator = options.arraySeparator ?? ",";
   const prefix = `$path.${name}`;
   return createRequestDecoder((input) => {
     const raw = input.pathParams[name];
@@ -67,7 +79,7 @@ export function requiredPath<A>(
       raw === undefined
         ? undefined
         : options.array
-          ? uriDecodeArray(raw.split(","))
+          ? uriDecodeArray(raw.split(arraySeparator))
           : uriDecode(raw);
     if (decodedValue !== undefined && isLeft(decodedValue)) {
       return prefixIssues(decodedValue, prefix);
