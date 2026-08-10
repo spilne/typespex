@@ -21,6 +21,8 @@ export interface LoweredUriTemplate {
   readonly slashExpandedPathNames?: readonly string[];
   /** Path parameters proven to use the RFC 6570 label operator. */
   readonly labelExpandedPathNames?: readonly string[];
+  /** Path parameters proven to use the RFC 6570 matrix operator. */
+  readonly matrixExpandedPathNames?: readonly string[];
 }
 
 export type UriTemplateLowering =
@@ -75,6 +77,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
   }
   const slashExpandedPathNames = new Set<string>();
   const labelExpandedPathNames = new Set<string>();
+  const matrixExpandedPathNames = new Set<string>();
   const lowered = lowerUriTemplateTextInternal(
     operation.uriTemplate,
     pathNames,
@@ -83,6 +86,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     optionalPathNames,
     slashExpandedPathNames,
     labelExpandedPathNames,
+    matrixExpandedPathNames,
   );
   if (!lowered.ok) return lowered;
   return {
@@ -91,6 +95,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
       ...lowered.value,
       slashExpandedPathNames: [...slashExpandedPathNames],
       labelExpandedPathNames: [...labelExpandedPathNames],
+      matrixExpandedPathNames: [...matrixExpandedPathNames],
     },
   };
 }
@@ -120,6 +125,7 @@ function lowerUriTemplateTextInternal(
   optionalPathNames: ReadonlySet<string>,
   slashExpandedPathNames?: Set<string>,
   labelExpandedPathNames?: Set<string>,
+  matrixExpandedPathNames?: Set<string>,
 ): UriTemplateLowering {
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
@@ -280,6 +286,38 @@ function lowerUriTemplateTextInternal(
       }
       labelExpandedPathNames?.add(name);
       appendLiteralToken(segment, ".");
+      segment.push({ kind: "parameter", name });
+      cursor = closing.index + 1;
+      continue;
+    }
+    if (operator === ";") {
+      const exploded = variables.endsWith("*");
+      const matrixVariables = exploded ? variables.slice(0, -1) : variables;
+      const parsed = parseExpressionVariables(
+        matrixVariables,
+        pathNames,
+        seenPathVariables,
+        "path",
+        false,
+      );
+      if (!parsed.ok) return parsed;
+      if (parsed.names.length !== 1) {
+        return failure("matrix expansions must contain exactly one path variable");
+      }
+      const name = parsed.names[0]!;
+      if (matrixVariables !== name) {
+        return failure("percent-encoded matrix variable names are not supported");
+      }
+      if (optionalPathNames.has(name)) {
+        return failure(`matrix-expanded path variable ${JSON.stringify(name)} must be required`);
+      }
+      if (!scalarPathNames.has(name)) {
+        return failure(
+          `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+        );
+      }
+      matrixExpandedPathNames?.add(name);
+      appendLiteralToken(segment, `;${matrixVariables}=`);
       segment.push({ kind: "parameter", name });
       cursor = closing.index + 1;
       continue;

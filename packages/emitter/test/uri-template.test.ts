@@ -82,6 +82,12 @@ namespace UriTemplateApi;
 
 @route("/label-explode/item{.name*}")
 @get op labelExplode(@path name: string): void;
+
+@route("/matrix/item{;name}")
+@get op matrix(@path name: string): void;
+
+@route("/matrix-explode/item{;name*}")
+@get op matrixExplode(@path name: string): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -129,6 +135,15 @@ namespace InvalidUriTemplateApi;
 
 @route("/label-multiple/item{.x,y}")
 @get op multipleLabel(@path x: string, @path y: string): void;
+
+@route("/matrix-optional/item{;x}")
+@get op optionalMatrix(@path x?: string): void;
+
+@route("/matrix-collection/item{;x}")
+@get op collectionMatrix(@path x: string[]): void;
+
+@route("/matrix-multiple/item{;x,y}")
+@get op multipleMatrix(@path x: string, @path y: string): void;
 `;
 
 const unknownUriVariableSpec = `
@@ -245,6 +260,26 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/matrix/item{;name}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "matrix" }],
+        [
+          { kind: "literal", value: "item;name=" },
+          { kind: "parameter", name: "name" },
+        ],
+      ],
+      trailingSlash: false,
+    });
+    expect(emittedRoutePattern(operations, "/matrix-explode/item{;name*}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "matrix-explode" }],
+        [
+          { kind: "literal", value: "item;name=" },
+          { kind: "parameter", name: "name" },
+        ],
+      ],
+      trailingSlash: false,
+    });
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -271,6 +306,8 @@ describe("URI-template lowering", () => {
       simpleExplode: capture("simpleExplode"),
       label: capture("label"),
       labelExplode: capture("labelExplode"),
+      matrix: capture("matrix"),
+      matrixExplode: capture("matrixExplode"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -352,6 +389,23 @@ describe("URI-template lowering", () => {
       204,
     );
     expect(received.get("labelExplode")).toEqual({ name: "" });
+
+    expect(
+      (await router.handle(new Request("http://localhost/matrix/item;name=a%2Fb"))).status,
+    ).toBe(204);
+    expect(received.get("matrix")).toEqual({ name: "a/b" });
+    expect((await router.handle(new Request("http://localhost/matrix/item;a%2Fb"))).status).toBe(
+      404,
+    );
+
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-explode/item;name=value"))).status,
+    ).toBe(204);
+    expect(received.get("matrixExplode")).toEqual({ name: "value" });
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-explode/item;name="))).status,
+    ).toBe(204);
+    expect(received.get("matrixExplode")).toEqual({ name: "" });
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -382,6 +436,11 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain('label-expanded path variable "x" must be required');
     expect(diagnostics).toContain('label-expanded path variable "x" must have a scalar wire shape');
     expect(diagnostics).toContain("label expansions must contain exactly one path variable");
+    expect(diagnostics).toContain('matrix-expanded path variable "x" must be required');
+    expect(diagnostics).toContain(
+      'matrix-expanded path variable "x" must have a scalar wire shape',
+    );
+    expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
     expect(result.listFiles("invalid-uri-template-api")).toEqual([]);
   });
 
@@ -420,12 +479,19 @@ describe("URI-template lowering", () => {
     const simpleStyle = lowerUriTemplate(operation("/simple/{x}"));
     expect(simpleStyle.ok && simpleStyle.value.slashExpandedPathNames).toEqual([]);
     expect(simpleStyle.ok && simpleStyle.value.labelExpandedPathNames).toEqual([]);
+    expect(simpleStyle.ok && simpleStyle.value.matrixExpandedPathNames).toEqual([]);
     const slashStyle = lowerUriTemplate(operation("/slash{/x}"));
     expect(slashStyle.ok && slashStyle.value.slashExpandedPathNames).toEqual(["x"]);
     expect(slashStyle.ok && slashStyle.value.labelExpandedPathNames).toEqual([]);
+    expect(slashStyle.ok && slashStyle.value.matrixExpandedPathNames).toEqual([]);
     const labelStyle = lowerUriTemplate(operation("/label{.x}"));
     expect(labelStyle.ok && labelStyle.value.slashExpandedPathNames).toEqual([]);
     expect(labelStyle.ok && labelStyle.value.labelExpandedPathNames).toEqual(["x"]);
+    expect(labelStyle.ok && labelStyle.value.matrixExpandedPathNames).toEqual([]);
+    const matrixStyle = lowerUriTemplate(operation("/matrix{;x}"));
+    expect(matrixStyle.ok && matrixStyle.value.slashExpandedPathNames).toEqual([]);
+    expect(matrixStyle.ok && matrixStyle.value.labelExpandedPathNames).toEqual([]);
+    expect(matrixStyle.ok && matrixStyle.value.matrixExpandedPathNames).toEqual(["x"]);
 
     expect(lowerUriTemplateText("/malformed/{x", path, query)).toEqual({
       ok: false,
@@ -550,6 +616,60 @@ describe("URI-template lowering", () => {
     ).toEqual({
       ok: false,
       reason: "label expansions must contain exactly one path variable",
+    });
+    expect(lowerUriTemplateText("/matrix/item{;x}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/matrix/item{;x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "matrix" }],
+              [
+                { kind: "literal", value: "item;x=" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/matrix/item{;x*}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/matrix/item{;x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "matrix" }],
+              [
+                { kind: "literal", value: "item;x=" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/matrix/item{;%78}", path, query)).toEqual({
+      ok: false,
+      reason: "percent-encoded matrix variable names are not supported",
+    });
+    expect(lowerUriTemplateText("/matrix/item{;x}", path, query, new Set())).toEqual({
+      ok: false,
+      reason: 'matrix-expanded path variable "x" must have a scalar wire shape',
+    });
+    expect(lowerUriTemplateText("/matrix/item{;x}", path, query, path, new Set(["x"]))).toEqual({
+      ok: false,
+      reason: 'matrix-expanded path variable "x" must be required',
+    });
+    expect(
+      lowerUriTemplateText("/matrix/item{;x,y}", new Set(["x", "y"]), query, new Set(["x", "y"])),
+    ).toEqual({
+      ok: false,
+      reason: "matrix expansions must contain exactly one path variable",
     });
     expect(lowerUriTemplateText("/optional{/x}", path, query, path, new Set(["x"]))).toEqual({
       ok: true,
