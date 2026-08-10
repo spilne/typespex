@@ -1,7 +1,9 @@
-/** One literal or captured-parameter token inside a path segment. */
+/** One literal or captured-parameter token in a structured route. */
 export type RoutePatternToken =
   | { readonly kind: "literal"; readonly value: string }
-  | { readonly kind: "parameter"; readonly name: string };
+  | { readonly kind: "parameter"; readonly name: string }
+  /** A required terminal parameter that captures one or more complete path segments. */
+  | { readonly kind: "rest"; readonly name: string };
 
 /** Tokens composing one slash-delimited route segment. */
 export type RoutePatternSegment = readonly RoutePatternToken[];
@@ -9,8 +11,9 @@ export type RoutePatternSegment = readonly RoutePatternToken[];
 /**
  * Structured route pattern used when parameters occupy only part of a segment.
  *
- * `segments` excludes slash separators. `trailingSlash` records the exact
- * terminal slash, including `true` for the root path.
+ * `segments` excludes slash separators. A `rest` token must be the sole token
+ * in the final segment. `trailingSlash` records the exact terminal slash,
+ * including `true` for the root path.
  */
 export interface RoutePattern {
   readonly segments: readonly RoutePatternSegment[];

@@ -163,7 +163,9 @@ export function emitDecoder(
     const optionValues: string[] = [];
     if (isArrayInputType(ctx, param.param.type)) {
       optionValues.push("array: true");
-      if (param.style === "label" && param.explode) {
+      if (param.style === "path" && param.explode) {
+        optionValues.push('arraySeparator: "/"');
+      } else if (param.style === "label" && param.explode) {
         optionValues.push('arraySeparator: "."');
       } else if (param.style === "matrix" && param.explode) {
         optionValues.push(`arraySeparator: ${JSON.stringify(`;${param.name}=`)}`);

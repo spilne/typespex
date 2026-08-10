@@ -480,6 +480,79 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(m.match("GET", "/a/b")).toBeNull();
     });
 
+    test("terminal rest parameters capture one or more raw path segments", () => {
+      const m = create([
+        {
+          method: "GET",
+          path: "/files{/parts*}",
+          routePattern: {
+            segments: [[{ kind: "literal", value: "files" }], [{ kind: "rest", name: "parts" }]],
+            trailingSlash: false,
+          },
+          route: "files",
+        },
+      ]);
+
+      expect(m.match("GET", "/files/one")!.pathParams).toEqual({ parts: "one" });
+      expect(m.match("GET", "/files/a/b%2Fc/caf%C3%A9")!.pathParams).toEqual({
+        parts: "a/b%2Fc/caf%C3%A9",
+      });
+      expect(m.match("GET", "/files")).toBeNull();
+      expect(m.match("GET", "/files/")).toBeNull();
+      expect(m.match("GET", "/files/a/")).toBeNull();
+    });
+
+    test("terminal rest parameters preserve exact trailing-slash semantics", () => {
+      const m = create([
+        {
+          method: "GET",
+          path: "/archive{/parts*}/",
+          routePattern: {
+            segments: [[{ kind: "literal", value: "archive" }], [{ kind: "rest", name: "parts" }]],
+            trailingSlash: true,
+          },
+          route: "archive",
+        },
+      ]);
+
+      expect(m.match("GET", "/archive/a/b/")!.pathParams).toEqual({ parts: "a/b" });
+      expect(m.match("GET", "/archive/a/b")).toBeNull();
+    });
+
+    test("finite routes take priority over terminal rest parameters in either order", () => {
+      const rest = {
+        method: "GET",
+        path: "/files{/parts*}",
+        routePattern: {
+          segments: [
+            [{ kind: "literal" as const, value: "files" }],
+            [{ kind: "rest" as const, name: "parts" }],
+          ],
+          trailingSlash: false,
+        },
+        route: "rest",
+      };
+      const finite = [
+        { method: "GET", path: "/files/index", route: "static" },
+        { method: "GET", path: "/files/:name", route: "one" },
+        { method: "GET", path: "/files/:group/:name", route: "two" },
+      ];
+
+      for (const routesByOrder of [
+        [rest, ...finite],
+        [...finite, rest],
+      ]) {
+        const m = create(routesByOrder);
+        expect(m.match("GET", "/files/index")!.route).toBe("static");
+        expect(m.match("GET", "/files/readme")!.route).toBe("one");
+        expect(m.match("GET", "/files/docs/readme")!.route).toBe("two");
+        expect(m.match("GET", "/files/docs/api/readme")).toEqual({
+          route: "rest",
+          pathParams: { parts: "docs/api/readme" },
+        });
+      }
+    });
+
     // --- Duplicate / empty segments ---
 
     test("double slash produces empty segment (no match for most routes)", () => {
@@ -698,6 +771,70 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       ).toThrow("Duplicate route: GET /files/{second}.json");
     });
 
+    test("rejects structurally duplicate terminal rest routes with renamed params", () => {
+      const restPattern = (name: string) => ({
+        segments: [
+          [{ kind: "literal" as const, value: "files" }],
+          [{ kind: "rest" as const, name }],
+        ],
+        trailingSlash: false,
+      });
+
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/files{/first*}",
+            routePattern: restPattern("first"),
+            route: "first",
+          },
+          {
+            method: "GET",
+            path: "/files{/second*}",
+            routePattern: restPattern("second"),
+            route: "second",
+          },
+        ]),
+      ).toThrow("Duplicate route: GET /files{/second*}");
+    });
+
+    test("rejects overlapping same-precedence terminal rest routes", () => {
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/a{left}{/tail*}",
+            routePattern: {
+              segments: [
+                [
+                  { kind: "literal", value: "a" },
+                  { kind: "parameter", name: "left" },
+                ],
+                [{ kind: "rest", name: "tail" }],
+              ],
+              trailingSlash: false,
+            },
+            route: "left",
+          },
+          {
+            method: "GET",
+            path: "/{right}b{/parts*}",
+            routePattern: {
+              segments: [
+                [
+                  { kind: "parameter", name: "right" },
+                  { kind: "literal", value: "b" },
+                ],
+                [{ kind: "rest", name: "parts" }],
+              ],
+              trailingSlash: false,
+            },
+            route: "right",
+          },
+        ]),
+      ).toThrow("Ambiguous route");
+    });
+
     test("rejects overlapping same-precedence mixed routes and allows disjoint ones", () => {
       const suffix = (name: string, literal: string) => ({
         segments: [
@@ -798,6 +935,19 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
         },
         {
           segments: [[{ kind: "parameter", name: "same" }], [{ kind: "parameter", name: "same" }]],
+          trailingSlash: false,
+        },
+        {
+          segments: [[{ kind: "rest", name: "parts" }], [{ kind: "literal", value: "tail" }]],
+          trailingSlash: false,
+        },
+        {
+          segments: [
+            [
+              { kind: "literal", value: "prefix" },
+              { kind: "rest", name: "parts" },
+            ],
+          ],
           trailingSlash: false,
         },
       ];

@@ -35,6 +35,7 @@ interface RadixNode<R> {
   readonly staticChildren: Map<string, RadixNode<R>>;
   readonly mixedChildren: Map<string, MixedEdge<R>>;
   param?: RadixNode<R>;
+  rest?: RadixNode<R>;
   readonly routes: Map<boolean, StoredRoute<R>>;
 }
 
@@ -86,7 +87,7 @@ function insertRoute<R>(root: RadixNode<R>, input: NormalizedRouteInput<R>): voi
     } else if (kind === "parameter") {
       node.param ??= createNode();
       node = node.param;
-    } else {
+    } else if (kind === "mixed") {
       const key = mixedSegmentKey(segment);
       let edge = node.mixedChildren.get(key);
       if (!edge) {
@@ -94,6 +95,9 @@ function insertRoute<R>(root: RadixNode<R>, input: NormalizedRouteInput<R>): voi
         node.mixedChildren.set(key, edge);
       }
       node = edge.child;
+    } else {
+      node.rest ??= createNode();
+      node = node.rest;
     }
   }
   const stored = node.routes.get(input.pattern.trailingSlash);
@@ -179,6 +183,17 @@ function search<R>(
     const result = search(node.param, segments, segmentIndex + 1, trailingSlash, captured, headers);
     captured.pop();
     if (result) return { match: result.match, ranks: [2, ...result.ranks] };
+  }
+  if (node.rest) {
+    captured.push(
+      segments
+        .slice(segmentIndex)
+        .map(({ raw }) => raw)
+        .join("/"),
+    );
+    const result = search(node.rest, segments, segments.length, trailingSlash, captured, headers);
+    captured.pop();
+    if (result) return { match: result.match, ranks: [3, ...result.ranks] };
   }
   return undefined;
 }

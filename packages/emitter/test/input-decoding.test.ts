@@ -281,6 +281,10 @@ interface Items {
   @route("/matrices{;matrixValues*}") @get readMatrices(
     @path matrixValues: string[],
   ): void;
+
+  @route("/paths{/slashValues*}") @get readPaths(
+    @path slashValues: string[],
+  ): void;
 }
 `;
 
@@ -557,6 +561,12 @@ describe("input decoding", () => {
       `RequestDecoders.path("matrixValues", Decoders.array(Decoders.string), {
     array: true,
     arraySeparator: ";matrixValues=",
+  })`,
+    );
+    expect(operations).toContain(
+      `RequestDecoders.path("slashValues", Decoders.array(Decoders.string), {
+    array: true,
+    arraySeparator: "/",
   })`,
     );
     expect(operations).toContain("explode: false");

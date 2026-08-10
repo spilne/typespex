@@ -35,6 +35,7 @@ const SEGMENT_RANK: Readonly<Record<RouteSegmentKind, number>> = {
   static: 0,
   mixed: 1,
   parameter: 2,
+  rest: 3,
 };
 
 function compareSpecificity<R>(
@@ -61,6 +62,11 @@ function compileSegment(segment: RoutePatternSegment): {
   readonly source: string;
   readonly parameterNames: readonly string[];
 } {
+  const first = segment[0]!;
+  if (first.kind === "rest") {
+    return { source: "([^\\/]+(?:\\/[^\\/]+)*)", parameterNames: [first.name] };
+  }
+
   let source = "";
   const parameterNames: string[] = [];
   const parameterPattern = segment.length === 1 ? "([^\\/]+?)" : "([^\\/]*?)";

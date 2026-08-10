@@ -173,7 +173,7 @@ describe("unsupported HTTP parameter serialization", () => {
       using TypeSpec.Http;
 
       @service namespace PathStyleApi {
-        @route("/files{/segments*}") @get
+        @route("/files{/segments*}/metadata") @get
         op read(@path segments: string[]): void;
       }
     `,

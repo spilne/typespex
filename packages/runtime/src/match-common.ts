@@ -11,7 +11,7 @@ import { canonicalizeRouteLiteral } from "./match-path.js";
 // URI-template variable expansions percent-encode them inside values.
 const SAFE_PARAMETER_BOUNDARY = /[:[\]@!$&'()*+,;=]/;
 
-export type RouteSegmentKind = "static" | "mixed" | "parameter";
+export type RouteSegmentKind = "static" | "mixed" | "parameter" | "rest";
 
 export interface NormalizedRouteInput<R> {
   readonly method: string;
@@ -30,7 +30,7 @@ export function routeSegments(path: string): string[] {
   const pattern = legacyRoutePattern(path);
   return pattern.segments.map((segment) => {
     const token = segment[0]!;
-    return token.kind === "parameter" ? `:${token.name}` : token.value;
+    return token.kind === "literal" ? token.value : `:${token.name}`;
   });
 }
 
@@ -55,7 +55,9 @@ export function normalizeRouteInputs<R>(
     const parameterNames: string[] = [];
     const segmentKinds = pattern.segments.map((segment) => {
       for (const token of segment) {
-        if (token.kind === "parameter") parameterNames.push(token.name);
+        if (token.kind === "parameter" || token.kind === "rest") {
+          parameterNames.push(token.name);
+        }
       }
       return routePatternSegmentKind(segment);
     });
@@ -238,7 +240,13 @@ function describeRoute<R>(route: NormalizedRouteInput<R>): string {
 export function routePatternStructure(pattern: RoutePattern): string {
   return JSON.stringify({
     segments: pattern.segments.map((segment) =>
-      segment.map((token) => (token.kind === "literal" ? ["literal", token.value] : ["parameter"])),
+      segment.map((token) =>
+        token.kind === "literal"
+          ? ["literal", token.value]
+          : token.kind === "parameter"
+            ? ["parameter"]
+            : ["rest"],
+      ),
     ),
     trailingSlash: pattern.trailingSlash,
   });
@@ -247,6 +255,7 @@ export function routePatternStructure(pattern: RoutePattern): string {
 export function routePatternSegmentKind(segment: RoutePatternSegment): RouteSegmentKind {
   if (segment.length === 1 && segment[0]!.kind === "literal") return "static";
   if (segment.length === 1 && segment[0]!.kind === "parameter") return "parameter";
+  if (segment.length === 1 && segment[0]!.kind === "rest") return "rest";
   return "mixed";
 }
 
@@ -293,8 +302,13 @@ function normalizeStructuredPattern(pattern: RoutePattern, path: string): RouteP
   }
 
   const parameterNames = new Set<string>();
-  const segments = pattern.segments.map((segment) =>
-    normalizeStructuredSegment(segment, path, parameterNames),
+  const segments = pattern.segments.map((segment, index) =>
+    normalizeStructuredSegment(
+      segment,
+      path,
+      parameterNames,
+      index === pattern.segments.length - 1,
+    ),
   );
   return { segments, trailingSlash: pattern.trailingSlash };
 }
@@ -303,6 +317,7 @@ function normalizeStructuredSegment(
   segment: RoutePatternSegment,
   path: string,
   parameterNames: Set<string>,
+  finalSegment: boolean,
 ): RoutePatternSegment {
   if (!Array.isArray(segment) || segment.length === 0) {
     throw new Error(`Invalid route pattern: ${path}`);
@@ -333,6 +348,22 @@ function normalizeStructuredSegment(
       } else {
         normalized.push({ kind: "literal", value });
       }
+      continue;
+    }
+    if (token.kind === "rest") {
+      if (
+        !finalSegment ||
+        segment.length !== 1 ||
+        typeof token.name !== "string" ||
+        token.name.length === 0
+      ) {
+        throw new Error(`Invalid terminal rest parameter in route: ${path}`);
+      }
+      if (parameterNames.has(token.name)) {
+        throw new Error(`Duplicate path parameter "${token.name}" in route: ${path}`);
+      }
+      parameterNames.add(token.name);
+      normalized.push({ kind: "rest", name: token.name });
       continue;
     }
     if (token.kind !== "parameter" || typeof token.name !== "string" || token.name.length === 0) {
@@ -396,6 +427,9 @@ interface SegmentNfa {
 
 /** Tests intersection emptiness for segment languages made from literals and parameter wildcards. */
 function segmentLanguagesOverlap(left: RoutePatternSegment, right: RoutePatternSegment): boolean {
+  if (left.length === 1 && left[0]!.kind === "rest") {
+    return right.length === 1 && right[0]!.kind === "rest";
+  }
   const leftNfa = compileSegmentNfa(left);
   const rightNfa = compileSegmentNfa(right);
   const leftStart = epsilonClosure(leftNfa, [0]);

@@ -5,7 +5,8 @@ import { $lib } from "./lib.js";
 
 export type RoutePatternToken =
   | { readonly kind: "literal"; readonly value: string }
-  | { readonly kind: "parameter"; readonly name: string };
+  | { readonly kind: "parameter"; readonly name: string }
+  | { readonly kind: "rest"; readonly name: string };
 
 export interface RoutePattern {
   readonly segments: readonly (readonly RoutePatternToken[])[];
@@ -147,6 +148,7 @@ function lowerUriTemplateTextInternal(
   const seenPathVariables = new Set<string>();
   const seenQueryVariables = new Set<string>();
   let optionalSlashParameter: string | undefined;
+  let explodedSlashParameter: string | undefined;
 
   const appendLiteral = (literal: string): UriTemplateLowering | undefined => {
     if (literal.includes("?") || literal.includes("#")) {
@@ -188,6 +190,9 @@ function lowerUriTemplateTextInternal(
       }
       if (optionalSlashParameter !== undefined) {
         return failure("path material appears after an optional slash expansion");
+      }
+      if (explodedSlashParameter !== undefined) {
+        return failure("path material appears after an exploded slash expansion");
       }
       const literalFailure = appendLiteral(literal);
       if (literalFailure) return literalFailure;
@@ -231,6 +236,9 @@ function lowerUriTemplateTextInternal(
     if (optionalSlashParameter !== undefined) {
       return failure("path material appears after an optional slash expansion");
     }
+    if (explodedSlashParameter !== undefined) {
+      return failure("path material appears after an exploded slash expansion");
+    }
     if (operator === "/") {
       const exploded = variables.endsWith("*");
       const slashVariables = exploded ? variables.slice(0, -1) : variables;
@@ -261,13 +269,17 @@ function lowerUriTemplateTextInternal(
           `slash-expanded scalar-array path variable ${JSON.stringify(name)} must be required`,
         );
       }
-      if (scalarArray && exploded) {
-        return failure("exploded slash path arrays are not supported");
-      }
       if (optional && exploded) {
         return failure("exploded optional slash expansions are not supported");
       }
       slashExpandedPathNames?.add(name);
+      if (scalarArray && exploded) {
+        segments.push(segment);
+        segment = [{ kind: "rest", name }];
+        explodedSlashParameter = name;
+        cursor = closing.index + 1;
+        continue;
+      }
       if (!optional) {
         segments.push(segment);
         segment = [{ kind: "parameter", name }];
