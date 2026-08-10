@@ -119,6 +119,9 @@ namespace UriTemplateApi;
 @route("/label-array-explode/array{.param*}")
 @get op labelArrayExplode(@path param: string[]): void;
 
+@route("/label-record/record{.param}")
+@get op labelRecord(@path param: Record<int32>): void;
+
 @route("/matrix/item{;name}")
 @get op matrix(@path name: string): void;
 
@@ -176,7 +179,10 @@ namespace InvalidUriTemplateApi;
 @get op optionalLabel(@path x?: string): void;
 
 @route("/label-record/item{.x}")
-@get op recordLabel(@path x: Record<string>): void;
+@get op recordLabel(@path x: Record<string[]>): void;
+
+@route("/label-record-explode/item{.x*}")
+@get op explodedRecordLabel(@path x: Record<string>): void;
 
 @route("/label-multiple/item{.x,y}")
 @get op multipleLabel(@path x: string, @path y: string): void;
@@ -422,6 +428,19 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/label-record/record{.param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "label-record" }],
+        [
+          { kind: "literal", value: "record." },
+          { kind: "parameter", name: "param" },
+        ],
+      ],
+      trailingSlash: false,
+    });
+    expect(operations).toMatch(
+      /labelRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true \},\s*\)\.map/,
+    );
     expect(emittedRoutePattern(operations, "/matrix/item{;name}")).toEqual({
       segments: [
         [{ kind: "literal", value: "matrix" }],
@@ -499,6 +518,7 @@ describe("URI-template lowering", () => {
       labelExplode: capture("labelExplode"),
       labelArray: capture("labelArray"),
       labelArrayExplode: capture("labelArrayExplode"),
+      labelRecord: capture("labelRecord"),
       matrix: capture("matrix"),
       matrixExplode: capture("matrixExplode"),
       matrixArray: capture("matrixArray"),
@@ -739,6 +759,28 @@ describe("URI-template lowering", () => {
     ).toBe(404);
 
     expect(
+      (await router.handle(new Request("http://localhost/label-record/record.a,1,b,2"))).status,
+    ).toBe(204);
+    expect(received.get("labelRecord")).toEqual({ param: { a: 1, b: 2 } });
+    expect(
+      (await router.handle(new Request("http://localhost/label-record/record.a%2Fb,1"))).status,
+    ).toBe(204);
+    expect(received.get("labelRecord")).toEqual({ param: { "a/b": 1 } });
+    expect(
+      (await router.handle(new Request("http://localhost/label-record/record.a,1,b"))).status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/label-record/record.a,1,%61,2"))).status,
+    ).toBe(400);
+    expect((await router.handle(new Request("http://localhost/label-record/record."))).status).toBe(
+      204,
+    );
+    expect(received.get("labelRecord")).toEqual({ param: {} });
+    expect((await router.handle(new Request("http://localhost/label-record/record"))).status).toBe(
+      404,
+    );
+
+    expect(
       (await router.handle(new Request("http://localhost/matrix/item;name=a%2Fb"))).status,
     ).toBe(204);
     expect(received.get("matrix")).toEqual({ name: "a/b" });
@@ -805,8 +847,9 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain("path material appears after a query expansion");
     expect(diagnostics).toContain('label-expanded path variable "x" must be required');
     expect(diagnostics).toContain(
-      'label-expanded path variable "x" must have a scalar or scalar-array wire shape',
+      'label-expanded path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     );
+    expect(diagnostics).toContain("exploded label record expansions are not supported");
     expect(diagnostics).toContain("label expansions must contain exactly one path variable");
     expect(diagnostics).toContain('matrix-expanded path variable "x" must be required');
     expect(diagnostics).toContain(
@@ -1034,7 +1077,8 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/label/item{.x}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'label-expanded path variable "x" must have a scalar or scalar-array wire shape',
+      reason:
+        'label-expanded path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     });
     expect(
       lowerUriTemplateText("/label/array{.x}", path, query, new Set(), new Set(), path),
@@ -1075,6 +1119,40 @@ describe("URI-template lowering", () => {
           },
         ],
       },
+    });
+    expect(
+      lowerUriTemplateText("/label/record{.x}", path, query, new Set(), new Set(), new Set(), path),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/label/record{.x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "label" }],
+              [
+                { kind: "literal", value: "record." },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText(
+        "/label/record{.x*}",
+        path,
+        query,
+        new Set(),
+        new Set(),
+        new Set(),
+        path,
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "exploded label record expansions are not supported",
     });
     expect(lowerUriTemplateText("/label/item{.x}", path, query, new Set(), path, path)).toEqual({
       ok: false,

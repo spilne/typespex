@@ -337,13 +337,17 @@ function lowerUriTemplateTextInternal(
       }
       const name = parsed.names[0]!;
       const scalarArray = scalarArrayPathNames.has(name);
+      const scalarRecord = scalarRecordPathNames.has(name);
       if (optionalPathNames.has(name)) {
         return failure(`label-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name) && !scalarArray) {
+      if (!scalarPathNames.has(name) && !scalarArray && !scalarRecord) {
         return failure(
-          `label-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
+          `label-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
+      }
+      if (scalarRecord && exploded) {
+        return failure("exploded label record expansions are not supported");
       }
       labelExpandedPathNames?.add(name);
       appendLiteralToken(segment, ".");
