@@ -1170,6 +1170,7 @@ function collectBranches(
 ): ResponseBranch[] {
   const branches: ResponseBranch[] = [];
   const pending = new Set(responses);
+  let closedEmptyObjectResponse: SuccessResponseVariant | undefined;
 
   const voidResponses = responses.filter((response) => response.isVoid);
   if (voidResponses.length > 1) return [];
@@ -1200,6 +1201,16 @@ function collectBranches(
     if (pending.size === 0) return branches;
   }
 
+  const closedEmptyObjectResponses = [...pending].filter(isClosedEmptyObjectResult);
+  if (closedEmptyObjectResponses.length > 1) return [];
+  if (closedEmptyObjectResponses.length === 1) {
+    [closedEmptyObjectResponse] = closedEmptyObjectResponses;
+    pending.delete(closedEmptyObjectResponse);
+    if (pending.size === 0) {
+      return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
+    }
+  }
+
   for (const response of [...pending]) {
     const condition = emitDirectTypeCondition(ctx, response);
     if (!condition) continue;
@@ -1207,7 +1218,9 @@ function collectBranches(
     pending.delete(response);
   }
 
-  if (pending.size === 0) return branches;
+  if (pending.size === 0) {
+    return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
+  }
 
   const objectResponses = [...pending].filter(
     (response) => response.model && !isArrayModelType(ctx.program, response.model),
@@ -1216,6 +1229,17 @@ function collectBranches(
 
   if (objectResponses.length === 1) {
     const [single] = objectResponses;
+    if (closedEmptyObjectResponse) {
+      const requiredProperty = getResponseProperties(single).find(
+        (property) => !property.optional && !isResponseDispatchMetadata(ctx, single, property.name),
+      );
+      if (!requiredProperty) return [];
+      branches.push({
+        response: single,
+        condition: emitExclusivePropertyCondition(single, requiredProperty.name, []),
+      });
+      return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
+    }
     branches.push({
       response: single,
       condition: emitObjectShapeCondition(single),
@@ -1226,19 +1250,19 @@ function collectBranches(
   const explicitDiscriminator = resolveExplicitDiscriminatorBranches(ctx, op, objectResponses);
   if (explicitDiscriminator) {
     branches.push(...explicitDiscriminator);
-    return branches;
+    return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
   }
 
   const literalDiscriminator = resolveImplicitLiteralBranches(ctx, objectResponses);
   if (literalDiscriminator) {
     branches.push(...literalDiscriminator);
-    return branches;
+    return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
   }
 
   const propertyMatcher = resolvePropertyBranches(ctx, objectResponses);
   if (propertyMatcher) {
     branches.push(...propertyMatcher);
-    return branches;
+    return appendClosedEmptyObjectBranch(branches, closedEmptyObjectResponse);
   }
 
   return [];
@@ -1551,7 +1575,9 @@ function resolvePropertyBranches(
   for (let i = 0; i < responses.length; i++) {
     let uniqueProp: string | undefined;
     for (const prop of modelProps[i]) {
-      const isUnique = modelProps.every((otherProps, j) => j === i || !otherProps.has(prop));
+      const isUnique = responses.every(
+        (other, j) => j === i || !responseCanMatchPropertyPredicate(ctx, responses[i], other, prop),
+      );
       if (isUnique) {
         uniqueProp = prop;
         break;
@@ -1564,7 +1590,9 @@ function resolvePropertyBranches(
   const branches: ResponseBranch[] = [];
   for (let i = 0; i < responses.length; i++) {
     const uniqueProp = uniqueProperties[i];
-    const excludedProps = uniqueProperties.filter((_, j) => j !== i);
+    const excludedProps = uniqueProperties.filter(
+      (_, j) => j !== i && responses[j].bodyProperty === responses[i].bodyProperty,
+    );
     branches.push({
       response: responses[i],
       condition: emitExclusivePropertyCondition(responses[i], uniqueProp, excludedProps),
@@ -1572,6 +1600,71 @@ function resolvePropertyBranches(
   }
 
   return branches;
+}
+
+/**
+ * Whether a value of `other` can satisfy the required-property predicate
+ * emitted for `candidate`. Properties must be compared at the runtime subject
+ * each branch inspects: either the result itself or an explicitly wrapped
+ * response body.
+ */
+function responseCanMatchPropertyPredicate(
+  ctx: EmitterCtx,
+  candidate: SuccessResponseVariant,
+  other: SuccessResponseVariant,
+  propertyName: string,
+): boolean {
+  if (candidate.bodyProperty === undefined) {
+    return responseExposesHandlerProperty(ctx, other, propertyName);
+  }
+
+  if (other.bodyProperty === candidate.bodyProperty) {
+    if (
+      other.model &&
+      getAdditionalPropertiesValue(other.model) !== undefined &&
+      !isNeverAdditionalProperties(other.model)
+    ) {
+      return true;
+    }
+    const property = getResponseProperty(other, propertyName);
+    return property !== undefined && !isResponseDispatchMetadata(ctx, other, propertyName);
+  }
+
+  // A differently shaped result can only reach the candidate's nested
+  // subject if it exposes the candidate's wrapper at the top level. Its value
+  // could contain any nested marker, so conservatively treat that as overlap.
+  return responseExposesHandlerProperty(ctx, other, candidate.bodyProperty);
+}
+
+function isClosedEmptyObjectResult(response: SuccessResponseVariant): boolean {
+  return (
+    response.bodyProperty === undefined &&
+    response.tsType === "Record<string, never>" &&
+    !responseHasOpenHandlerProperties(response)
+  );
+}
+
+function appendClosedEmptyObjectBranch(
+  branches: readonly ResponseBranch[],
+  response: SuccessResponseVariant | undefined,
+): ResponseBranch[] {
+  if (!response) return [...branches];
+  return [
+    ...branches,
+    {
+      response,
+      condition: emitClosedEmptyObjectCondition(),
+    },
+  ];
+}
+
+function emitClosedEmptyObjectCondition(): string {
+  return [
+    `typeof result === "object"`,
+    `result !== null`,
+    `!Array.isArray(result)`,
+    `Reflect.ownKeys(result).length === 0`,
+  ].join(" && ");
 }
 
 function emitExclusivePropertyCondition(

@@ -17,7 +17,10 @@ const HTTP_SPECS_INTEGRITY =
 const HTTP_SPECS_PACKAGE = `@typespec/http-specs@${HTTP_SPECS_VERSION}`;
 const HTTP_SPECS_TARBALL = `typespec-http-specs-${HTTP_SPECS_VERSION}.tgz`;
 const SCENARIOS = [
+  "authentication/api-key",
+  "authentication/http/custom",
   "authentication/noauth/union",
+  "authentication/oauth2",
   "authentication/union",
   "documentation",
   "encode/array",
