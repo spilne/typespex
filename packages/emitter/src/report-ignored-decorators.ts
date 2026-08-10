@@ -390,6 +390,8 @@ function isSupportedNonSimplePathParameter(
       return lowered.value.slashExpandedPathNames?.includes(parameter.name) === true;
     case "label":
       return lowered.value.labelExpandedPathNames?.includes(parameter.name) === true;
+    case "matrix":
+      return lowered.value.matrixExpandedPathNames?.includes(parameter.name) === true;
     default:
       return false;
   }
