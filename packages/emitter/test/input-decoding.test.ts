@@ -277,6 +277,10 @@ interface Items {
   @route("/labels{.labelValues*}") @get readLabels(
     @path labelValues: string[],
   ): void;
+
+  @route("/matrices{;matrixValues*}") @get readMatrices(
+    @path matrixValues: string[],
+  ): void;
 }
 `;
 
@@ -547,6 +551,12 @@ describe("input decoding", () => {
       `RequestDecoders.path("labelValues", Decoders.array(Decoders.string), {
     array: true,
     arraySeparator: ".",
+  })`,
+    );
+    expect(operations).toContain(
+      `RequestDecoders.path("matrixValues", Decoders.array(Decoders.string), {
+    array: true,
+    arraySeparator: ";matrixValues=",
   })`,
     );
     expect(operations).toContain("explode: false");

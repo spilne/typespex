@@ -121,6 +121,16 @@ describe("http request decoders (sync)", () => {
       }),
     ).toEqual(Either.right(["a", "b.c"]));
 
+    const matrixDecoder = RequestDecoders.path("matrixValues", Decoders.array(Decoders.string), {
+      array: true,
+      arraySeparator: ";param=",
+    });
+    expect(
+      decodeRequestInput(matrixDecoder, new Request("http://localhost/items"), {
+        matrixValues: "a;param=b%3Bparam%3Dc",
+      }),
+    ).toEqual(Either.right(["a", "b;param=c"]));
+
     const malformed = decodeRequestInput(decoder, new Request("http://localhost/items"), {
       labelValues: "a.%E0%A4%A",
     });

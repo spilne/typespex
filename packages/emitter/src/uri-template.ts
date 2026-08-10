@@ -335,9 +335,6 @@ function lowerUriTemplateTextInternal(
           `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
       }
-      if (scalarArray && exploded) {
-        return failure("exploded matrix path arrays are not supported");
-      }
       matrixExpandedPathNames?.add(name);
       appendLiteralToken(segment, `;${matrixVariables}=`);
       segment.push({ kind: "parameter", name });
