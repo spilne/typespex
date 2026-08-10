@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeScenarioRunnerMetadata } from "./http-conformance-source.ts";
 
 const HTTP_SPECS_VERSION = "0.1.0-alpha.40";
 const HTTP_SPECS_INTEGRITY =
@@ -24,8 +25,10 @@ const SCENARIOS = [
   "authentication/union",
   "documentation",
   "encode/array",
+  "encode/boolean",
   "encode/datetime",
   "encode/duration",
+  "encode/numeric",
   "parameters/basic",
   "parameters/body-optionality",
   "parameters/body-root",
@@ -54,6 +57,7 @@ const SCENARIOS = [
   "type/property/optionality",
   "type/property/value-types",
   "type/scalar",
+  "type/union",
   "type/union/discriminated",
 ];
 
@@ -160,28 +164,6 @@ try {
   process.stdout.write(summary);
 } finally {
   rmSync(workDir, { recursive: true, force: true });
-}
-
-function removeScenarioRunnerMetadata(source, scenario) {
-  const serviceMatches = [...source.matchAll(/@scenarioService\("([^"]+)"\)/g)];
-  if (serviceMatches.length !== 1) {
-    throw new Error(`Expected one @scenarioService decorator in ${scenario}.`);
-  }
-
-  const transformed = source
-    .replace(/^import "@typespec\/spector";\r?\n/m, "")
-    .replace(/^using Spector;\r?\n/m, "")
-    .replace(/@scenarioDoc\(\s*(?:"""[\s\S]*?"""|"(?:\\.|[^"\\])*")\s*\)\s*/g, "")
-    .replace(/^\s*@scenario\s*$\r?\n/gm, "")
-    .replace(
-      /@scenarioService\("([^"]+)"\)/,
-      '@service(#{ title: "TypeSpec HTTP conformance" })\n@route("$1")',
-    );
-
-  if (transformed.includes("Spector") || transformed.includes("@scenario")) {
-    throw new Error(`Could not remove all scenario-runner metadata from ${scenario}.`);
-  }
-  return transformed;
 }
 
 function collectTypeScriptFiles(directory) {
