@@ -74,6 +74,9 @@ namespace UriTemplateApi;
 @route("/required-explode{/name*}")
 @get op requiredExplode(@path name: string): void;
 
+@route("/slash-array/array{/param}")
+@get op slashArray(@path param: string[]): void;
+
 @route("/simple-explode/item{name*}")
 @get op simpleExplode(@path name: string): void;
 
@@ -147,6 +150,12 @@ namespace InvalidUriTemplateApi;
 
 @route("/matrix-multiple/item{;x,y}")
 @get op multipleMatrix(@path x: string, @path y: string): void;
+
+@route("/slash-array-explode/array{/x*}")
+@get op explodedSlashArray(@path x: string[]): void;
+
+@route("/slash-array-optional/array{/x}")
+@get op optionalSlashArray(@path x?: string[]): void;
 `;
 
 const unknownUriVariableSpec = `
@@ -233,6 +242,14 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/slash-array/array{/param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "slash-array" }],
+        [{ kind: "literal", value: "array" }],
+        [{ kind: "parameter", name: "param" }],
+      ],
+      trailingSlash: false,
+    });
     expect(emittedRoutePattern(operations, "/simple-explode/item{name*}")).toEqual({
       segments: [
         [{ kind: "literal", value: "simple-explode" }],
@@ -316,6 +333,7 @@ describe("URI-template lowering", () => {
       optional: capture("optional"),
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
+      slashArray: capture("slashArray"),
       simpleExplode: capture("simpleExplode"),
       simpleArray: capture("simpleArray"),
       label: capture("label"),
@@ -379,6 +397,14 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/required-explode/a%2Fb"))).status,
     ).toBe(204);
     expect(received.get("requiredExplode")).toEqual({ name: "a/b" });
+
+    expect(
+      (await router.handle(new Request("http://localhost/slash-array/array/a,b%2Cc"))).status,
+    ).toBe(204);
+    expect(received.get("slashArray")).toEqual({ param: ["a", "b,c"] });
+    expect((await router.handle(new Request("http://localhost/slash-array/array"))).status).toBe(
+      404,
+    );
 
     expect(
       (await router.handle(new Request("http://localhost/simple-explode/itema%2Fb"))).status,
@@ -460,6 +486,8 @@ describe("URI-template lowering", () => {
       'matrix-expanded path variable "x" must have a scalar wire shape',
     );
     expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
+    expect(diagnostics).toContain("exploded slash path arrays are not supported");
+    expect(diagnostics).toContain('slash-expanded scalar-array path variable "x" must be required');
     expect(result.listFiles("invalid-uri-template-api")).toEqual([]);
   });
 
@@ -747,7 +775,37 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/required{/x}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'slash-expanded path variable "x" must have a scalar wire shape',
+      reason: 'slash-expanded path variable "x" must have a scalar or scalar-array wire shape',
+    });
+    expect(
+      lowerUriTemplateText("/slash-array/array{/x}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/slash-array/array{/x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "slash-array" }],
+              [{ kind: "literal", value: "array" }],
+              [{ kind: "parameter", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/slash-array/array{/x*}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: false,
+      reason: "exploded slash path arrays are not supported",
+    });
+    expect(
+      lowerUriTemplateText("/slash-array/array{/x}", path, query, new Set(), path, path),
+    ).toEqual({
+      ok: false,
+      reason: 'slash-expanded scalar-array path variable "x" must be required',
     });
     expect(
       lowerUriTemplateText(

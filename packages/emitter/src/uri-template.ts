@@ -246,15 +246,24 @@ function lowerUriTemplateTextInternal(
         return failure("slash expansions must contain exactly one path variable");
       }
       const name = parsed.names[0]!;
-      if (!scalarPathNames.has(name)) {
+      const scalarArray = scalarArrayPathNames.has(name);
+      if (!scalarPathNames.has(name) && !scalarArray) {
         return failure(
-          `slash-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+          `slash-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
       }
       if (segment.length === 0) {
         return failure("a slash expansion must follow a non-empty path segment");
       }
       const optional = optionalPathNames.has(name);
+      if (scalarArray && optional) {
+        return failure(
+          `slash-expanded scalar-array path variable ${JSON.stringify(name)} must be required`,
+        );
+      }
+      if (scalarArray && exploded) {
+        return failure("exploded slash path arrays are not supported");
+      }
       if (optional && exploded) {
         return failure("exploded optional slash expansions are not supported");
       }
