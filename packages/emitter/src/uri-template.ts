@@ -56,6 +56,7 @@ export function reportUnsupportedUriTemplates(
 export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering {
   const pathNames = new Set<string>();
   const scalarPathNames = new Set<string>();
+  const scalarArrayPathNames = new Set<string>();
   const optionalPathNames = new Set<string>();
   const queryNames = new Set<string>();
   for (const parameter of operation.parameters.parameters) {
@@ -71,6 +72,9 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     if (parameter.type === "path" && isScalarWireType(parameter.param.type)) {
       scalarPathNames.add(parameter.name);
     }
+    if (parameter.type === "path" && isScalarArrayWireType(parameter.param.type)) {
+      scalarArrayPathNames.add(parameter.name);
+    }
     if (parameter.type === "path" && parameter.param.optional) {
       optionalPathNames.add(parameter.name);
     }
@@ -84,6 +88,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     queryNames,
     scalarPathNames,
     optionalPathNames,
+    scalarArrayPathNames,
     slashExpandedPathNames,
     labelExpandedPathNames,
     matrixExpandedPathNames,
@@ -107,6 +112,7 @@ export function lowerUriTemplateText(
   queryNames: ReadonlySet<string>,
   scalarPathNames: ReadonlySet<string> = pathNames,
   optionalPathNames: ReadonlySet<string> = new Set(),
+  scalarArrayPathNames: ReadonlySet<string> = new Set(),
 ): UriTemplateLowering {
   return lowerUriTemplateTextInternal(
     template,
@@ -114,6 +120,7 @@ export function lowerUriTemplateText(
     queryNames,
     scalarPathNames,
     optionalPathNames,
+    scalarArrayPathNames,
   );
 }
 
@@ -123,6 +130,7 @@ function lowerUriTemplateTextInternal(
   queryNames: ReadonlySet<string>,
   scalarPathNames: ReadonlySet<string>,
   optionalPathNames: ReadonlySet<string>,
+  scalarArrayPathNames: ReadonlySet<string>,
   slashExpandedPathNames?: Set<string>,
   labelExpandedPathNames?: Set<string>,
   matrixExpandedPathNames?: Set<string>,
@@ -344,9 +352,9 @@ function lowerUriTemplateTextInternal(
       if (optionalPathNames.has(name)) {
         return failure(`exploded simple path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name)) {
+      if (!scalarPathNames.has(name) && !scalarArrayPathNames.has(name)) {
         return failure(
-          `exploded simple path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+          `exploded simple path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
       }
     }
@@ -565,6 +573,14 @@ function isScalarWireType(type: Type): boolean {
     default:
       return false;
   }
+}
+
+function isScalarArrayWireType(type: Type): boolean {
+  return (
+    type.kind === "Model" &&
+    type.indexer?.key.name === "integer" &&
+    isScalarWireType(type.indexer.value)
+  );
 }
 
 function failure(reason: string): { readonly ok: false; readonly reason: string } {
