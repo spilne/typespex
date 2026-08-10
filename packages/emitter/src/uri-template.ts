@@ -2,6 +2,7 @@ import type { Type } from "@typespec/compiler";
 import type { HttpOperation } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { $lib } from "./lib.js";
+import { getAdditionalPropertiesValue, isPureRecordModel } from "./model-indexer.js";
 
 export type RoutePatternToken =
   | { readonly kind: "literal"; readonly value: string }
@@ -60,6 +61,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
   const pathNames = new Set<string>();
   const scalarPathNames = new Set<string>();
   const scalarArrayPathNames = new Set<string>();
+  const scalarRecordPathNames = new Set<string>();
   const optionalPathNames = new Set<string>();
   const queryNames = new Set<string>();
   for (const parameter of operation.parameters.parameters) {
@@ -78,6 +80,9 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     if (parameter.type === "path" && isScalarArrayWireType(parameter.param.type)) {
       scalarArrayPathNames.add(parameter.name);
     }
+    if (parameter.type === "path" && isScalarRecordWireType(parameter.param.type)) {
+      scalarRecordPathNames.add(parameter.name);
+    }
     if (parameter.type === "path" && parameter.param.optional) {
       optionalPathNames.add(parameter.name);
     }
@@ -93,6 +98,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     scalarPathNames,
     optionalPathNames,
     scalarArrayPathNames,
+    scalarRecordPathNames,
     slashExpandedPathNames,
     labelExpandedPathNames,
     matrixExpandedPathNames,
@@ -119,6 +125,7 @@ export function lowerUriTemplateText(
   scalarPathNames: ReadonlySet<string> = pathNames,
   optionalPathNames: ReadonlySet<string> = new Set(),
   scalarArrayPathNames: ReadonlySet<string> = new Set(),
+  scalarRecordPathNames: ReadonlySet<string> = new Set(),
 ): UriTemplateLowering {
   return lowerUriTemplateTextInternal(
     template,
@@ -127,6 +134,7 @@ export function lowerUriTemplateText(
     scalarPathNames,
     optionalPathNames,
     scalarArrayPathNames,
+    scalarRecordPathNames,
   );
 }
 
@@ -137,6 +145,7 @@ function lowerUriTemplateTextInternal(
   scalarPathNames: ReadonlySet<string>,
   optionalPathNames: ReadonlySet<string>,
   scalarArrayPathNames: ReadonlySet<string>,
+  scalarRecordPathNames: ReadonlySet<string>,
   slashExpandedPathNames?: Set<string>,
   labelExpandedPathNames?: Set<string>,
   matrixExpandedPathNames?: Set<string>,
@@ -423,9 +432,13 @@ function lowerUriTemplateTextInternal(
       if (optionalPathNames.has(name)) {
         return failure(`exploded simple path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name) && !scalarArrayPathNames.has(name)) {
+      if (
+        !scalarPathNames.has(name) &&
+        !scalarArrayPathNames.has(name) &&
+        !scalarRecordPathNames.has(name)
+      ) {
         return failure(
-          `exploded simple path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
+          `exploded simple path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
       }
     }
@@ -652,6 +665,12 @@ function isScalarArrayWireType(type: Type): boolean {
     type.indexer?.key.name === "integer" &&
     isScalarWireType(type.indexer.value)
   );
+}
+
+function isScalarRecordWireType(type: Type): boolean {
+  if (type.kind !== "Model" || !isPureRecordModel(type)) return false;
+  const value = getAdditionalPropertiesValue(type);
+  return value !== undefined && isScalarWireType(value);
 }
 
 function failure(reason: string): { readonly ok: false; readonly reason: string } {

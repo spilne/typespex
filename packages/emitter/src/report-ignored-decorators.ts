@@ -419,7 +419,7 @@ function unsupportedParameterTypeReason(
         if (!isWireScalarType(ctx, collection.value)) {
           return "records may contain only scalar, literal, or enum values";
         }
-        if (parameter.type === "path" && parameter.style === "simple" && !parameter.explode) {
+        if (parameter.type === "path" && parameter.style === "simple") {
           return undefined;
         }
       }

@@ -98,6 +98,9 @@ namespace UriTemplateApi;
 @route("/simple-record/record{param}")
 @get op simpleRecord(@path param: Record<int32>): void;
 
+@route("/simple-record-explode/record{param*}")
+@get op simpleRecordExplode(@path param: Record<int32>): void;
+
 @route("/label/item{.name}")
 @get op label(@path name: string): void;
 
@@ -137,7 +140,7 @@ namespace InvalidUriTemplateApi;
 @get op unreserved(@path x: string, @path y: string): void;
 
 @route("/explode/{x*}")
-@get op explode(@path x: Record<string>): void;
+@get op explode(@path x: Record<string[]>): void;
 
 @route("/prefix-modifier/{x:2}")
 @get op prefixModifier(@path x: string): void;
@@ -337,6 +340,19 @@ describe("URI-template lowering", () => {
     expect(operations).toMatch(
       /simpleRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true \},\s*\)\.map/,
     );
+    expect(emittedRoutePattern(operations, "/simple-record-explode/record{param*}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "simple-record-explode" }],
+        [
+          { kind: "literal", value: "record" },
+          { kind: "parameter", name: "param" },
+        ],
+      ],
+      trailingSlash: false,
+    });
+    expect(operations).toMatch(
+      /simpleRecordExplode: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, explode: true \},\s*\)\.map/,
+    );
     expect(emittedRoutePattern(operations, "/label/item{.name}")).toEqual({
       segments: [
         [{ kind: "literal", value: "label" }],
@@ -447,6 +463,7 @@ describe("URI-template lowering", () => {
       simpleExplode: capture("simpleExplode"),
       simpleArray: capture("simpleArray"),
       simpleRecord: capture("simpleRecord"),
+      simpleRecordExplode: capture("simpleRecordExplode"),
       label: capture("label"),
       labelExplode: capture("labelExplode"),
       labelArray: capture("labelArray"),
@@ -582,6 +599,38 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/simple-record/recorda,1,%61,2"))).status,
     ).toBe(400);
 
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record-explode/recorda=1,b=2")))
+        .status,
+    ).toBe(204);
+    expect(received.get("simpleRecordExplode")).toEqual({ param: { a: 1, b: 2 } });
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record-explode/recorda%2Cb%3Dc=1")))
+        .status,
+    ).toBe(204);
+    expect(received.get("simpleRecordExplode")).toEqual({ param: { "a,b=c": 1 } });
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/simple-record-explode/record__proto__=1,constructor=2"),
+        )
+      ).status,
+    ).toBe(204);
+    const prototypeKeys = received.get("simpleRecordExplode") as {
+      param: Record<string, number>;
+    };
+    expect(prototypeKeys.param["__proto__"]).toBe(1);
+    expect(prototypeKeys.param.constructor).toBe(2);
+    expect(Object.getPrototypeOf(prototypeKeys.param)).toBe(Object.prototype);
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record-explode/recorda=1,b")))
+        .status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/simple-record-explode/recorda=1,%61=2")))
+        .status,
+    ).toBe(400);
+
     expect((await router.handle(new Request("http://localhost/label/item.a%2Fb"))).status).toBe(
       204,
     );
@@ -665,7 +714,7 @@ describe("URI-template lowering", () => {
       'path variables separated by unreserved literal "-" cannot be captured unambiguously',
     );
     expect(diagnostics).toContain(
-      'exploded simple path variable "x" must have a scalar or scalar-array wire shape',
+      'exploded simple path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     );
     expect(diagnostics).toContain('modifier ":2"');
     expect(diagnostics).toContain("a reserved expansion must occupy a complete path segment");
@@ -811,7 +860,8 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/simple/{x*}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'exploded simple path variable "x" must have a scalar or scalar-array wire shape',
+      reason:
+        'exploded simple path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     });
     expect(
       lowerUriTemplateText("/simple/array{x*}", path, query, new Set(), new Set(), path),
@@ -825,6 +875,34 @@ describe("URI-template lowering", () => {
               [{ kind: "literal", value: "simple" }],
               [
                 { kind: "literal", value: "array" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText(
+        "/simple/record{x*}",
+        path,
+        query,
+        new Set(),
+        new Set(),
+        new Set(),
+        path,
+      ),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/simple/record{x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "simple" }],
+              [
+                { kind: "literal", value: "record" },
                 { kind: "parameter", name: "x" },
               ],
             ],
