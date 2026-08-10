@@ -97,6 +97,9 @@ namespace UriTemplateApi;
 
 @route("/matrix-explode/item{;name*}")
 @get op matrixExplode(@path name: string): void;
+
+@route("/matrix-array/array{;param}")
+@get op matrixArray(@path param: string[]): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -151,8 +154,11 @@ namespace InvalidUriTemplateApi;
 @route("/matrix-optional/item{;x}")
 @get op optionalMatrix(@path x?: string): void;
 
-@route("/matrix-collection/item{;x}")
-@get op collectionMatrix(@path x: string[]): void;
+@route("/matrix-record/item{;x}")
+@get op recordMatrix(@path x: Record<string>): void;
+
+@route("/matrix-array-explode/item{;x*}")
+@get op explodedArrayMatrix(@path x: string[]): void;
 
 @route("/matrix-multiple/item{;x,y}")
 @get op multipleMatrix(@path x: string, @path y: string): void;
@@ -326,6 +332,16 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/matrix-array/array{;param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "matrix-array" }],
+        [
+          { kind: "literal", value: "array;param=" },
+          { kind: "parameter", name: "param" },
+        ],
+      ],
+      trailingSlash: false,
+    });
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -357,6 +373,7 @@ describe("URI-template lowering", () => {
       labelArray: capture("labelArray"),
       matrix: capture("matrix"),
       matrixExplode: capture("matrixExplode"),
+      matrixArray: capture("matrixArray"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -476,6 +493,15 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/matrix-explode/item;name="))).status,
     ).toBe(204);
     expect(received.get("matrixExplode")).toEqual({ name: "" });
+
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-array/array;param=a,b%2Cc")))
+        .status,
+    ).toBe(204);
+    expect(received.get("matrixArray")).toEqual({ param: ["a", "b,c"] });
+    expect((await router.handle(new Request("http://localhost/matrix-array/array"))).status).toBe(
+      404,
+    );
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -511,8 +537,9 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain("label expansions must contain exactly one path variable");
     expect(diagnostics).toContain('matrix-expanded path variable "x" must be required');
     expect(diagnostics).toContain(
-      'matrix-expanded path variable "x" must have a scalar wire shape',
+      'matrix-expanded path variable "x" must have a scalar or scalar-array wire shape',
     );
+    expect(diagnostics).toContain("exploded matrix path arrays are not supported");
     expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
     expect(diagnostics).toContain("exploded slash path arrays are not supported");
     expect(diagnostics).toContain('slash-expanded scalar-array path variable "x" must be required');
@@ -784,7 +811,37 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/matrix/item{;x}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'matrix-expanded path variable "x" must have a scalar wire shape',
+      reason: 'matrix-expanded path variable "x" must have a scalar or scalar-array wire shape',
+    });
+    expect(
+      lowerUriTemplateText("/matrix/array{;x}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/matrix/array{;x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "matrix" }],
+              [
+                { kind: "literal", value: "array;x=" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/matrix/array{;x*}", path, query, new Set(), new Set(), path),
+    ).toEqual({
+      ok: false,
+      reason: "exploded matrix path arrays are not supported",
+    });
+    expect(lowerUriTemplateText("/matrix/item{;x}", path, query, new Set(), path, path)).toEqual({
+      ok: false,
+      reason: 'matrix-expanded path variable "x" must be required',
     });
     expect(lowerUriTemplateText("/matrix/item{;x}", path, query, path, new Set(["x"]))).toEqual({
       ok: false,

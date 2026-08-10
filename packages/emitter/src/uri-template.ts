@@ -329,13 +329,17 @@ function lowerUriTemplateTextInternal(
       if (matrixVariables !== name) {
         return failure("percent-encoded matrix variable names are not supported");
       }
+      const scalarArray = scalarArrayPathNames.has(name);
       if (optionalPathNames.has(name)) {
         return failure(`matrix-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name)) {
+      if (!scalarPathNames.has(name) && !scalarArray) {
         return failure(
-          `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+          `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
+      }
+      if (scalarArray && exploded) {
+        return failure("exploded matrix path arrays are not supported");
       }
       matrixExpandedPathNames?.add(name);
       appendLiteralToken(segment, `;${matrixVariables}=`);
