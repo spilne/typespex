@@ -363,7 +363,7 @@ function checkHttpParameter(
 
   if (parameter.type !== "path") return;
 
-  if (parameter.style !== "simple" && !isSupportedPathStyleParameter(operation, parameter)) {
+  if (parameter.style !== "simple" && !isSupportedNonSimplePathParameter(operation, parameter)) {
     reportUnsupportedParameter(
       ctx,
       parameter,
@@ -378,16 +378,21 @@ function checkHttpParameter(
   }
 }
 
-function isSupportedPathStyleParameter(
+function isSupportedNonSimplePathParameter(
   operation: HttpOperation,
   parameter: HttpOperationParameter,
 ): boolean {
-  if (parameter.type !== "path" || parameter.style !== "path") {
-    return false;
-  }
+  if (parameter.type !== "path") return false;
   const lowered = lowerUriTemplate(operation);
   if (!lowered.ok) return false;
-  return lowered.value.slashExpandedPathNames?.includes(parameter.name) === true;
+  switch (parameter.style) {
+    case "path":
+      return lowered.value.slashExpandedPathNames?.includes(parameter.name) === true;
+    case "label":
+      return lowered.value.labelExpandedPathNames?.includes(parameter.name) === true;
+    default:
+      return false;
+  }
 }
 
 function unsupportedParameterTypeReason(ctx: EmitterCtx, type: Type): string | undefined {
