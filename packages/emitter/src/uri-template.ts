@@ -183,8 +183,10 @@ export function lowerUriTemplateText(
       return failure("path material appears after an optional slash expansion");
     }
     if (operator === "/") {
+      const exploded = variables.endsWith("*");
+      const slashVariables = exploded ? variables.slice(0, -1) : variables;
       const parsed = parseExpressionVariables(
-        variables,
+        slashVariables,
         pathNames,
         seenPathVariables,
         "path",
@@ -192,19 +194,25 @@ export function lowerUriTemplateText(
       );
       if (!parsed.ok) return parsed;
       if (parsed.names.length !== 1) {
-        return failure("optional slash expansions must contain exactly one path variable");
+        return failure("slash expansions must contain exactly one path variable");
       }
       const name = parsed.names[0]!;
-      if (!optionalPathNames.has(name)) {
-        return failure(`slash-expanded path variable ${JSON.stringify(name)} must be optional`);
-      }
       if (!scalarPathNames.has(name)) {
         return failure(
           `slash-expanded path variable ${JSON.stringify(name)} must have a scalar wire shape`,
         );
       }
       if (segment.length === 0) {
-        return failure("an optional slash expansion must follow a non-empty path segment");
+        return failure("a slash expansion must follow a non-empty path segment");
+      }
+      if (!optionalPathNames.has(name)) {
+        segments.push(segment);
+        segment = [{ kind: "parameter", name }];
+        cursor = closing.index + 1;
+        continue;
+      }
+      if (exploded) {
+        return failure("exploded optional slash expansions are not supported");
       }
       optionalSlashParameter = name;
       cursor = closing.index + 1;
