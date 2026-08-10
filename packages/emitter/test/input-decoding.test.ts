@@ -452,11 +452,23 @@ describe("input decoding", () => {
   test("typechecks single array-valued and repeated multipart parts", () => {
     const r = compileFixture("multipart-array-parts", multipartArrayPartSpec);
     const operations = r.readFile("multipart-array-api", "server-operations.ts");
+    const descriptorFor = (property: string): string => {
+      const propertyIndex = operations.indexOf(`property: ${JSON.stringify(property)}`);
+      const start = operations.lastIndexOf("\n      {", propertyIndex);
+      const end = operations.indexOf("\n      },", propertyIndex);
+      if (propertyIndex === -1 || start === -1 || end === -1) {
+        throw new Error(`Could not find generated multipart descriptor for ${property}.`);
+      }
+      return operations.slice(start, end);
+    };
 
-    expect(operations).toContain("decoder: Decoders.strictArray(");
-    expect(operations).toContain('property: "previousAddresses"');
-    expect(operations).toContain("multi: true");
-    expect(operations).toContain('property: "addresses"');
+    const arrayPayload = descriptorFor("previousAddresses");
+    expect(arrayPayload).toContain("decoder: Decoders.strictArray(");
+    expect(arrayPayload).not.toContain("multi: true");
+
+    const repeatedParts = descriptorFor("addresses");
+    expect(repeatedParts).toContain("decoder: Decoders.object<Address>(");
+    expect(repeatedParts).toContain("multi: true");
     r.typecheck("multipart-array-api");
   });
 
