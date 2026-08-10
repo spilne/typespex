@@ -731,10 +731,17 @@ type MultipartOptionalDescriptorFlag<Value> = undefined extends Value
   ? { readonly optional: true }
   : { readonly optional?: false };
 
-type MultipartDescriptorForValue<Value> = (Exclude<Value, undefined> extends readonly (infer Item)[]
-  ? MultipartPartDescriptor<Item> & { readonly multi: true }
-  : MultipartPartDescriptor<Exclude<Value, undefined>> & { readonly multi?: false }) &
-  MultipartOptionalDescriptorFlag<Value>;
+// An array-valued property can be one array payload or repeated item payloads;
+// the descriptor's multi flag selects which interpretation applies.
+type MultipartDescriptorForValue<Value> =
+  | (MultipartPartDescriptor<Exclude<Value, undefined>> & {
+      readonly multi?: false;
+    } & MultipartOptionalDescriptorFlag<Value>)
+  | (Exclude<Value, undefined> extends readonly (infer Item)[]
+      ? MultipartPartDescriptor<Item> & {
+          readonly multi: true;
+        } & MultipartOptionalDescriptorFlag<Value>
+      : never);
 
 /** Descriptor union keyed by the handler properties of one named multipart body. */
 export type MultipartFormDataDescriptor<A extends object> = {
