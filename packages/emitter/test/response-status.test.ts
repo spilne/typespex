@@ -239,6 +239,70 @@ model User {
 op replace(@body user: User): NoContentResponse;
 `;
 
+const canonicalNoContentErrorSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "CanonicalNoContentUnionApi" })
+namespace CanonicalNoContentUnionApi;
+
+@error
+model InvalidAuth {
+  @statusCode _: 403;
+  error: string;
+}
+
+@route("/authenticate")
+@get
+op authenticate(): NoContentResponse | InvalidAuth;
+`;
+
+const optionalResponseMarkerCollisionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "OptionalResponseMarkerCollisionApi" })
+namespace OptionalResponseMarkerCollisionApi;
+
+model Success {
+  @statusCode _: 200;
+  marker: string;
+}
+
+@error
+model Failure {
+  @statusCode _: 400;
+  marker?: string;
+  error: string;
+}
+
+@get
+op choose(): Success | Failure;
+`;
+
+const openResponseMarkerCollisionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "OpenResponseMarkerCollisionApi" })
+namespace OpenResponseMarkerCollisionApi;
+
+model Success {
+  @statusCode _: 200;
+  marker: string;
+}
+
+@error
+model Failure {
+  @statusCode _: 400;
+  error: string;
+  ...Record<unknown>;
+}
+
+@get
+op choose(): Success | Failure;
+`;
+
 describe("response status lowering", () => {
   test("inlines canonical HTTP response models without importing missing declarations", () => {
     const result = compileFixture("canonical-no-content", canonicalNoContentSpec);
@@ -253,6 +317,59 @@ describe("response status lowering", () => {
     expect(operations).not.toContain("NoContentResponse");
     expect(operations).toMatch(/status: 204,\s*kind: "empty"/);
     result.typecheck("canonical-no-content-api");
+  });
+
+  test("dispatches canonical no-content and modeled error responses", async () => {
+    const result = compileFixture("canonical-no-content-error", canonicalNoContentErrorSpec);
+    const operations = result.readFile("canonical-no-content-union-api", "server-operations.ts");
+
+    expect(operations).toContain("ResponseEncoders.matchVariant<");
+    expect(operations).toContain("Reflect.ownKeys(result).length === 0");
+    expect(operations).toContain('"error" in result');
+    expect(operations.indexOf('"error" in result')).toBeLessThan(
+      operations.indexOf("Reflect.ownKeys(result).length === 0"),
+    );
+    result.typecheck("canonical-no-content-union-api");
+
+    let handlerResult: Record<string, never> | { error: string } = {};
+    const { createCanonicalNoContentUnionApiServerRouter } = await import(
+      `${result.outputDir}/canonical-no-content-union-api/server-router.ts`
+    );
+    const router = createCanonicalNoContentUnionApiServerRouter({
+      authenticate: () => handlerResult,
+    });
+
+    const accepted = await router.handle(new Request("http://localhost/authenticate"));
+    expect(accepted.status).toBe(204);
+    expect(accepted.headers.get("content-type")).toBeNull();
+    expect(await accepted.text()).toBe("");
+
+    handlerResult = { error: "invalid credentials" };
+    const rejected = await router.handle(new Request("http://localhost/authenticate"));
+    expect(rejected.status).toBe(403);
+    expect(rejected.headers.get("content-type")).toBe("application/json");
+    expect(await rejected.json()).toEqual({ error: "invalid credentials" });
+  });
+
+  test("rejects required response markers admitted by competing shapes", () => {
+    for (const [name, spec, serviceDir] of [
+      [
+        "optional-response-marker-collision",
+        optionalResponseMarkerCollisionSpec,
+        "optional-response-marker-collision-api",
+      ],
+      [
+        "open-response-marker-collision",
+        openResponseMarkerCollisionSpec,
+        "open-response-marker-collision-api",
+      ],
+    ] as const) {
+      const result = compileFixtureExpectingDiagnostics(name, spec);
+      const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+      expect(diagnostics).toContain("undifferentiable-response-union");
+      expect(result.listFiles(serviceDir)).toEqual([]);
+    }
   });
 
   test("preserves body absence and drives dynamic statuses from handler results", async () => {
