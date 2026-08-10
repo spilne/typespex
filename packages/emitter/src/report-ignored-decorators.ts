@@ -28,6 +28,7 @@ import {
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
+import { lowerUriTemplate } from "./uri-template.js";
 
 interface ServiceDecoratorReports {
   readonly encodedNames: Set<ModelProperty>;
@@ -57,7 +58,7 @@ export function reportIgnoredDecorators(
     };
 
     for (const parameter of operation.parameters.parameters) {
-      checkHttpParameter(ctx, parameter);
+      checkHttpParameter(ctx, operation, parameter);
       walkType(
         ctx,
         reported,
@@ -349,7 +350,11 @@ function reportUnsupportedBody(
   });
 }
 
-function checkHttpParameter(ctx: EmitterCtx, parameter: HttpOperationParameter): void {
+function checkHttpParameter(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+  parameter: HttpOperationParameter,
+): void {
   const typeReason = unsupportedParameterTypeReason(ctx, parameter.param.type);
   if (typeReason) {
     reportUnsupportedParameter(ctx, parameter, typeReason);
@@ -358,7 +363,7 @@ function checkHttpParameter(ctx: EmitterCtx, parameter: HttpOperationParameter):
 
   if (parameter.type !== "path") return;
 
-  if (parameter.style !== "simple") {
+  if (parameter.style !== "simple" && !isOptionalSlashPathParameter(operation, parameter)) {
     reportUnsupportedParameter(
       ctx,
       parameter,
@@ -371,6 +376,23 @@ function checkHttpParameter(ctx: EmitterCtx, parameter: HttpOperationParameter):
       "allowReserved path values can contain route separators that the generated router cannot capture",
     );
   }
+}
+
+function isOptionalSlashPathParameter(
+  operation: HttpOperation,
+  parameter: HttpOperationParameter,
+): boolean {
+  if (parameter.type !== "path" || parameter.style !== "path" || !parameter.param.optional) {
+    return false;
+  }
+  const lowered = lowerUriTemplate(operation);
+  if (!lowered.ok) return false;
+  const appearances = lowered.value.routePatterns.map((pattern) =>
+    pattern.segments.some((segment) =>
+      segment.some((token) => token.kind === "parameter" && token.name === parameter.name),
+    ),
+  );
+  return appearances.includes(true) && appearances.includes(false);
 }
 
 function unsupportedParameterTypeReason(ctx: EmitterCtx, type: Type): string | undefined {

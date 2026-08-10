@@ -165,7 +165,7 @@ function emitEndpoint(
     operationId: string;
     method: string;
     path: string;
-    routePattern: RoutePattern;
+    routePatterns: readonly RoutePattern[];
     routeSelection?: {
       readonly headers: readonly {
         readonly name: string;
@@ -198,7 +198,11 @@ function emitEndpoint(
   lines.push(`        operationId: ${JSON.stringify(operation.operationId)},`);
   lines.push(`        method: ${JSON.stringify(operation.method)} as const,`);
   lines.push(`        path: ${JSON.stringify(operation.path)},`);
-  lines.push(`        routePattern: ${JSON.stringify(operation.routePattern)},`);
+  if (operation.routePatterns.length === 1) {
+    lines.push(`        routePattern: ${JSON.stringify(operation.routePatterns[0])},`);
+  } else {
+    lines.push(`        routePatterns: ${JSON.stringify(operation.routePatterns)},`);
+  }
   if (operation.routeSelection) {
     lines.push(`        routeSelection: ${JSON.stringify(operation.routeSelection)},`);
   }

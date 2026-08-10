@@ -151,10 +151,19 @@ export function emitDecoder(
   // Build request input decoder entries.
   const requestEntries: Array<{ name: string; expr: string }> = [];
   for (const param of pathParams) {
+    const valueDecoder = emitDecoderExpression(
+      ctx,
+      dec,
+      param.param.type,
+      "text",
+      new Set(),
+      param.param,
+    );
+    const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     const options = isArrayInputType(ctx, param.param.type) ? ", { array: true }" : "";
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.path(${JSON.stringify(param.name)}, ${emitDecoderExpression(ctx, dec, param.param.type, "text", new Set(), param.param)}${options})`,
+      expr: `RequestDecoders.path(${JSON.stringify(param.name)}, ${decoder}${options})`,
     });
   }
   for (const param of queryParams) {

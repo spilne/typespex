@@ -191,6 +191,29 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("duplicate-route-api")).toEqual([]);
   });
 
+  test("rejects collisions against either concrete optional path expansion", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "optional-path-collisions",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace OptionalPathCollisionApi;
+
+        @route("/items{/name}") @get op optional(@path name?: string): void;
+        @route("/items") @get op list(): void;
+        @route("/items/{id}") @get op read(@path id: string): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("OptionalPathCollisionApi.optional");
+    expect(diagnostics).toContain("OptionalPathCollisionApi.list");
+    expect(diagnostics).toContain("OptionalPathCollisionApi.read");
+    expect(result.listFiles("optional-path-collision-api")).toEqual([]);
+  });
+
   test("does not treat constraints on different headers as mutually exclusive", () => {
     const result = compileFixtureExpectingDiagnostics(
       "different-header-shared-routes",

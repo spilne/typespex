@@ -72,12 +72,14 @@ function analyzeRoutes(ctx: EmitterCtx, operations: readonly HttpOperation[]): R
     const lowered = lowerUriTemplate(operation);
     if (!lowered.ok) continue;
     const method = operation.verb.toUpperCase();
-    const structure = routePatternStructure(lowered.value.routePattern);
-    const analyzed = { operation, method, path: lowered.value.path, structure };
-    const key = `${method}:${structure}`;
-    const group = groups.get(key);
-    if (group) group.push(analyzed);
-    else groups.set(key, [analyzed]);
+    for (const routePattern of lowered.value.routePatterns) {
+      const structure = routePatternStructure(routePattern);
+      const analyzed = { operation, method, path: lowered.value.path, structure };
+      const key = `${method}:${structure}`;
+      const group = groups.get(key);
+      if (group) group.push(analyzed);
+      else groups.set(key, [analyzed]);
+    }
   }
 
   const selections = new Map<HttpOperation, RouteSelectionEmission>();

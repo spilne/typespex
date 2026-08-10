@@ -144,14 +144,21 @@ export function createHttpRouter<Ctx extends RequestContext>(
   // Not-found app also gets middleware (so middleware runs for unmatched requests)
   const notFoundApp = middlewareChain(createNotFoundApp(options));
 
-  const matcherInput = routes.map((binding) => ({
-    method: binding.operation.endpoint.operation.method,
-    path: binding.operation.endpoint.operation.path,
-    routePattern: binding.operation.endpoint.operation.routePattern,
-    selection: binding.operation.endpoint.operation.routeSelection,
-    label: binding.operation.endpoint.operation.operationId,
-    route: binding,
-  }));
+  const matcherInput = routes.flatMap((binding) => {
+    const operation = binding.operation.endpoint.operation;
+    if (operation.routePatterns?.length === 0) {
+      throw new Error(`Operation ${JSON.stringify(operation.operationId)} has no route patterns.`);
+    }
+    const routePatterns = operation.routePatterns ?? [operation.routePattern];
+    return routePatterns.map((routePattern) => ({
+      method: operation.method,
+      path: operation.path,
+      routePattern,
+      selection: operation.routeSelection,
+      label: operation.operationId,
+      route: binding,
+    }));
+  });
 
   const routeMatcher = matcher ?? createRegexMatcher(matcherInput);
 

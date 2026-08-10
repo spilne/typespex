@@ -123,6 +123,85 @@ describe("createHttpRouter", () => {
     });
   });
 
+  test("registers every concrete route pattern for one operation", async () => {
+    const operation = makeOperation<{ name?: string }, { name: string | null }>({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "optional",
+          operationId: "Parameters.optional",
+          method: "GET",
+          path: "/optional{/name}",
+          routePatterns: [
+            {
+              segments: [[{ kind: "literal", value: "optional" }]],
+              trailingSlash: false,
+            },
+            {
+              segments: [
+                [{ kind: "literal", value: "optional" }],
+                [{ kind: "parameter", name: "name" }],
+              ],
+              trailingSlash: false,
+            },
+          ],
+          hints: emptyHints(),
+        },
+      },
+      decodeInput(request, pathParams) {
+        return decodeRequestInput(
+          RequestDecoders.path("name", Decoders.string.optional()).map((name) => ({ name })),
+          request,
+          pathParams,
+        );
+      },
+      encodeResult(result) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const router = createHttpRouter([
+      bindRoute(operation, async ({ name }) => ({ name: name ?? null })),
+    ]);
+
+    const absent = await router.handle(new Request("http://localhost/optional"));
+    expect(absent.status).toBe(200);
+    expect(await absent.json()).toEqual({ name: null });
+
+    const present = await router.handle(new Request("http://localhost/optional/value"));
+    expect(present.status).toBe(200);
+    expect(await present.json()).toEqual({ name: "value" });
+
+    expect((await router.handle(new Request("http://localhost/optional/"))).status).toBe(404);
+  });
+
+  test("rejects an empty concrete route pattern list", () => {
+    const operation = makeOperation<{}, void>({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "invalid",
+          operationId: "Parameters.invalid",
+          method: "GET",
+          path: "/invalid",
+          routePatterns: [],
+          hints: emptyHints(),
+        },
+      },
+      decodeInput() {
+        return Either.right({});
+      },
+      encodeResult() {
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    expect(() => createHttpRouter([bindRoute(operation, async () => undefined)])).toThrow(
+      'Operation "Parameters.invalid" has no route patterns.',
+    );
+  });
+
   test("canonicalizes path spelling before route selection while decoding captures once", async () => {
     const parameter = makeOperation({
       endpoint: {

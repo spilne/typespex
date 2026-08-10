@@ -34,6 +34,7 @@ const SCENARIOS = [
   "parameters/body-optionality",
   "parameters/body-root",
   "parameters/collection-format",
+  "parameters/path",
   "parameters/query",
   "parameters/spread",
   "payload/content-negotiation",

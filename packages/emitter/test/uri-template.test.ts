@@ -10,9 +10,16 @@ afterAll(cleanupFixtures);
 beforeAll(buildEmitter);
 
 function emittedRoutePattern(source: string, path: string): unknown {
+  return emittedRouteProperty(source, path, "routePattern:");
+}
+
+function emittedRoutePatterns(source: string, path: string): unknown {
+  return emittedRouteProperty(source, path, "routePatterns:");
+}
+
+function emittedRouteProperty(source: string, path: string, marker: string): unknown {
   const pathOffset = source.indexOf(`path: ${JSON.stringify(path)},`);
   expect(pathOffset).toBeGreaterThanOrEqual(0);
-  const marker = "routePattern:";
   const patternOffset = source.indexOf(marker, pathOffset);
   const hintsOffset = source.indexOf("hints:", patternOffset);
   expect(patternOffset).toBeGreaterThan(pathOffset);
@@ -57,6 +64,9 @@ namespace UriTemplateApi;
   @path id: string,
   @query(#{ name: "tags", explode: true }) tags?: string[],
 ): void;
+
+@route("/optional{/name}")
+@get op optional(@path name?: string): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -160,6 +170,16 @@ describe("URI-template lowering", () => {
       segments: [[{ kind: "literal", value: "trail" }]],
       trailingSlash: true,
     });
+    expect(emittedRoutePatterns(operations, "/optional{/name}")).toEqual([
+      {
+        segments: [[{ kind: "literal", value: "optional" }]],
+        trailingSlash: false,
+      },
+      {
+        segments: [[{ kind: "literal", value: "optional" }], [{ kind: "parameter", name: "name" }]],
+        trailingSlash: false,
+      },
+    ]);
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -180,6 +200,7 @@ describe("URI-template lowering", () => {
       raw: capture("raw"),
       trail: capture("trail"),
       query: capture("query"),
+      optional: capture("optional"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -221,6 +242,12 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/query/item?tags=one&tags=two"))).status,
     ).toBe(204);
     expect(received.get("query")).toEqual({ id: "item", tags: ["one", "two"] });
+
+    expect((await router.handle(new Request("http://localhost/optional"))).status).toBe(204);
+    expect(received.get("optional")).toEqual({ name: undefined });
+    expect((await router.handle(new Request("http://localhost/optional/value"))).status).toBe(204);
+    expect(received.get("optional")).toEqual({ name: "value" });
+    expect((await router.handle(new Request("http://localhost/optional/"))).status).toBe(404);
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -280,29 +307,68 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/reserved/{/x}", path, query)).toEqual({
       ok: false,
-      reason: 'URI-template operator "/" is not supported in paths',
+      reason: 'slash-expanded path variable "x" must be optional',
+    });
+    expect(lowerUriTemplateText("/optional{/x}", path, query, path, new Set(["x"]))).toEqual({
+      ok: true,
+      value: {
+        path: "/optional{/x}",
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "optional" }]],
+            trailingSlash: false,
+          },
+          {
+            segments: [
+              [{ kind: "literal", value: "optional" }],
+              [{ kind: "parameter", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/optional{/x}/tail", path, query, path, new Set(["x"]))).toEqual({
+      ok: false,
+      reason: "path material appears after an optional slash expansion",
+    });
+    expect(
+      lowerUriTemplateText(
+        "/optional{/x,y}",
+        new Set(["x", "y"]),
+        query,
+        new Set(["x", "y"]),
+        new Set(["x", "y"]),
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "optional slash expansions must contain exactly one path variable",
     });
     expect(lowerUriTemplateText("/query/{x}{?q*}", path, new Set(["q"]))).toEqual({
       ok: true,
       value: {
         path: "/query/{x}",
-        routePattern: {
-          segments: [[{ kind: "literal", value: "query" }], [{ kind: "parameter", name: "x" }]],
-          trailingSlash: false,
-        },
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "query" }], [{ kind: "parameter", name: "x" }]],
+            trailingSlash: false,
+          },
+        ],
       },
     });
     expect(lowerUriTemplateText("/same-wire/{id}{?id}", new Set(["id"]), new Set(["id"]))).toEqual({
       ok: true,
       value: {
         path: "/same-wire/{id}",
-        routePattern: {
-          segments: [
-            [{ kind: "literal", value: "same-wire" }],
-            [{ kind: "parameter", name: "id" }],
-          ],
-          trailingSlash: false,
-        },
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "same-wire" }],
+              [{ kind: "parameter", name: "id" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
       },
     });
     expect(
@@ -311,17 +377,19 @@ describe("URI-template lowering", () => {
       ok: true,
       value: {
         path: "/mixed/{x}-:{y}",
-        routePattern: {
-          segments: [
-            [{ kind: "literal", value: "mixed" }],
-            [
-              { kind: "parameter", name: "x" },
-              { kind: "literal", value: "-:" },
-              { kind: "parameter", name: "y" },
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "mixed" }],
+              [
+                { kind: "parameter", name: "x" },
+                { kind: "literal", value: "-:" },
+                { kind: "parameter", name: "y" },
+              ],
             ],
-          ],
-          trailingSlash: false,
-        },
+            trailingSlash: false,
+          },
+        ],
       },
     });
     expect(
@@ -330,17 +398,19 @@ describe("URI-template lowering", () => {
       ok: true,
       value: {
         path: "/brackets/{x}[v]{y}",
-        routePattern: {
-          segments: [
-            [{ kind: "literal", value: "brackets" }],
-            [
-              { kind: "parameter", name: "x" },
-              { kind: "literal", value: "[v]" },
-              { kind: "parameter", name: "y" },
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "brackets" }],
+              [
+                { kind: "parameter", name: "x" },
+                { kind: "literal", value: "[v]" },
+                { kind: "parameter", name: "y" },
+              ],
             ],
-          ],
-          trailingSlash: false,
-        },
+            trailingSlash: false,
+          },
+        ],
       },
     });
     expect(
