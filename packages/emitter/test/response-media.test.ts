@@ -126,6 +126,16 @@ model BytesWithMalformedMediaType {
   @body body: bytes;
 }
 
+model BytesWithWildcardSubtype {
+  @header contentType: "image/*";
+  @body body: bytes;
+}
+
+model BytesWithWildcardType {
+  @header contentType: "*/png";
+  @body body: bytes;
+}
+
 model MultipartResponse {
   @multipartBody fields: {
     files: HttpPart<File>[];
@@ -163,6 +173,14 @@ op stringImage(): StringAsImage;
 @route("/bytes-malformed-media-type")
 @get
 op bytesMalformedMediaType(): BytesWithMalformedMediaType;
+
+@route("/bytes-wildcard-subtype")
+@get
+op bytesWildcardSubtype(): BytesWithWildcardSubtype;
+
+@route("/bytes-wildcard-type")
+@get
+op bytesWildcardType(): BytesWithWildcardType;
 
 @route("/multipart")
 @get
@@ -234,6 +252,8 @@ describe("response media classification", () => {
     expect(diagnostics).toContain("application/+json");
     expect(diagnostics).toContain("image/png");
     expect(diagnostics).toContain("not-a-media-type");
+    expect(diagnostics).toContain("image/*");
+    expect(diagnostics).toContain("*/png");
     expect(diagnostics).toContain("unsupported-response-body");
     expect(diagnostics).toContain("text responses require");
     expect(diagnostics).toContain("binary responses require");
