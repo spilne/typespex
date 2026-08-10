@@ -56,6 +56,15 @@ namespace UriTemplateApi;
 @route("/raw/{value}")
 @get op raw(@path value: string): void;
 
+@route("/reserved/template/{+value}")
+@get op reservedTemplate(
+  // Intentionally implicit to mirror the upstream template-authored scenario.
+  value: string,
+): void;
+
+@route("/reserved/annotation")
+@get op reservedAnnotation(@path(#{ allowReserved: true }) value: string): void;
+
 @route("/trail/")
 @get op trail(): void;
 
@@ -130,8 +139,11 @@ namespace InvalidUriTemplateApi;
 @route("/prefix-modifier/{x:2}")
 @get op prefixModifier(@path x: string): void;
 
-@route("/reserved/{+x}")
-@get op reservedOperator(@path x: string): void;
+@route("/reserved/prefix{+x}")
+@get op embeddedReserved(@path x: string): void;
+
+@route("/reserved/{+tail}/suffix")
+@get op nonterminalReserved(@path tail: string): void;
 
 @route("/repeated/{x}/{x}")
 @get op repeated(@path x: string): void;
@@ -235,6 +247,22 @@ describe("URI-template lowering", () => {
     expect(emittedRoutePattern(operations, "/trail/")).toEqual({
       segments: [[{ kind: "literal", value: "trail" }]],
       trailingSlash: true,
+    });
+    expect(emittedRoutePattern(operations, "/reserved/template/{+value}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "reserved" }],
+        [{ kind: "literal", value: "template" }],
+        [{ kind: "rest", name: "value" }],
+      ],
+      trailingSlash: false,
+    });
+    expect(emittedRoutePattern(operations, "/reserved/annotation/{+value}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "reserved" }],
+        [{ kind: "literal", value: "annotation" }],
+        [{ kind: "rest", name: "value" }],
+      ],
+      trailingSlash: false,
     });
     expect(emittedRoutePatterns(operations, "/optional{/name}")).toEqual([
       {
@@ -391,6 +419,8 @@ describe("URI-template lowering", () => {
       pair: capture("pair"),
       comma: capture("comma"),
       raw: capture("raw"),
+      reservedTemplate: capture("reservedTemplate"),
+      reservedAnnotation: capture("reservedAnnotation"),
       trail: capture("trail"),
       query: capture("query"),
       optional: capture("optional"),
@@ -441,6 +471,22 @@ describe("URI-template lowering", () => {
     expect((await router.handle(new Request("http://localhost/raw/a%2Fb"))).status).toBe(204);
     expect(received.get("raw")).toEqual({ value: "a/b" });
     expect((await router.handle(new Request("http://localhost/raw/%ZZ"))).status).toBe(400);
+
+    expect(
+      (await router.handle(new Request("http://localhost/reserved/template/foo/bar%20baz"))).status,
+    ).toBe(204);
+    expect(received.get("reservedTemplate")).toEqual({ value: "foo/bar baz" });
+    expect(
+      (await router.handle(new Request("http://localhost/reserved/annotation/foo/bar%20baz")))
+        .status,
+    ).toBe(204);
+    expect(received.get("reservedAnnotation")).toEqual({ value: "foo/bar baz" });
+    expect((await router.handle(new Request("http://localhost/reserved/template"))).status).toBe(
+      404,
+    );
+    expect(
+      (await router.handle(new Request("http://localhost/reserved/template/foo/"))).status,
+    ).toBe(404);
 
     expect((await router.handle(new Request("http://localhost/trail/"))).status).toBe(204);
     expect((await router.handle(new Request("http://localhost/trail"))).status).toBe(404);
@@ -586,7 +632,8 @@ describe("URI-template lowering", () => {
       'exploded simple path variable "x" must have a scalar or scalar-array wire shape',
     );
     expect(diagnostics).toContain('modifier ":2"');
-    expect(diagnostics).toContain('operator "+"');
+    expect(diagnostics).toContain("a reserved expansion must occupy a complete path segment");
+    expect(diagnostics).toContain("path material appears after a reserved expansion");
     expect(diagnostics).toContain("appears more than once");
     expect(diagnostics).toContain(
       'path variables separated only by commas require scalar variables, but "x" has a collection shape',
@@ -647,6 +694,7 @@ describe("URI-template lowering", () => {
     expect(simpleStyle.ok && simpleStyle.value.slashExpandedPathNames).toEqual([]);
     expect(simpleStyle.ok && simpleStyle.value.labelExpandedPathNames).toEqual([]);
     expect(simpleStyle.ok && simpleStyle.value.matrixExpandedPathNames).toEqual([]);
+    expect(simpleStyle.ok && simpleStyle.value.reservedExpandedPathNames).toEqual([]);
     const slashStyle = lowerUriTemplate(operation("/slash{/x}"));
     expect(slashStyle.ok && slashStyle.value.slashExpandedPathNames).toEqual(["x"]);
     expect(slashStyle.ok && slashStyle.value.labelExpandedPathNames).toEqual([]);
@@ -659,6 +707,11 @@ describe("URI-template lowering", () => {
     expect(matrixStyle.ok && matrixStyle.value.slashExpandedPathNames).toEqual([]);
     expect(matrixStyle.ok && matrixStyle.value.labelExpandedPathNames).toEqual([]);
     expect(matrixStyle.ok && matrixStyle.value.matrixExpandedPathNames).toEqual(["x"]);
+    const reservedStyle = lowerUriTemplate(operation("/reserved/{+x}"));
+    expect(reservedStyle.ok && reservedStyle.value.slashExpandedPathNames).toEqual([]);
+    expect(reservedStyle.ok && reservedStyle.value.labelExpandedPathNames).toEqual([]);
+    expect(reservedStyle.ok && reservedStyle.value.matrixExpandedPathNames).toEqual([]);
+    expect(reservedStyle.ok && reservedStyle.value.reservedExpandedPathNames).toEqual(["x"]);
 
     expect(lowerUriTemplateText("/malformed/{x", path, query)).toEqual({
       ok: false,
@@ -1032,6 +1085,56 @@ describe("URI-template lowering", () => {
     ).toEqual({
       ok: false,
       reason: 'slash-expanded scalar-array path variable "x" must be required',
+    });
+    expect(lowerUriTemplateText("/reserved/{+x}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/reserved/{+x}",
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "reserved" }], [{ kind: "rest", name: "x" }]],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/reserved/{+x*}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/reserved/{+x*}",
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "reserved" }], [{ kind: "rest", name: "x" }]],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/reserved/pre{+x}", path, query)).toEqual({
+      ok: false,
+      reason: "a reserved expansion must occupy a complete path segment",
+    });
+    expect(lowerUriTemplateText("/reserved/{+x}/tail", path, query)).toEqual({
+      ok: false,
+      reason: "path material appears after a reserved expansion",
+    });
+    expect(lowerUriTemplateText("/reserved/{+x}{?q}", path, new Set(["q"]))).toEqual({
+      ok: false,
+      reason: "a query expansion cannot follow a reserved path expansion",
+    });
+    expect(
+      lowerUriTemplateText("/reserved/{+x,y}", new Set(["x", "y"]), query, new Set(["x", "y"])),
+    ).toEqual({
+      ok: false,
+      reason: "reserved expansions must contain exactly one path variable",
+    });
+    expect(lowerUriTemplateText("/reserved/{+x}", path, query, new Set())).toEqual({
+      ok: false,
+      reason: 'reserved path variable "x" must have a scalar wire shape',
+    });
+    expect(lowerUriTemplateText("/reserved/{+x}", path, query, path, path)).toEqual({
+      ok: false,
+      reason: 'reserved path variable "x" must be required',
     });
     expect(
       lowerUriTemplateText(

@@ -184,6 +184,28 @@ describe("unsupported HTTP parameter serialization", () => {
     expect(diagnostics).toContain('path style "path"');
     expect(result.listFiles("path-style-api")).toEqual([]);
   });
+
+  test("rejects allowReserved parameters outside a complete terminal segment", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "reserved-path-shape",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service namespace ReservedPathShapeApi {
+        @route("/files/prefix{+value}") @get
+        op read(@path value: string): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain("unsupported-http-parameter");
+    expect(diagnostics).toContain(
+      "allowReserved path values require one required scalar in a complete terminal path segment",
+    );
+    expect(result.listFiles("reserved-path-shape-api")).toEqual([]);
+  });
 });
 
 describe("unsupported request body serialization", () => {

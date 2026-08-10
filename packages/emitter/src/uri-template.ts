@@ -24,6 +24,8 @@ export interface LoweredUriTemplate {
   readonly labelExpandedPathNames?: readonly string[];
   /** Path parameters proven to use the RFC 6570 matrix operator. */
   readonly matrixExpandedPathNames?: readonly string[];
+  /** Path parameters proven to use a supported RFC 6570 reserved expansion. */
+  readonly reservedExpandedPathNames?: readonly string[];
 }
 
 export type UriTemplateLowering =
@@ -83,6 +85,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
   const slashExpandedPathNames = new Set<string>();
   const labelExpandedPathNames = new Set<string>();
   const matrixExpandedPathNames = new Set<string>();
+  const reservedExpandedPathNames = new Set<string>();
   const lowered = lowerUriTemplateTextInternal(
     operation.uriTemplate,
     pathNames,
@@ -93,6 +96,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
     slashExpandedPathNames,
     labelExpandedPathNames,
     matrixExpandedPathNames,
+    reservedExpandedPathNames,
   );
   if (!lowered.ok) return lowered;
   return {
@@ -102,6 +106,7 @@ export function lowerUriTemplate(operation: HttpOperation): UriTemplateLowering 
       slashExpandedPathNames: [...slashExpandedPathNames],
       labelExpandedPathNames: [...labelExpandedPathNames],
       matrixExpandedPathNames: [...matrixExpandedPathNames],
+      reservedExpandedPathNames: [...reservedExpandedPathNames],
     },
   };
 }
@@ -135,6 +140,7 @@ function lowerUriTemplateTextInternal(
   slashExpandedPathNames?: Set<string>,
   labelExpandedPathNames?: Set<string>,
   matrixExpandedPathNames?: Set<string>,
+  reservedExpandedPathNames?: Set<string>,
 ): UriTemplateLowering {
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
@@ -149,6 +155,7 @@ function lowerUriTemplateTextInternal(
   const seenQueryVariables = new Set<string>();
   let optionalSlashParameter: string | undefined;
   let explodedSlashParameter: string | undefined;
+  let reservedPathParameter: string | undefined;
 
   const appendLiteral = (literal: string): UriTemplateLowering | undefined => {
     if (literal.includes("?") || literal.includes("#")) {
@@ -194,6 +201,9 @@ function lowerUriTemplateTextInternal(
       if (explodedSlashParameter !== undefined) {
         return failure("path material appears after an exploded slash expansion");
       }
+      if (reservedPathParameter !== undefined) {
+        return failure("path material appears after a reserved expansion");
+      }
       const literalFailure = appendLiteral(literal);
       if (literalFailure) return literalFailure;
       cursor = end;
@@ -208,6 +218,9 @@ function lowerUriTemplateTextInternal(
     const operator = URI_TEMPLATE_OPERATORS.has(expression[0]!) ? expression[0]! : undefined;
     const variables = operator ? expression.slice(1) : expression;
     if (operator === "?" || operator === "&") {
+      if (reservedPathParameter !== undefined) {
+        return failure("a query expansion cannot follow a reserved path expansion");
+      }
       if (!queryStarted) {
         if (operator !== "?") {
           return failure("a query continuation expansion cannot appear before a query expansion");
@@ -238,6 +251,9 @@ function lowerUriTemplateTextInternal(
     }
     if (explodedSlashParameter !== undefined) {
       return failure("path material appears after an exploded slash expansion");
+    }
+    if (reservedPathParameter !== undefined) {
+      return failure("path material appears after a reserved expansion");
     }
     if (operator === "/") {
       const exploded = variables.endsWith("*");
@@ -350,6 +366,38 @@ function lowerUriTemplateTextInternal(
       matrixExpandedPathNames?.add(name);
       appendLiteralToken(segment, `;${matrixVariables}=`);
       segment.push({ kind: "parameter", name });
+      cursor = closing.index + 1;
+      continue;
+    }
+    if (operator === "+") {
+      const exploded = variables.endsWith("*");
+      const reservedVariables = exploded ? variables.slice(0, -1) : variables;
+      const parsed = parseExpressionVariables(
+        reservedVariables,
+        pathNames,
+        seenPathVariables,
+        "path",
+        false,
+      );
+      if (!parsed.ok) return parsed;
+      if (parsed.names.length !== 1) {
+        return failure("reserved expansions must contain exactly one path variable");
+      }
+      const name = parsed.names[0]!;
+      if (optionalPathNames.has(name)) {
+        return failure(`reserved path variable ${JSON.stringify(name)} must be required`);
+      }
+      if (!scalarPathNames.has(name)) {
+        return failure(
+          `reserved path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+        );
+      }
+      if (segment.length !== 0) {
+        return failure("a reserved expansion must occupy a complete path segment");
+      }
+      reservedExpandedPathNames?.add(name);
+      segment.push({ kind: "rest", name });
+      reservedPathParameter = name;
       cursor = closing.index + 1;
       continue;
     }
