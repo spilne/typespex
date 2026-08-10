@@ -165,6 +165,8 @@ export function emitDecoder(
       optionValues.push("array: true");
       if (param.style === "label" && param.explode) {
         optionValues.push('arraySeparator: "."');
+      } else if (param.style === "matrix" && param.explode) {
+        optionValues.push(`arraySeparator: ${JSON.stringify(`;${param.name}=`)}`);
       }
     }
     const options = optionValues.length > 0 ? `, { ${optionValues.join(", ")} }` : "";
