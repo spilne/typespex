@@ -253,8 +253,30 @@ function lowerUriTemplateTextInternal(
       return failure(`URI-template operator ${JSON.stringify(operator)} is not supported in paths`);
     }
 
-    const parsed = parseExpressionVariables(variables, pathNames, seenPathVariables, "path", false);
+    const exploded = variables.endsWith("*");
+    const simpleVariables = exploded ? variables.slice(0, -1) : variables;
+    const parsed = parseExpressionVariables(
+      simpleVariables,
+      pathNames,
+      seenPathVariables,
+      "path",
+      false,
+    );
     if (!parsed.ok) return parsed;
+    if (exploded) {
+      if (parsed.names.length !== 1) {
+        return failure("exploded simple expansions must contain exactly one path variable");
+      }
+      const name = parsed.names[0]!;
+      if (optionalPathNames.has(name)) {
+        return failure(`exploded simple path variable ${JSON.stringify(name)} must be required`);
+      }
+      if (!scalarPathNames.has(name)) {
+        return failure(
+          `exploded simple path variable ${JSON.stringify(name)} must have a scalar wire shape`,
+        );
+      }
+    }
     for (let index = 0; index < parsed.names.length; index += 1) {
       if (index > 0) appendLiteralToken(segment, ",");
       segment.push({ kind: "parameter", name: parsed.names[index]! });

@@ -73,6 +73,9 @@ namespace UriTemplateApi;
 
 @route("/required-explode{/name*}")
 @get op requiredExplode(@path name: string): void;
+
+@route("/simple-explode/item{name*}")
+@get op simpleExplode(@path name: string): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -89,7 +92,7 @@ namespace InvalidUriTemplateApi;
 @get op unreserved(@path x: string, @path y: string): void;
 
 @route("/explode/{x*}")
-@get op explode(@path x: string): void;
+@get op explode(@path x: string[]): void;
 
 @route("/prefix-modifier/{x:2}")
 @get op prefixModifier(@path x: string): void;
@@ -197,6 +200,16 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/simple-explode/item{name*}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "simple-explode" }],
+        [
+          { kind: "literal", value: "item" },
+          { kind: "parameter", name: "name" },
+        ],
+      ],
+      trailingSlash: false,
+    });
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -220,6 +233,7 @@ describe("URI-template lowering", () => {
       optional: capture("optional"),
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
+      simpleExplode: capture("simpleExplode"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -277,6 +291,15 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/required-explode/a%2Fb"))).status,
     ).toBe(204);
     expect(received.get("requiredExplode")).toEqual({ name: "a/b" });
+
+    expect(
+      (await router.handle(new Request("http://localhost/simple-explode/itema%2Fb"))).status,
+    ).toBe(204);
+    expect(received.get("simpleExplode")).toEqual({ name: "a/b" });
+    expect((await router.handle(new Request("http://localhost/simple-explode/item"))).status).toBe(
+      204,
+    );
+    expect(received.get("simpleExplode")).toEqual({ name: "" });
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -290,7 +313,9 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain(
       'path variables separated by unreserved literal "-" cannot be captured unambiguously',
     );
-    expect(diagnostics).toContain('modifier "*"');
+    expect(diagnostics).toContain(
+      'exploded simple path variable "x" must have a scalar wire shape',
+    );
     expect(diagnostics).toContain('modifier ":2"');
     expect(diagnostics).toContain('operator "+"');
     expect(diagnostics).toContain("appears more than once");
@@ -383,6 +408,38 @@ describe("URI-template lowering", () => {
           },
         ],
       },
+    });
+    expect(lowerUriTemplateText("/simple/item{x*}", path, query)).toEqual({
+      ok: true,
+      value: {
+        path: "/simple/item{x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "simple" }],
+              [
+                { kind: "literal", value: "item" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/simple/{x*}", path, query, new Set())).toEqual({
+      ok: false,
+      reason: 'exploded simple path variable "x" must have a scalar wire shape',
+    });
+    expect(lowerUriTemplateText("/simple/{x*}", path, query, path, new Set(["x"]))).toEqual({
+      ok: false,
+      reason: 'exploded simple path variable "x" must be required',
+    });
+    expect(
+      lowerUriTemplateText("/simple/{x,y*}", new Set(["x", "y"]), query, new Set(["x", "y"])),
+    ).toEqual({
+      ok: false,
+      reason: "exploded simple expansions must contain exactly one path variable",
     });
     expect(lowerUriTemplateText("/optional{/x}", path, query, path, new Set(["x"]))).toEqual({
       ok: true,
