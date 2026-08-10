@@ -86,6 +86,9 @@ namespace UriTemplateApi;
 @route("/slash-array/array{/param}")
 @get op slashArray(@path param: string[]): void;
 
+@route("/slash-record/record{/param}")
+@get op slashRecord(@path param: Record<int32>): void;
+
 @route("/slash-array-explode/array{/param*}")
 @get op slashArrayExplode(@path param: string[]): void;
 
@@ -189,6 +192,9 @@ namespace InvalidUriTemplateApi;
 
 @route("/slash-array-optional/array{/x}")
 @get op optionalSlashArray(@path x?: string[]): void;
+
+@route("/slash-record-explode/record{/x*}")
+@get op explodedSlashRecord(@path x: Record<string>): void;
 `;
 
 const unknownUriVariableSpec = `
@@ -299,6 +305,17 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
+    expect(emittedRoutePattern(operations, "/slash-record/record{/param}")).toEqual({
+      segments: [
+        [{ kind: "literal", value: "slash-record" }],
+        [{ kind: "literal", value: "record" }],
+        [{ kind: "parameter", name: "param" }],
+      ],
+      trailingSlash: false,
+    });
+    expect(operations).toMatch(
+      /slashRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true \},\s*\)\.map/,
+    );
     expect(emittedRoutePattern(operations, "/slash-array-explode/array{/param*}")).toEqual({
       segments: [
         [{ kind: "literal", value: "slash-array-explode" }],
@@ -459,6 +476,7 @@ describe("URI-template lowering", () => {
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
       slashArray: capture("slashArray"),
+      slashRecord: capture("slashRecord"),
       slashArrayExplode: capture("slashArrayExplode"),
       simpleExplode: capture("simpleExplode"),
       simpleArray: capture("simpleArray"),
@@ -551,6 +569,24 @@ describe("URI-template lowering", () => {
     ).toBe(204);
     expect(received.get("slashArray")).toEqual({ param: ["a", "b,c"] });
     expect((await router.handle(new Request("http://localhost/slash-array/array"))).status).toBe(
+      404,
+    );
+
+    expect(
+      (await router.handle(new Request("http://localhost/slash-record/record/a,1,b,2"))).status,
+    ).toBe(204);
+    expect(received.get("slashRecord")).toEqual({ param: { a: 1, b: 2 } });
+    expect(
+      (await router.handle(new Request("http://localhost/slash-record/record/a%2Cb,1"))).status,
+    ).toBe(204);
+    expect(received.get("slashRecord")).toEqual({ param: { "a,b": 1 } });
+    expect(
+      (await router.handle(new Request("http://localhost/slash-record/record/a,1,b"))).status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/slash-record/record/a,1,%61,2"))).status,
+    ).toBe(400);
+    expect((await router.handle(new Request("http://localhost/slash-record/record"))).status).toBe(
       404,
     );
 
@@ -740,6 +776,7 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
     expect(diagnostics).toContain("path material appears after an exploded slash expansion");
     expect(diagnostics).toContain('slash-expanded scalar-array path variable "x" must be required');
+    expect(diagnostics).toContain("exploded slash record expansions are not supported");
     expect(result.listFiles("invalid-uri-template-api")).toEqual([]);
   });
 
@@ -1150,7 +1187,8 @@ describe("URI-template lowering", () => {
     });
     expect(lowerUriTemplateText("/required{/x}", path, query, new Set())).toEqual({
       ok: false,
-      reason: 'slash-expanded path variable "x" must have a scalar or scalar-array wire shape',
+      reason:
+        'slash-expanded path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     });
     expect(
       lowerUriTemplateText("/slash-array/array{/x}", path, query, new Set(), new Set(), path),
@@ -1169,6 +1207,60 @@ describe("URI-template lowering", () => {
           },
         ],
       },
+    });
+    expect(
+      lowerUriTemplateText(
+        "/slash-record/record{/x}",
+        path,
+        query,
+        new Set(),
+        new Set(),
+        new Set(),
+        path,
+      ),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/slash-record/record{/x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "slash-record" }],
+              [{ kind: "literal", value: "record" }],
+              [{ kind: "parameter", name: "x" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText(
+        "/slash-record/record{/x*}",
+        path,
+        query,
+        new Set(),
+        new Set(),
+        new Set(),
+        path,
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "exploded slash record expansions are not supported",
+    });
+    expect(
+      lowerUriTemplateText(
+        "/slash-record/record{/x}",
+        path,
+        query,
+        new Set(),
+        path,
+        new Set(),
+        path,
+      ),
+    ).toEqual({
+      ok: false,
+      reason: 'slash-expanded scalar-record path variable "x" must be required',
     });
     expect(
       lowerUriTemplateText("/slash-array/array{/x*}", path, query, new Set(), new Set(), path),

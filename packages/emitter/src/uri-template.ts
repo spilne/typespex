@@ -280,9 +280,10 @@ function lowerUriTemplateTextInternal(
       }
       const name = parsed.names[0]!;
       const scalarArray = scalarArrayPathNames.has(name);
-      if (!scalarPathNames.has(name) && !scalarArray) {
+      const scalarRecord = scalarRecordPathNames.has(name);
+      if (!scalarPathNames.has(name) && !scalarArray && !scalarRecord) {
         return failure(
-          `slash-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
+          `slash-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
       }
       if (segment.length === 0) {
@@ -293,6 +294,14 @@ function lowerUriTemplateTextInternal(
         return failure(
           `slash-expanded scalar-array path variable ${JSON.stringify(name)} must be required`,
         );
+      }
+      if (scalarRecord && optional) {
+        return failure(
+          `slash-expanded scalar-record path variable ${JSON.stringify(name)} must be required`,
+        );
+      }
+      if (scalarRecord && exploded) {
+        return failure("exploded slash record expansions are not supported");
       }
       if (optional && exploded) {
         return failure("exploded optional slash expansions are not supported");
