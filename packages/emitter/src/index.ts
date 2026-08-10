@@ -141,10 +141,14 @@ function reportDuplicateOutputPaths(
     for (const definition of GENERATED_ARTIFACTS) {
       const fileName = generatedArtifactFileName(definition, layout.fileNames);
       const path = resolvePath(context.emitterOutputDir, layout.outputDir, fileName);
+      // Generated segments are ASCII-only. Fold their resolved paths for the
+      // ownership check so emission remains safe on case-insensitive hosts,
+      // while retaining configured casing in the actual path and diagnostic.
+      const pathKey = path.toLowerCase();
       const artifact = `${serviceName}.${definition.artifact}`;
-      const owner = owners.get(path);
+      const owner = owners.get(pathKey);
       if (owner === undefined) {
-        owners.set(path, artifact);
+        owners.set(pathKey, artifact);
         continue;
       }
 
