@@ -109,6 +109,44 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("path arrays split configured raw separators before percent decoding", () => {
+    const decoder = RequestDecoders.path("labelValues", Decoders.array(Decoders.string), {
+      array: true,
+      arraySeparator: ".",
+    });
+
+    expect(
+      decodeRequestInput(decoder, new Request("http://localhost/items"), {
+        labelValues: "a.b%2Ec",
+      }),
+    ).toEqual(Either.right(["a", "b.c"]));
+
+    const malformed = decodeRequestInput(decoder, new Request("http://localhost/items"), {
+      labelValues: "a.%E0%A4%A",
+    });
+    expect(malformed._tag).toBe("Left");
+    if (malformed._tag === "Left") {
+      expect(malformed.left.issues).toEqual([
+        {
+          path: "$path.labelValues[1]",
+          message: "Expected a valid percent-encoded path segment.",
+        },
+      ]);
+    }
+  });
+
+  test("path array separators require a non-empty array configuration", () => {
+    expect(() => RequestDecoders.path("values", Decoders.string, { arraySeparator: "." })).toThrow(
+      "Path array separators require array decoding.",
+    );
+    expect(() =>
+      RequestDecoders.path("values", Decoders.array(Decoders.string), {
+        array: true,
+        arraySeparator: "",
+      }),
+    ).toThrow("Path array separators must not be empty.");
+  });
+
   test("array parameters follow their HTTP comma and explode formats", () => {
     const decoder = RequestDecoders.combine(
       [

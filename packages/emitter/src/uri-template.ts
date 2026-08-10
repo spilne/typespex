@@ -302,9 +302,6 @@ function lowerUriTemplateTextInternal(
           `label-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
         );
       }
-      if (scalarArray && exploded) {
-        return failure("exploded label path arrays are not supported");
-      }
       labelExpandedPathNames?.add(name);
       appendLiteralToken(segment, ".");
       segment.push({ kind: "parameter", name });

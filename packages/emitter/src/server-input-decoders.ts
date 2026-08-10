@@ -160,7 +160,14 @@ export function emitDecoder(
       param.param,
     );
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
-    const options = isArrayInputType(ctx, param.param.type) ? ", { array: true }" : "";
+    const optionValues: string[] = [];
+    if (isArrayInputType(ctx, param.param.type)) {
+      optionValues.push("array: true");
+      if (param.style === "label" && param.explode) {
+        optionValues.push('arraySeparator: "."');
+      }
+    }
+    const options = optionValues.length > 0 ? `, { ${optionValues.join(", ")} }` : "";
     requestEntries.push({
       name: param.param.name,
       expr: `RequestDecoders.path(${JSON.stringify(param.name)}, ${decoder}${options})`,

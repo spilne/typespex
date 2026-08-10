@@ -273,6 +273,10 @@ interface Items {
     @header("x-values") headerValues: string[],
     @cookie("choices") cookieValues: string[],
   ): void;
+
+  @route("/labels{.labelValues*}") @get readLabels(
+    @path labelValues: string[],
+  ): void;
 }
 `;
 
@@ -538,6 +542,12 @@ describe("input decoding", () => {
     expect(operations).toContain('RequestDecoders.path("itemId", Decoders.string)');
     expect(operations).toContain(
       'RequestDecoders.path("pathValues", Decoders.array(Decoders.string), { array: true })',
+    );
+    expect(operations).toContain(
+      `RequestDecoders.path("labelValues", Decoders.array(Decoders.string), {
+    array: true,
+    arraySeparator: ".",
+  })`,
     );
     expect(operations).toContain("explode: false");
     expect(operations).toContain("explode: true");
