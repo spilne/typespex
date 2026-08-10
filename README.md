@@ -44,10 +44,14 @@ The TypeSpec compatibility job tests `@typespec/compiler` and `@typespec/http` a
 It covers the declared minimum, 1.0.0, and resolves the newest stable 1.x version published by both
 packages on every run. Each pair must build the emitter, compile the representative service in
 `example/`, and typecheck its generated TypeScript. CI also compiles an integrity-pinned slice of
-the upstream `@typespec/http-specs` scenarios and typechecks every generated file. The initial
-slice covers basic body parameters, query wire names and literals, arrays, and empty models. A
-separate package-consumer job packs all public packages, validates their contents, installs the
-tarballs into a temporary npm project, and imports every public entry point outside the workspace.
+the upstream `@typespec/http-specs` scenarios with warnings treated as errors, then typechecks every
+generated file. The gate covers 35 supported scenarios across authentication, encodings, request
+bodies and parameters, response payloads, multipart bodies, wire names, collections, enums, files,
+model inheritance and visibility, property shapes, scalars, and discriminated unions. Scenarios
+that require additional TypeSpec libraries or exercise explicitly unsupported protocol features
+remain outside this gate. A separate package-consumer job packs all public packages, validates
+their contents, installs the tarballs into a temporary npm project, and imports every public entry
+point outside the workspace.
 
 Node.js support follows maintained LTS lines. CI exercises the runtime and Node adapter on the
 oldest supported version, 22.12.0, and the current supported 24.x line. A future Node major is
