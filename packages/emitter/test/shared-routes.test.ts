@@ -298,6 +298,27 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("exploded-slash-array-path-collision-api")).toEqual([]);
   });
 
+  test("rejects structurally duplicate exploded slash record expansions", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "exploded-slash-record-path-collision",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace ExplodedSlashRecordPathCollisionApi;
+
+        @route("/items{/first*}") @get op first(@path first: Record<int32>): void;
+        @route("/items{/second*}") @get op second(@path second: Record<int32>): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("ExplodedSlashRecordPathCollisionApi.first");
+    expect(diagnostics).toContain("ExplodedSlashRecordPathCollisionApi.second");
+    expect(result.listFiles("exploded-slash-record-path-collision-api")).toEqual([]);
+  });
+
   test("rejects structurally duplicate reserved path expansions", () => {
     const result = compileFixtureExpectingDiagnostics(
       "reserved-path-collision",
