@@ -40,6 +40,11 @@ model BinaryBytes {
   @body body: bytes;
 }
 
+model ImageBytes {
+  @header contentType: "Image/PNG; Profile=raw";
+  @body body: bytes;
+}
+
 model JsonBytes {
   @header contentType: "application/json";
   @body body: bytes;
@@ -60,6 +65,10 @@ op textNumber(): TextNumber;
 @route("/binary")
 @get
 op binary(): BinaryBytes;
+
+@route("/image")
+@get
+op image(): ImageBytes;
 
 @route("/json-bytes")
 @get
@@ -107,6 +116,16 @@ model BytesAsText {
   @body body: bytes;
 }
 
+model StringAsImage {
+  @header contentType: "image/png";
+  @body body: string;
+}
+
+model BytesWithMalformedMediaType {
+  @header contentType: "not-a-media-type";
+  @body body: bytes;
+}
+
 model MultipartResponse {
   @multipartBody fields: {
     files: HttpPart<File>[];
@@ -137,6 +156,14 @@ op stringBytes(): StringAsBytes;
 @get
 op bytesText(): BytesAsText;
 
+@route("/string-image")
+@get
+op stringImage(): StringAsImage;
+
+@route("/bytes-malformed-media-type")
+@get
+op bytesMalformedMediaType(): BytesWithMalformedMediaType;
+
 @route("/multipart")
 @get
 op multipart(): MultipartResponse;
@@ -151,6 +178,7 @@ describe("response media classification", () => {
     expect(operations).toContain(`contentType: "application/problem+json; charset=utf-8"`);
     expect(operations).toContain(`contentType: "Text/Plain; Charset=utf-8"`);
     expect(operations).toContain(`contentType: "Application/Octet-Stream"`);
+    expect(operations).toContain(`contentType: "Image/PNG; Profile=raw"`);
     expect(operations).toContain(`kind: "text"`);
     expect(operations).toContain(`kind: "bytes"`);
     result.typecheck("response-media-api");
@@ -163,6 +191,7 @@ describe("response media classification", () => {
       vendorJson: () => ({ body: { ok: false } }),
       textNumber: () => ({ body: 42 }),
       binary: () => ({ body: new Uint8Array([65, 66]) }),
+      image: () => ({ body: new Uint8Array([137, 80, 78, 71]) }),
       jsonBytes: () => ({ body: new Uint8Array([1, 2]) }),
     } as any);
 
@@ -183,6 +212,10 @@ describe("response media classification", () => {
     expect(binary.headers.get("content-type")).toBe("Application/Octet-Stream");
     expect(await binary.text()).toBe("AB");
 
+    const image = await router.handle(new Request("http://localhost/image"));
+    expect(image.headers.get("content-type")).toBe("Image/PNG; Profile=raw");
+    expect(new Uint8Array(await image.arrayBuffer())).toEqual(new Uint8Array([137, 80, 78, 71]));
+
     const jsonBytes = await router.handle(new Request("http://localhost/json-bytes"));
     expect(jsonBytes.headers.get("content-type")).toBe("application/json");
     expect(await jsonBytes.json()).toBe("AQI=");
@@ -199,6 +232,8 @@ describe("response media classification", () => {
     expect(diagnostics).toContain("application/notjson");
     expect(diagnostics).toContain("application/jsonp");
     expect(diagnostics).toContain("application/+json");
+    expect(diagnostics).toContain("image/png");
+    expect(diagnostics).toContain("not-a-media-type");
     expect(diagnostics).toContain("unsupported-response-body");
     expect(diagnostics).toContain("text responses require");
     expect(diagnostics).toContain("binary responses require");

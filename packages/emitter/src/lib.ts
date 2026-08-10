@@ -90,7 +90,7 @@ export const $lib = createTypeSpecLibrary({
     "unsupported-response-content-type": {
       severity: "error",
       messages: {
-        default: paramMessage`Unsupported HTTP response content type "${"contentType"}" for operation "${"operationName"}". Supported types: application/json, structured +json, text/*, application/octet-stream.`,
+        default: paramMessage`Unsupported HTTP response content type "${"contentType"}" for operation "${"operationName"}". Supported types: application/json, structured +json, text/*, application/octet-stream, or any valid media type with a bytes body.`,
       },
     },
     "unsupported-response-status-code": {
