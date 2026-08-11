@@ -122,6 +122,9 @@ namespace UriTemplateApi;
 @route("/label-record/record{.param}")
 @get op labelRecord(@path param: Record<int32>): void;
 
+@route("/label-record-segment/{.param}")
+@get op labelRecordSegment(@path param: Record<int32>): void;
+
 @route("/matrix/item{;name}")
 @get op matrix(@path name: string): void;
 
@@ -183,6 +186,9 @@ namespace InvalidUriTemplateApi;
 
 @route("/label-record-explode/item{.x*}")
 @get op explodedRecordLabel(@path x: Record<string>): void;
+
+@route("/label-record-shared/{left}:{.right}")
+@get op sharedRecordLabel(@path left: string, @path right: Record<int32>): void;
 
 @route("/label-multiple/item{.x,y}")
 @get op multipleLabel(@path x: string, @path y: string): void;
@@ -528,6 +534,7 @@ describe("URI-template lowering", () => {
       labelArray: capture("labelArray"),
       labelArrayExplode: capture("labelArrayExplode"),
       labelRecord: capture("labelRecord"),
+      labelRecordSegment: capture("labelRecordSegment"),
       matrix: capture("matrix"),
       matrixExplode: capture("matrixExplode"),
       matrixArray: capture("matrixArray"),
@@ -790,6 +797,18 @@ describe("URI-template lowering", () => {
     expect(received.get("labelRecord")).toEqual({ param: {} });
 
     expect(
+      (await router.handle(new Request("http://localhost/label-record-segment/.a,1"))).status,
+    ).toBe(204);
+    expect(received.get("labelRecordSegment")).toEqual({ param: { a: 1 } });
+    expect(
+      (await router.handle(new Request("http://localhost/label-record-segment/"))).status,
+    ).toBe(204);
+    expect(received.get("labelRecordSegment")).toEqual({ param: {} });
+    expect((await router.handle(new Request("http://localhost/label-record-segment"))).status).toBe(
+      404,
+    );
+
+    expect(
       (await router.handle(new Request("http://localhost/matrix/item;name=a%2Fb"))).status,
     ).toBe(204);
     expect(received.get("matrix")).toEqual({ name: "a/b" });
@@ -859,6 +878,9 @@ describe("URI-template lowering", () => {
       'label-expanded path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     );
     expect(diagnostics).toContain("exploded label record expansions are not supported");
+    expect(diagnostics).toContain(
+      "standard label record expansions must not share a path segment with another path variable",
+    );
     expect(diagnostics).toContain("label expansions must contain exactly one path variable");
     expect(diagnostics).toContain('matrix-expanded path variable "x" must be required');
     expect(diagnostics).toContain(
@@ -1185,6 +1207,21 @@ describe("URI-template lowering", () => {
     ).toEqual({
       ok: false,
       reason: "an empty label record expansion would produce an unsupported empty path segment",
+    });
+    expect(
+      lowerUriTemplateText(
+        "/pairs/{left}:{.right}",
+        new Set(["left", "right"]),
+        query,
+        new Set(["left"]),
+        new Set(),
+        new Set(),
+        new Set(["right"]),
+      ),
+    ).toEqual({
+      ok: false,
+      reason:
+        "standard label record expansions must not share a path segment with another path variable",
     });
     expect(
       lowerUriTemplateText(

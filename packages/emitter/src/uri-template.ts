@@ -476,6 +476,19 @@ function lowerUriTemplateTextInternal(
     return failure("the path ends in an empty segment");
   }
 
+  for (const candidate of segments) {
+    const hasEmptyLabelRecord = candidate.some((token) => token.kind === "empty-label-record");
+    const pathVariableCount = candidate.filter(
+      (token) =>
+        token.kind === "parameter" || token.kind === "rest" || token.kind === "empty-label-record",
+    ).length;
+    if (hasEmptyLabelRecord && pathVariableCount > 1) {
+      return failure(
+        "standard label record expansions must not share a path segment with another path variable",
+      );
+    }
+  }
+
   const expanded = expandEmptyLabelRecordPatterns(
     segments,
     trailingSlash,
