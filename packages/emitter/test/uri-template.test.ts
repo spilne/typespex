@@ -1210,6 +1210,65 @@ describe("URI-template lowering", () => {
     });
     expect(
       lowerUriTemplateText(
+        "/items{.rec}{/opt}",
+        new Set(["rec", "opt"]),
+        query,
+        new Set(["opt"]),
+        new Set(["opt"]),
+        new Set(),
+        new Set(["rec"]),
+      ),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/items{.rec}{/opt}",
+        routePatterns: [
+          {
+            segments: [
+              [
+                { kind: "literal", value: "items." },
+                { kind: "parameter", name: "rec" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          {
+            segments: [
+              [
+                { kind: "literal", value: "items." },
+                { kind: "parameter", name: "rec" },
+              ],
+              [{ kind: "parameter", name: "opt" }],
+            ],
+            trailingSlash: false,
+          },
+          {
+            segments: [[{ kind: "literal", value: "items" }]],
+            trailingSlash: false,
+          },
+          {
+            segments: [[{ kind: "literal", value: "items" }], [{ kind: "parameter", name: "opt" }]],
+            trailingSlash: false,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText(
+        "/{.rec}{/opt}",
+        new Set(["rec", "opt"]),
+        query,
+        new Set(["opt"]),
+        new Set(["opt"]),
+        new Set(),
+        new Set(["rec"]),
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "an empty label record expansion would produce an unsupported empty path segment",
+    });
+    expect(
+      lowerUriTemplateText(
         "/pairs/{left}:{.right}",
         new Set(["left", "right"]),
         query,
