@@ -248,6 +248,31 @@ describe("http request decoders (sync)", () => {
     );
   });
 
+  test("omitted empty path composites decode without accepting an explicit empty capture", () => {
+    const recordDecoder = RequestDecoders.path("values", Decoders.record(Decoders.integer), {
+      emptyComposite: true,
+      record: true,
+    });
+    const arrayDecoder = RequestDecoders.path("values", Decoders.array(Decoders.string), {
+      array: true,
+      emptyComposite: true,
+    });
+    const request = new Request("http://localhost/items");
+
+    expect(decodeRequestInput(recordDecoder, request, {})).toEqual(Either.right({}));
+    expect(decodeRequestInput(arrayDecoder, request, {})).toEqual(Either.right([]));
+    expect(decodeRequestInput(recordDecoder, request, { values: "" })).toEqual(
+      Either.left(
+        new ValidationError([
+          {
+            path: "$path.values",
+            message: "Expected an empty composite path expansion to be omitted.",
+          },
+        ]),
+      ),
+    );
+  });
+
   test("path array separators require a non-empty array configuration", () => {
     expect(() => RequestDecoders.path("values", Decoders.string, { arraySeparator: "." })).toThrow(
       "Path array separators require array decoding.",
@@ -278,6 +303,9 @@ describe("http request decoders (sync)", () => {
         recordSeparator: "",
       }),
     ).toThrow("Path record separators must not be empty.");
+    expect(() => RequestDecoders.path("value", Decoders.string, { emptyComposite: true })).toThrow(
+      "Empty path composite handling requires array or record decoding.",
+    );
   });
 
   test("array parameters follow their HTTP comma and explode formats", () => {

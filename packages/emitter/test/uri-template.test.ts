@@ -428,18 +428,27 @@ describe("URI-template lowering", () => {
       ],
       trailingSlash: false,
     });
-    expect(emittedRoutePattern(operations, "/label-record/record{.param}")).toEqual({
-      segments: [
-        [{ kind: "literal", value: "label-record" }],
-        [
-          { kind: "literal", value: "record." },
-          { kind: "parameter", name: "param" },
+    expect(emittedRoutePatterns(operations, "/label-record/record{.param}")).toEqual([
+      {
+        segments: [
+          [{ kind: "literal", value: "label-record" }],
+          [
+            { kind: "literal", value: "record." },
+            { kind: "parameter", name: "param" },
+          ],
         ],
-      ],
-      trailingSlash: false,
-    });
+        trailingSlash: false,
+      },
+      {
+        segments: [
+          [{ kind: "literal", value: "label-record" }],
+          [{ kind: "literal", value: "record" }],
+        ],
+        trailingSlash: false,
+      },
+    ]);
     expect(operations).toMatch(
-      /labelRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true \},\s*\)\.map/,
+      /labelRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, emptyComposite: true \},\s*\)\.map/,
     );
     expect(emittedRoutePattern(operations, "/matrix/item{;name}")).toEqual({
       segments: [
@@ -773,12 +782,12 @@ describe("URI-template lowering", () => {
       (await router.handle(new Request("http://localhost/label-record/record.a,1,%61,2"))).status,
     ).toBe(400);
     expect((await router.handle(new Request("http://localhost/label-record/record."))).status).toBe(
+      400,
+    );
+    expect((await router.handle(new Request("http://localhost/label-record/record"))).status).toBe(
       204,
     );
     expect(received.get("labelRecord")).toEqual({ param: {} });
-    expect((await router.handle(new Request("http://localhost/label-record/record"))).status).toBe(
-      404,
-    );
 
     expect(
       (await router.handle(new Request("http://localhost/matrix/item;name=a%2Fb"))).status,
@@ -1137,8 +1146,45 @@ describe("URI-template lowering", () => {
             ],
             trailingSlash: false,
           },
+          {
+            segments: [
+              [{ kind: "literal", value: "label" }],
+              [{ kind: "literal", value: "record" }],
+            ],
+            trailingSlash: false,
+          },
         ],
       },
+    });
+    expect(
+      lowerUriTemplateText("/label/{.x}", path, query, new Set(), new Set(), new Set(), path),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/label/{.x}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "label" }],
+              [
+                { kind: "literal", value: "." },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          {
+            segments: [[{ kind: "literal", value: "label" }]],
+            trailingSlash: true,
+          },
+        ],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/label/{.x}/tail", path, query, new Set(), new Set(), new Set(), path),
+    ).toEqual({
+      ok: false,
+      reason: "an empty label record expansion would produce an unsupported empty path segment",
     });
     expect(
       lowerUriTemplateText(

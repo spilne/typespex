@@ -39,6 +39,8 @@ export interface PathParameterDecodeOptions extends RequestParameterDecodeOption
   readonly record?: boolean;
   /** Raw separator between record components. Defaults to a comma. */
   readonly recordSeparator?: string;
+  /** Treat an omitted RFC 6570 composite expansion as empty and reject an explicit empty capture. */
+  readonly emptyComposite?: boolean;
 }
 
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
@@ -84,19 +86,28 @@ export function requiredPath<A>(
   if (options.recordSeparator === "") {
     throw new TypeError("Path record separators must not be empty.");
   }
+  if (options.emptyComposite && !options.array && !options.record) {
+    throw new TypeError("Empty path composite handling requires array or record decoding.");
+  }
   const arraySeparator = options.arraySeparator ?? ",";
   const recordSeparator = options.recordSeparator ?? ",";
   const prefix = `$path.${name}`;
   return createRequestDecoder((input) => {
     const raw = input.pathParams[name];
     const decodedValue: DecoderResult<string | string[] | Record<string, string>> | undefined =
-      raw === undefined
-        ? undefined
-        : options.record
-          ? uriDecodeRecord(raw, recordSeparator, options.explode === true)
-          : options.array
-            ? uriDecodeArray(raw.split(arraySeparator))
-            : uriDecode(raw);
+      options.emptyComposite && raw === undefined
+        ? options.record
+          ? uriDecodeRecord("", recordSeparator, options.explode === true)
+          : Either.right([])
+        : options.emptyComposite && raw === ""
+          ? fail("", "Expected an empty composite path expansion to be omitted.")
+          : raw === undefined
+            ? undefined
+            : options.record
+              ? uriDecodeRecord(raw, recordSeparator, options.explode === true)
+              : options.array
+                ? uriDecodeArray(raw.split(arraySeparator))
+                : uriDecode(raw);
     if (decodedValue !== undefined && isLeft(decodedValue)) {
       return prefixIssues(decodedValue, prefix);
     }

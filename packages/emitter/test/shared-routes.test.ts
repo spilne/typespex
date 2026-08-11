@@ -456,6 +456,7 @@ describe("shared HTTP routes", () => {
 
         @route("/items{.values}") @get op label(@path values: Record<int32>): void;
         @route("/items.{id}") @get op simple(@path id: string): void;
+        @route("/items") @get op empty(): void;
       `,
     );
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
@@ -463,6 +464,7 @@ describe("shared HTTP routes", () => {
     expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
     expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.label");
     expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.simple");
+    expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.empty");
     expect(result.listFiles("standard-label-record-path-collision-api")).toEqual([]);
   });
 
