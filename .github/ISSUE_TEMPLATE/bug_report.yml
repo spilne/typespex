@@ -1,0 +1,71 @@
+name: Bug report
+description: Report reproducible behavior that differs from the TypeSpec HTTP contract
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include credentials, private URLs, customer data,
+        personal filesystem paths, or complete environment dumps. Report vulnerabilities through
+        the private security link instead of this form.
+
+  - type: input
+    id: revision
+    attributes:
+      label: TypeSpex revision
+      description: Provide the commit SHA you tested. No public package version exists yet.
+      placeholder: 0123456789abcdef
+    validations:
+      required: true
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: Provide the TypeSpec, TypeScript, Bun or Node.js, and adapter versions involved.
+      placeholder: TypeSpec 1.14.0, TypeScript 5.9.3, Bun 1.3.14
+    validations:
+      required: true
+
+  - type: textarea
+    id: service
+    attributes:
+      label: Minimal TypeSpec service
+      description: Reduce the report to the smallest service that reproduces the behavior.
+      render: typespec
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the exact safe commands and request required to reproduce the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Describe the generated output, diagnostic, response, or runtime behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Explain the behavior required by the TypeSpec contract.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Report safety
+      options:
+        - label: I removed credentials, private URLs, customer data, and personal paths.
+          required: true
+        - label: This report does not disclose a security vulnerability.
+          required: true
