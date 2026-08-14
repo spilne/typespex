@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose additional TypeSpec HTTP behavior or a project capability
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the TypeSpec contract and user outcome rather than only a preferred implementation.
+        Do not include private specifications, customer data, credentials, or personal paths.
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What service contract or workflow cannot be represented today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: typespec
+    attributes:
+      label: Representative TypeSpec
+      description: Provide a minimal public example when the request concerns TypeSpec behavior.
+      render: typespec
+    validations:
+      required: false
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the generated contract and runtime behavior you expect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain current workarounds and why they are insufficient.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: The example contains no credentials, private specifications, customer data, or personal paths.
+          required: true
