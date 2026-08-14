@@ -7,6 +7,11 @@ Bun, Node.js, Express, or Hono without handling HTTP parsing in each operation.
 
 The project is server-side only. It does not generate clients.
 
+> [!IMPORTANT]
+> TypeSpex is under active pre-release development. The `@typespex/*` packages are not published
+> to npm. Evaluate the current implementation from a source checkout; the package workflow below
+> is an API preview, not an available installation path.
+
 ## How It Fits Together
 
 ```text
@@ -62,7 +67,30 @@ end-of-life line is removed during the next compatibility review. The ranges and
 reviewed at each Node LTS transition, while new stable TypeSpec 1.x releases enter the dynamic
 compatibility job automatically.
 
-## Quickstart
+## Try It From Source
+
+The repository example exercises generation, typechecking, routing, validation, and a complete Bun
+hosting boundary against the workspace packages:
+
+```sh
+git clone https://github.com/spilne/typespex.git
+cd typespex
+bun install --frozen-lockfile
+bun run build
+bun run generate:example
+bun run --filter typespex-example typecheck
+bun test example/e2e.test.ts
+```
+
+Generated contracts are written to `example/generated/pet-store/`; the example application and
+end-to-end test consume those files directly.
+
+## Package API Preview
+
+The following sections document the intended consumer workflow after the packages become
+available. The installation commands are shown for API review and do not work before publication.
+
+### Planned installation
 
 Install the compiler, emitter, runtime, and one hosting adapter:
 
