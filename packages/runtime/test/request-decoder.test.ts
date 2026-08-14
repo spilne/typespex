@@ -257,10 +257,19 @@ describe("http request decoders (sync)", () => {
       array: true,
       emptyComposite: true,
     });
+    const optionalRecordDecoder = RequestDecoders.path(
+      "values",
+      Decoders.record(Decoders.integer).optional(),
+      {
+        emptyComposite: true,
+        record: true,
+      },
+    );
     const request = new Request("http://localhost/items");
 
     expect(decodeRequestInput(recordDecoder, request, {})).toEqual(Either.right({}));
     expect(decodeRequestInput(arrayDecoder, request, {})).toEqual(Either.right([]));
+    expect(decodeRequestInput(optionalRecordDecoder, request, {})).toEqual(Either.right({}));
     expect(decodeRequestInput(recordDecoder, request, { values: "" })).toEqual(
       Either.left(
         new ValidationError([
