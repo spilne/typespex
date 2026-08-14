@@ -45,11 +45,12 @@ It covers the declared minimum, 1.0.0, and resolves the newest stable 1.x versio
 packages on every run. Each pair must build the emitter, compile the representative service in
 `example/`, and typecheck its generated TypeScript. CI also compiles an integrity-pinned slice of
 the upstream `@typespec/http-specs` scenarios with warnings treated as errors, then typechecks every
-generated file. The gate covers 43 supported scenarios across authentication, encodings, request
-bodies and parameters, response payloads, multipart bodies, wire names, collections, enums, files,
-model inheritance and visibility, property shapes, scalars, and discriminated unions. Scenarios
-that require additional TypeSpec libraries or exercise explicitly unsupported protocol features
-remain outside this gate. A separate package-consumer job packs all public packages, validates
+generated file. The gate covers the supported scenarios listed in
+`scripts/check-http-conformance.mjs` across authentication, encodings, request bodies and
+parameters, response payloads, multipart bodies, wire names, collections, enums, files, model
+inheritance and visibility, property shapes, scalars, and discriminated unions. Scenarios that
+require additional TypeSpec libraries or exercise explicitly unsupported protocol features remain
+outside this gate. A separate package-consumer job packs all public packages, validates
 their contents, installs the tarballs into a temporary npm project, and imports every public entry
 point outside the workspace.
 
