@@ -9,6 +9,10 @@ export type RoutePatternToken =
   | { readonly kind: "parameter"; readonly name: string }
   | { readonly kind: "rest"; readonly name: string };
 
+type ParsedRoutePatternToken =
+  | RoutePatternToken
+  | { readonly kind: "empty-label-record"; readonly name: string };
+
 export interface RoutePattern {
   readonly segments: readonly (readonly RoutePatternToken[])[];
   readonly trailingSlash: boolean;
@@ -155,8 +159,8 @@ function lowerUriTemplateTextInternal(
     return failure("the template must begin with '/'");
   }
 
-  const segments: RoutePatternToken[][] = [];
-  let segment: RoutePatternToken[] = [];
+  const segments: ParsedRoutePatternToken[][] = [];
+  let segment: ParsedRoutePatternToken[] = [];
   let leadingSlashSeen = false;
   let queryStarted = false;
   let pathEnd = template.length;
@@ -337,17 +341,25 @@ function lowerUriTemplateTextInternal(
       }
       const name = parsed.names[0]!;
       const scalarArray = scalarArrayPathNames.has(name);
+      const scalarRecord = scalarRecordPathNames.has(name);
       if (optionalPathNames.has(name)) {
         return failure(`label-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name) && !scalarArray) {
+      if (!scalarPathNames.has(name) && !scalarArray && !scalarRecord) {
         return failure(
-          `label-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
+          `label-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
       }
+      if (scalarRecord && exploded) {
+        return failure("exploded label record expansions are not supported");
+      }
       labelExpandedPathNames?.add(name);
-      appendLiteralToken(segment, ".");
-      segment.push({ kind: "parameter", name });
+      if (scalarRecord) {
+        segment.push({ kind: "empty-label-record", name });
+      } else {
+        appendLiteralToken(segment, ".");
+        segment.push({ kind: "parameter", name });
+      }
       cursor = closing.index + 1;
       continue;
     }
@@ -465,8 +477,29 @@ function lowerUriTemplateTextInternal(
   }
 
   for (const candidate of segments) {
-    const ambiguity = ambiguousSegmentReason(candidate, scalarPathNames);
-    if (ambiguity) return failure(ambiguity);
+    const hasEmptyLabelRecord = candidate.some((token) => token.kind === "empty-label-record");
+    const pathVariableCount = candidate.filter(
+      (token) =>
+        token.kind === "parameter" || token.kind === "rest" || token.kind === "empty-label-record",
+    ).length;
+    if (hasEmptyLabelRecord && pathVariableCount > 1) {
+      return failure(
+        "standard label record expansions must not share a path segment with another path variable",
+      );
+    }
+  }
+
+  const expanded = expandEmptyLabelRecordPatterns(
+    segments,
+    trailingSlash,
+    optionalSlashParameter !== undefined,
+  );
+  if (!expanded.ok) return expanded;
+  for (const pattern of expanded.patterns) {
+    for (const candidate of pattern.segments) {
+      const ambiguity = ambiguousSegmentReason(candidate, scalarPathNames);
+      if (ambiguity) return failure(ambiguity);
+    }
   }
   for (const pathName of pathNames) {
     if (!seenPathVariables.has(pathName)) {
@@ -487,16 +520,79 @@ function lowerUriTemplateTextInternal(
       path,
       routePatterns:
         optionalSlashParameter === undefined
-          ? [{ segments, trailingSlash }]
-          : [
-              { segments, trailingSlash: false },
+          ? expanded.patterns
+          : expanded.patterns.flatMap((pattern) => [
+              { ...pattern, trailingSlash: false },
               {
-                segments: [...segments, [{ kind: "parameter", name: optionalSlashParameter }]],
+                segments: [
+                  ...pattern.segments,
+                  [{ kind: "parameter" as const, name: optionalSlashParameter }],
+                ],
                 trailingSlash: false,
               },
-            ],
+            ]),
     },
   };
+}
+
+function expandEmptyLabelRecordPatterns(
+  parsedSegments: readonly (readonly ParsedRoutePatternToken[])[],
+  trailingSlash: boolean,
+  followedByOptionalSlash: boolean,
+):
+  | { readonly ok: true; readonly patterns: readonly RoutePattern[] }
+  | { readonly ok: false; readonly reason: string } {
+  let variants: RoutePatternToken[][][] = [[]];
+
+  for (const parsedSegment of parsedSegments) {
+    let segmentVariants: RoutePatternToken[][] = [[]];
+    for (const token of parsedSegment) {
+      if (token.kind !== "empty-label-record") {
+        for (const candidate of segmentVariants) appendRouteToken(candidate, token);
+        continue;
+      }
+
+      const next: RoutePatternToken[][] = [];
+      for (const candidate of segmentVariants) {
+        const present = [...candidate];
+        appendLiteralToken(present, ".");
+        present.push({ kind: "parameter", name: token.name });
+        next.push(present, [...candidate]);
+      }
+      segmentVariants = next;
+    }
+
+    variants = variants.flatMap((variant) =>
+      segmentVariants.map((candidate) => [...variant, candidate]),
+    );
+  }
+
+  const patterns: RoutePattern[] = [];
+  const seen = new Set<string>();
+  for (const variant of variants) {
+    let segments = variant;
+    let variantTrailingSlash = trailingSlash;
+    const emptySegment = segments.findIndex((candidate) => candidate.length === 0);
+    if (emptySegment !== -1) {
+      const finalEmptySegment = emptySegment === segments.length - 1;
+      if (!finalEmptySegment || trailingSlash || followedByOptionalSlash) {
+        return failure(
+          "an empty label record expansion would produce an unsupported empty path segment",
+        );
+      }
+      segments = segments.slice(0, -1);
+      variantTrailingSlash = true;
+    }
+
+    const pattern = { segments, trailingSlash: variantTrailingSlash };
+    const key = JSON.stringify(pattern);
+    if (!seen.has(key)) {
+      seen.add(key);
+      patterns.push(pattern);
+    }
+  }
+
+  return { ok: true, patterns };
 }
 
 function findExpressionEnd(
@@ -635,13 +731,18 @@ function ambiguousSegmentReason(
   return undefined;
 }
 
-function appendLiteralToken(tokens: RoutePatternToken[], value: string): void {
+function appendLiteralToken(tokens: ParsedRoutePatternToken[], value: string): void {
   const previous = tokens[tokens.length - 1];
   if (previous?.kind === "literal") {
     tokens[tokens.length - 1] = { kind: "literal", value: previous.value + value };
   } else {
     tokens.push({ kind: "literal", value });
   }
+}
+
+function appendRouteToken(tokens: RoutePatternToken[], token: RoutePatternToken): void {
+  if (token.kind === "literal") appendLiteralToken(tokens, token.value);
+  else tokens.push(token);
 }
 
 function isScalarWireType(type: Type): boolean {

@@ -445,6 +445,29 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("standard-label-array-path-collision-api")).toEqual([]);
   });
 
+  test("rejects collisions against standard label record expansions", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "standard-label-record-path-collision",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace StandardLabelRecordPathCollisionApi;
+
+        @route("/items{.values}") @get op label(@path values: Record<int32>): void;
+        @route("/items.{id}") @get op simple(@path id: string): void;
+        @route("/items") @get op empty(): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.label");
+    expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.simple");
+    expect(diagnostics).toContain("StandardLabelRecordPathCollisionApi.empty");
+    expect(result.listFiles("standard-label-record-path-collision-api")).toEqual([]);
+  });
+
   test("rejects collisions against exploded label array expansions", () => {
     const result = compileFixtureExpectingDiagnostics(
       "exploded-label-array-path-collision",
