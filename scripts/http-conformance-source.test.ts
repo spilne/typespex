@@ -51,6 +51,23 @@ model await { name: string; }
 @modelNameScenario("await") op withAwaitModel(@body body: await): void;
 `;
 
+const serviceScenarioSource = `
+import "@typespec/http";
+import "@typespec/spector";
+
+using Http;
+using Spector;
+
+@service(#{ title: "Existing service" })
+@route("/server/endpoint/not-defined")
+namespace Server.Endpoint.NotDefined;
+
+@scenario
+@scenarioDoc("A service without an explicit server endpoint.")
+@head
+op valid(): OkResponse;
+`;
+
 describe("TypeSpec HTTP conformance source transform", () => {
   test("removes complete structured scenario decorator applications", () => {
     const transformed = removeScenarioRunnerMetadata(structuredScenarioSource, "encode/structured");
@@ -80,5 +97,26 @@ describe("TypeSpec HTTP conformance source transform", () => {
     expect(transformed).not.toContain("NameScenario");
     expect(transformed.match(/@route\("\/await"\)/g)).toHaveLength(3);
     expect(transformed).toContain('@route("/special-words")');
+  });
+
+  test("preserves scenarios that already declare their service", () => {
+    const transformed = removeScenarioRunnerMetadata(
+      serviceScenarioSource,
+      "server/endpoint/not-defined",
+    );
+
+    expect(transformed).not.toContain("@typespec/spector");
+    expect(transformed).not.toContain("using Spector");
+    expect(transformed).not.toContain("@scenario");
+    expect(transformed).toContain('@service(#{ title: "Existing service" })');
+    expect(transformed).toContain('@route("/server/endpoint/not-defined")');
+
+    const missingService = serviceScenarioSource.replace(
+      '@service(#{ title: "Existing service" })\n',
+      "",
+    );
+    expect(() =>
+      removeScenarioRunnerMetadata(missingService, "server/endpoint/not-defined"),
+    ).toThrow("Expected @scenarioService or @service in server/endpoint/not-defined.");
   });
 });
