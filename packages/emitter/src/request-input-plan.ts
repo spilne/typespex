@@ -9,6 +9,7 @@ import {
   getRequestBodyProjection,
   payloadModelProperties,
 } from "./payload-context.js";
+import { getHandlerRequestParameters } from "./request-streams.js";
 
 export type RequestBodyInputPlan =
   /**
@@ -32,7 +33,8 @@ export interface RequestInputPlan {
  * the latter are the keys that can collide in the generated TypeScript object.
  */
 export function getRequestInputPlan(ctx: EmitterCtx, op: HttpOperation): RequestInputPlan {
-  const requestPropertyNames = op.parameters.parameters.map((param) => param.param.name);
+  const requestParameters = getHandlerRequestParameters(ctx, op);
+  const requestPropertyNames = requestParameters.map((param) => param.param.name);
   const duplicateRequestPropertyNames = findDuplicates(requestPropertyNames);
   const body = op.parameters.body;
 
@@ -78,12 +80,11 @@ export function reportRequestInputCollisions(
 ): void {
   for (const op of operations) {
     const plan = getRequestInputPlan(ctx, op);
+    const requestParameters = getHandlerRequestParameters(ctx, op);
     for (const name of plan.duplicateRequestPropertyNames) {
       const locations = [
         ...new Set(
-          op.parameters.parameters
-            .filter((param) => param.param.name === name)
-            .map((param) => param.type),
+          requestParameters.filter((param) => param.param.name === name).map((param) => param.type),
         ),
       ].join(", ");
       $lib.reportDiagnostic(ctx.program, {
@@ -94,8 +95,7 @@ export function reportRequestInputCollisions(
           locations,
         },
         target:
-          op.parameters.parameters.filter((param) => param.param.name === name)[1]?.param ??
-          op.operation,
+          requestParameters.filter((param) => param.param.name === name)[1]?.param ?? op.operation,
       });
     }
   }

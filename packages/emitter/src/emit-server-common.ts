@@ -63,6 +63,7 @@ import {
 } from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
+import { getHandlerRequestParameters, getJsonlRequestStream } from "./request-streams.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
 import { isEntityLike } from "./type-guards.js";
 import {
@@ -297,7 +298,7 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
   const inputPlan = getRequestInputPlan(ctx, op);
 
-  for (const param of op.parameters.parameters) {
+  for (const param of getHandlerRequestParameters(ctx, op)) {
     parts.push(
       tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
         optional: param.param.optional,
@@ -308,6 +309,22 @@ export function buildInputType(ctx: EmitterCtx, op: HttpOperation): string {
   if (op.parameters.body) {
     const body = op.parameters.body;
     const hasNonBodyInput = parts.length > 0;
+    const requestStream = getJsonlRequestStream(ctx, op);
+
+    if (requestStream) {
+      const projection = getRequestBodyProjection(ctx, op);
+      const streamType = `AsyncIterable<${payloadTypeToTs(
+        ctx,
+        requestStream.streamType,
+        projection,
+      )}>`;
+      if (!hasNonBodyInput) return streamType;
+
+      const propertyName =
+        inputPlan.body?.placement === "wrapped" ? inputPlan.body.propertyName : "body";
+      parts.push(tsPropertyDeclaration(propertyName, streamType));
+      return `{ ${parts.join("; ")} }`;
+    }
 
     // Multipart body — build type from parts
     if ("bodyKind" in body && body.bodyKind === "multipart" && "parts" in body) {

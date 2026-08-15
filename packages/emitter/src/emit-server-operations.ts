@@ -46,7 +46,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   lines.push("  emptyHints,");
   lines.push("  ResponseEncoders,");
   if (usesJsonSerializers) lines.push("  JsonSerializers,");
-  for (const name of getServerInputDecoderImports()) {
+  for (const name of getServerInputDecoderImports(ctx, httpOperations)) {
     lines.push(`  ${name},`);
   }
   lines.push('} from "@typespex/runtime/server";');

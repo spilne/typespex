@@ -4,8 +4,10 @@ import {
   createHttpRouter,
   Decoders,
   decodeJsonlBody,
+  decodeRequestInputAndJsonlBody,
   emptyHints,
   RequestBodyTooLargeError,
+  RequestDecoders,
   type ServerOperation,
   UnsupportedMediaTypeError,
   ValidationError,
@@ -236,6 +238,58 @@ describe("JSONL request decoding", () => {
     expect(source.pulls()).toBe(1);
     expect(source.request.body!.locked).toBe(false);
     expect(source.canceled()).toBe(false);
+  });
+
+  test("combines request parameters with the lazy body and preserves boundary precedence", async () => {
+    const requestDecoder = RequestDecoders.path("id", Decoders.integer).map((id) => ({ id }));
+    const itemDecoder = Decoders.object<{ name: string }>({ name: Decoders.string });
+    const source = streamingRequest([new TextEncoder().encode('{"name":"first"}\n')]);
+    const combined = decodeRequestInputAndJsonlBody(
+      requestDecoder,
+      itemDecoder,
+      "body",
+      source.request,
+      { id: "42" },
+    );
+
+    expect(combined._tag).toBe("Right");
+    if (combined._tag === "Right") {
+      expect(combined.right.id).toBe(42);
+      const items: Array<{ name: string }> = [];
+      for await (const item of combined.right.body) items.push(item);
+      expect(items).toEqual([{ name: "first" }]);
+    }
+
+    const invalid = decodeRequestInputAndJsonlBody(
+      requestDecoder,
+      itemDecoder,
+      "body",
+      new Request("http://localhost/items", {
+        method: "POST",
+        headers: { "content-type": "application/jsonl" },
+      }),
+      { id: "invalid" },
+    );
+    expect(invalid._tag).toBe("Left");
+    if (invalid._tag === "Left") {
+      expect(invalid.left).toBeInstanceOf(ValidationError);
+      expect((invalid.left as ValidationError).issues).toEqual([
+        { path: "$path.id", message: "Expected a finite number." },
+        { path: "$body", message: "Required body is missing." },
+      ]);
+    }
+
+    const unsupported = decodeRequestInputAndJsonlBody(
+      requestDecoder,
+      itemDecoder,
+      "body",
+      streamingRequest([new TextEncoder().encode("{}\n")], "application/json").request,
+      { id: "invalid" },
+    );
+    expect(unsupported._tag).toBe("Left");
+    if (unsupported._tag === "Left") {
+      expect(unsupported.left).toBeInstanceOf(UnsupportedMediaTypeError);
+    }
   });
 
   test("surfaces lazy item and size failures through the HTTP router", async () => {
