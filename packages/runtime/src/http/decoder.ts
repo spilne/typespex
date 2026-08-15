@@ -23,6 +23,7 @@ import {
   ValidationError,
   Validators,
 } from "./validation.js";
+import { parseXmlDocument } from "./xml-parser.js";
 
 /** Internal decoder result — lightweight issue array, no Error allocation. */
 export type DecoderResult<A> = EitherT<readonly ValidationIssue[], A>;
@@ -1391,7 +1392,7 @@ export type BodyDecodeError =
   | UnsupportedMediaTypeError
   | RequestBodyTooLargeError;
 
-export type BodyMediaKind = "json" | "form" | "multipart" | "file" | "text" | "binary";
+export type BodyMediaKind = "json" | "xml" | "form" | "multipart" | "file" | "text" | "binary";
 
 /** Decoders generated for the wire representations accepted by one operation. */
 export type BodyDecoderMap<A> = Readonly<Partial<Record<BodyMediaKind, Decoder<A>>>>;
@@ -2002,6 +2003,10 @@ function parseTextBody(request: Request): Promise<string> {
   return request.text();
 }
 
+async function parseXmlBody(request: Request): Promise<unknown> {
+  return parseXmlDocument(await request.text());
+}
+
 async function parseBinaryBody(request: Request): Promise<Uint8Array> {
   return new Uint8Array(await request.arrayBuffer());
 }
@@ -2070,6 +2075,7 @@ const BODY_PARSERS: Readonly<
   >
 > = {
   json: { parse: parseJsonBody, failureMessage: "Body must contain valid JSON." },
+  xml: { parse: parseXmlBody, failureMessage: "Body must contain valid XML." },
   form: { parse: parseFormBody, failureMessage: "Body must contain valid form data." },
   multipart: {
     parse: parseMultipartBody,
@@ -2085,6 +2091,14 @@ function bodyMediaKind(contentType: string | null): BodyMediaKind {
   if (!mediaType || mediaType === "application/json" || mediaType.endsWith("+json")) {
     return "json";
   }
+  const subtype = mediaType.slice(mediaType.indexOf("/") + 1);
+  if (
+    mediaType === "application/xml" ||
+    mediaType === "text/xml" ||
+    (subtype.length > "+xml".length && subtype.endsWith("+xml"))
+  ) {
+    return "xml";
+  }
   if (mediaType === "application/x-www-form-urlencoded") return "form";
   if (mediaType.startsWith("multipart/")) return "multipart";
   if (mediaType.startsWith("text/")) return "text";
@@ -2095,12 +2109,29 @@ function selectBodyMediaKind<A>(
   decoders: BodyDecoderMap<A>,
   contentType: string | null,
 ): BodyMediaKind {
-  return decoders.file ? "file" : bodyMediaKind(contentType);
+  if (decoders.file) return "file";
+  const kind = bodyMediaKind(contentType);
+  if (decoders[kind]) return kind;
+
+  const mediaType = parseMediaType(contentType);
+  if (kind === "xml" && mediaType?.startsWith("text/") && decoders.text) return "text";
+  if (
+    (kind === "json" || kind === "xml") &&
+    mediaType !== undefined &&
+    !mediaType.startsWith("application/") &&
+    !mediaType.startsWith("text/") &&
+    !mediaType.startsWith("multipart/") &&
+    decoders.binary
+  ) {
+    return "binary";
+  }
+  return kind;
 }
 
 function supportedMediaTypes<A>(decoders: BodyDecoderMap<A>): string[] {
   const supported: string[] = [];
   if (decoders.json) supported.push("application/json");
+  if (decoders.xml) supported.push("application/xml", "text/xml");
   if (decoders.form) supported.push("application/x-www-form-urlencoded");
   if (decoders.multipart) supported.push("multipart/form-data");
   if (decoders.file) supported.push("*/*");

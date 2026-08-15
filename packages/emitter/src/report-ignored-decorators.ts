@@ -8,7 +8,12 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
-import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
+import {
+  getBodyMediaKinds,
+  getMultipartPartMediaKinds,
+  normalizeMediaType,
+  type BodyMediaKind,
+} from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { propertiesShareSource } from "./http-models.js";
@@ -38,6 +43,7 @@ import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
 import { analyzeRequestStream } from "./request-streams.js";
 import { lowerUriTemplate } from "./uri-template.js";
+import { unsupportedXmlTypeReason } from "./xml-metadata.js";
 
 interface ServiceDecoratorReports {
   readonly encodedNames: Set<ModelProperty>;
@@ -238,18 +244,14 @@ function checkRequestBody(
       }
 
       for (const contentType of part.body.contentTypes) {
-        for (const kind of getBodyMediaKinds([contentType])) {
+        for (const kind of getMultipartPartMediaKinds([contentType])) {
           const encodingReason = unsupportedBinaryScalarEncodingReason(
             ctx,
             part.body.type,
             part.body.property,
             kind,
           );
-          const reason =
-            encodingReason ??
-            (kind === "form" || kind === "multipart" || kind === "file"
-              ? "multipart parts support JSON, text, binary, or File content"
-              : unsupportedBodyKindReason(ctx, part.body.type, kind));
+          const reason = encodingReason ?? unsupportedBodyKindReason(ctx, part.body.type, kind);
           if (reason) {
             reportUnsupportedBody(
               ctx,
@@ -333,6 +335,8 @@ function unsupportedBodyKindReason(
   switch (kind) {
     case "json":
       return undefined;
+    case "xml":
+      return unsupportedXmlTypeReason(ctx, type, projection);
     case "form":
       return isFlatFormBodyType(ctx, type, projection)
         ? undefined

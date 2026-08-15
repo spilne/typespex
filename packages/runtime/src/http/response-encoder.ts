@@ -117,6 +117,15 @@ function textResponseEncoder(status = 200, init?: ResponseInit): ResponseEncoder
   });
 }
 
+function xmlResponseEncoder(status = 200, init?: ResponseInit): ResponseEncoder<string> {
+  return ResponseEncoder.of((value) => {
+    const response = responseInit(status, init);
+    return isBodyForbiddenStatus(status)
+      ? new Response(null, response)
+      : new Response(value, withContentType(response, "application/xml"));
+  });
+}
+
 function bytesResponseEncoder(status = 200, init?: ResponseInit): ResponseEncoder<Uint8Array> {
   return ResponseEncoder.of((value) => {
     const response = responseInit(status, init);
@@ -239,7 +248,7 @@ export type ResponseHeaderDescriptor = readonly [
 
 export interface ResponseVariant {
   readonly status: number | DynamicResponseStatus;
-  readonly kind?: "json" | "text" | "bytes" | "file" | "empty";
+  readonly kind?: "json" | "xml" | "text" | "bytes" | "file" | "empty";
   readonly headers?: ReadonlyArray<ResponseHeaderDescriptor>;
   readonly body?: string;
   readonly omit?: readonly string[];
@@ -287,6 +296,13 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   const body = variant.transformBody ? variant.transformBody(resolvedBody) : resolvedBody;
 
   if (variant.kind === "text") {
+    return new Response(String(body ?? ""), {
+      status,
+      headers: responseHeaders,
+    });
+  }
+
+  if (variant.kind === "xml") {
     return new Response(String(body ?? ""), {
       status,
       headers: responseHeaders,
@@ -500,6 +516,8 @@ function omitVariantProperties(src: Record<string, unknown>, variant: ResponseVa
 
 function defaultContentTypeForKind(kind: ResponseVariant["kind"]): string | undefined {
   switch (kind) {
+    case "xml":
+      return "application/xml";
     case "text":
       return "text/plain; charset=utf-8";
     case "bytes":
@@ -555,6 +573,7 @@ export const ResponseEncoders = {
   jsonl: jsonlResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
   empty: emptyResponseEncoder,
+  xml: xmlResponseEncoder,
   text: textResponseEncoder,
   bytes: bytesResponseEncoder,
   file: fileResponseEncoder,

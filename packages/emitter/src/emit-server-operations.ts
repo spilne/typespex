@@ -13,6 +13,7 @@ import {
 import { buildServerEmission } from "./server-emission.js";
 import { tsLiteral, tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
 import type { RoutePattern } from "./uri-template.js";
+import { getXmlCodecDeclarations } from "./xml-wire-codecs.js";
 
 export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
   const emission = buildServerEmission(ctx, httpOperations);
@@ -25,11 +26,35 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
       );
     }
   }
+  const inputDecoders = new Map<HttpOperation, DecoderEmission>();
+  for (const group of emission.groups) {
+    const inputsName = `${group.exportName}Input`;
+    for (const operation of group.operations) {
+      inputDecoders.set(
+        operation.httpOperation,
+        emitDecoder(ctx, operation.httpOperation, inputsName, operation.propertyName),
+      );
+    }
+  }
+  const xmlCodecDeclarations = getXmlCodecDeclarations(ctx);
   const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
   const payloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
+  const inputDecoderText = [...inputDecoders.values()]
+    .flatMap((decoder) => [
+      decoder.decodeExpression,
+      ...decoder.inputEntries.flatMap((entry) => entry.lines),
+      ...decoder.hoistedDecoders,
+    ])
+    .join("\n");
   const usesJsonSerializers =
     jsonSerializerDeclarations.length > 0 ||
+    xmlCodecDeclarations.some((declaration) => declaration.includes("JsonSerializers.")) ||
+    inputDecoderText.includes("JsonSerializers.") ||
     [...responseEncoders.values()].some((encoder) => encoder.includes("JsonSerializers."));
+  const usesXmlCodecs =
+    xmlCodecDeclarations.length > 0 ||
+    inputDecoderText.includes("XmlCodecs.") ||
+    [...responseEncoders.values()].some((encoder) => encoder.includes("XmlCodecs."));
   const lines: string[] = [];
 
   // --- Header ---
@@ -39,6 +64,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   // --- Imports (multi-line) ---
   const runtimeTypes = ["Decoder", "ServerOperation"];
   if (jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
+  if (xmlCodecDeclarations.length > 0) runtimeTypes.push("XmlCodec");
   lines.push(`import type { ${runtimeTypes.join(", ")} } from "@typespex/runtime/server";`);
   lines.push("import {");
   lines.push("  Either,");
@@ -46,6 +72,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   lines.push("  emptyHints,");
   lines.push("  ResponseEncoders,");
   if (usesJsonSerializers) lines.push("  JsonSerializers,");
+  if (usesXmlCodecs) lines.push("  XmlCodecs,");
   for (const name of getServerInputDecoderImports(ctx, httpOperations)) {
     lines.push(`  ${name},`);
   }
@@ -65,23 +92,25 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     lines.push(...jsonSerializerDeclarations);
     lines.push("");
   }
+  if (xmlCodecDeclarations.length > 0) {
+    lines.push(...xmlCodecDeclarations);
+    lines.push("");
+  }
 
   // --- Input decoders + Operations per group ---
   const emittedHoisted = new Set<string>();
   for (const group of emission.groups) {
     const inputsName = `${group.exportName}Input`;
     const outputsName = `${group.exportName}Output`;
-    const decodersByOpId = new Map<string, DecoderEmission>();
     const allEntries: InputDecoderEntry[] = [];
 
     const allHoisted = new Set<string>();
     for (const operation of group.operations) {
-      const decoder = emitDecoder(ctx, operation.httpOperation, inputsName, operation.propertyName);
+      const decoder = inputDecoders.get(operation.httpOperation)!;
       allEntries.push(...decoder.inputEntries);
       for (const declaration of decoder.hoistedDecoders) {
         if (!emittedHoisted.has(declaration)) allHoisted.add(declaration);
       }
-      decodersByOpId.set(operation.operationId, decoder);
     }
 
     // Emit hoisted lazy decoders for recursive models
@@ -117,7 +146,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     lines.push(`export const ${group.exportName}Operations = {`);
 
     for (const operation of group.operations) {
-      const decoder = decodersByOpId.get(operation.operationId)!;
+      const decoder = inputDecoders.get(operation.httpOperation)!;
 
       lines.push(`  ${tsObjectKey(operation.propertyName)}: {`);
       emitEndpoint(lines, emission.serviceName, operation);

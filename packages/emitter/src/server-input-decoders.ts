@@ -15,7 +15,11 @@ import type {
   Union,
 } from "@typespec/compiler";
 import { getDiscriminator, isArrayModelType, walkPropertiesInherited } from "@typespec/compiler";
-import { getBodyMediaKinds, type BodyMediaKind } from "./body-media-kinds.js";
+import {
+  getBodyMediaKinds,
+  getMultipartPartMediaKinds,
+  type BodyMediaKind,
+} from "./body-media-kinds.js";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
 import { emitDateTimeDecoder } from "./datetime-mode.js";
 import {
@@ -73,6 +77,7 @@ import {
   isStringLikeLiteral,
   stringLiteralExpression,
 } from "./string-template-literals.js";
+import { emitXmlCodec } from "./xml-wire-codecs.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
@@ -641,6 +646,9 @@ function emitBodyDecoderExpression(
   if (kind === "multipart" && body.bodyKind === "multipart") {
     return emitMultipartDecoderExpression(ctx, dec, body);
   }
+  if (kind === "xml") {
+    return emitXmlCodec(ctx, body.type, getEffectiveRequestBodyProjection(ctx, op), body.property);
+  }
 
   const mode: DecoderMode =
     kind === "form" || kind === "multipart"
@@ -742,13 +750,7 @@ function emitMultipartPartDecoder(
 function multipartPartKinds(part: HttpOperationPart): readonly MultipartPartKind[] {
   if (part.body.bodyKind === "file") return ["file"];
 
-  const kinds = getBodyMediaKinds(part.body.contentTypes);
-  const supported: MultipartPartKind[] = [];
-  for (const kind of kinds) {
-    if ((kind === "json" || kind === "text" || kind === "binary") && !supported.includes(kind)) {
-      supported.push(kind);
-    }
-  }
+  const supported = getMultipartPartMediaKinds(part.body.contentTypes);
   if (supported.length > 0) return supported;
   // TypeSpec normally resolves a default media type for every part. An absent
   // list is the sole safe text default; unsupported resolved kinds are

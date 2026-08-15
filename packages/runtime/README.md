@@ -11,6 +11,16 @@ and operation primitives for TypeSpec-generated HTTP servers.
 Generated services normally import this package directly. Choose one adapter
 package to connect the router to a server framework.
 
+## XML payloads
+
+Generated XML operations use `XmlCodec` values to decode and encode the same TypeSpec model.
+The codecs support encoded element names, attributes, wrapped and unwrapped arrays, unwrapped text,
+records, and namespace-qualified elements. Requests are matched by namespace URI rather than a
+specific client prefix. XML document type declarations are rejected, and malformed documents are
+returned as request validation errors. Predefined and numeric character references are accepted;
+undeclared named entities are rejected. Handler serialization failures raise `XmlSerializationError`
+with the failing response path.
+
 ## JSONL streams
 
 `decodeJsonlBody` validates the request boundary immediately and returns a single-use

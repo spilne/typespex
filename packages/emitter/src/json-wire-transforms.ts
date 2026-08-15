@@ -216,6 +216,17 @@ export function emitJsonWireSerializer(
     : undefined;
 }
 
+/** Serializer expression used by non-JSON textual codecs that still share scalar encodings. */
+export function emitRequiredJsonWireSerializer(
+  ctx: EmitterCtx,
+  type: Type,
+  projection?: PayloadProjection,
+  target?: ModelProperty,
+  encodingContext: ScalarEncodingContext = "value",
+): string {
+  return emitRequiredSerializer(ctx, type, projection, target, encodingContext);
+}
+
 /** Hoisted lazy declarations accumulated while response encoders were rendered. */
 export function getJsonWireSerializerDeclarations(ctx: EmitterCtx): readonly string[] {
   const state = getState(ctx);

@@ -52,10 +52,10 @@ packages on every run. Each pair must build the emitter, compile the representat
 the upstream `@typespec/http-specs` scenarios with warnings treated as errors, then typechecks every
 generated file. The gate covers the supported scenarios listed in
 `scripts/check-http-conformance.mjs` across authentication, encodings, request bodies and
-parameters, response payloads, multipart bodies, wire names, collections, enums, files, model
+parameters, response payloads, multipart and XML bodies, wire names, collections, enums, files, model
 inheritance and visibility, property shapes, scalars, and discriminated unions. Scenarios that
-require additional TypeSpec libraries or exercise explicitly unsupported protocol features remain
-outside this gate. A separate package-consumer job packs all public packages, validates
+require TypeSpec libraries not installed by this repository or exercise explicitly unsupported
+protocol features remain outside this gate. A separate package-consumer job packs all public packages, validates
 their contents, installs the tarballs into a temporary npm project, and imports every public entry
 point outside the workspace.
 
@@ -402,11 +402,11 @@ options:
 ```
 
 The configured representation applies consistently to path, query, header, cookie, form,
-multipart, text, and JSON request values as well as response bodies and modeled response headers.
+multipart, text, XML, and JSON request values as well as response bodies and modeled response headers.
 
 ## HTTP and Error Behavior
 
-TypeSpex decodes path, query, header, cookie, JSON, form, multipart, text, binary, and raw file
+TypeSpex decodes path, query, header, cookie, JSON, XML, form, multipart, text, binary, and raw file
 input according to the generated operation. Declared media types are checked before the handler
 runs. Constraints such as `@minValue`, `@maxValue`, `@minLength`, `@maxLength`, and `@pattern`
 become runtime validators.
@@ -433,6 +433,14 @@ response serializers perform the inverse mapping. The transform applies through 
 arrays, records, optional properties, nullable properties, and recursive models, including
 structured `+json` media types. Request validation paths use wire names. A malformed handler
 result raises a path-aware `JsonSerializationError` before an invalid JSON body is returned.
+
+XML payloads use the `@typespec/xml` contract for document and property names, wrapped and
+unwrapped arrays, attributes, unwrapped text, namespaces, and records. `application/xml`,
+`text/xml`, and structured `+xml` media types are decoded before handlers run and encoded from
+handler results. Namespace prefixes are generated from TypeSpec while requests are matched by
+namespace URI, so clients may use equivalent prefixes. XML document type declarations are rejected;
+predefined and numeric character references are accepted, while undeclared named entities are
+rejected. Invalid handler results raise a path-aware `XmlSerializationError`.
 
 A TypeSpec HTTP `File` used as a raw body or multipart part is represented by the Web `File`
 type. Its `type`, `name`, and blob contents carry the media type, filename, and bytes. A missing
@@ -548,13 +556,13 @@ configured.
 ## Current Contract Boundaries
 
 The emitter reports an error instead of generating a wire contract it cannot preserve. Current
-diagnostics cover custom or location-incompatible scalar encodings, non-JSON encoded property
-names, and unsupported `@discriminated` configurations. They also reject ambiguous nested response
+diagnostics cover custom or location-incompatible scalar encodings, encoded names for media types
+without a codec, and unsupported `@discriminated` configurations. They also reject ambiguous nested response
 unions that require different JSON transforms, parameter serialization styles, media/body shape
 combinations, and output layouts that the generated runtime cannot represent safely.
 Authentication and authorization enforcement belongs in application middleware. Supported
 streaming contracts are direct `JsonlStream<T>` requests and responses backed by
-`AsyncIterable<T>`. Other supported response bodies are JSON, `text/*`,
+`AsyncIterable<T>`. Other supported response bodies are JSON, XML, `text/*`,
 `application/octet-stream`, resolved raw `File` media types, and empty responses. Non-JSONL stream
 protocols, optional stream bodies, same-endpoint overloads involving request streams, response
 unions or additional response metadata involving streams, and multipart response bodies remain
