@@ -78,6 +78,26 @@ interface Items {
 }
 `;
 
+const moduleReservedIdentifierSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "AwaitIdentifiersApi" })
+namespace AwaitIdentifiersApi;
+
+model await {
+  await: string;
+}
+
+@route("/await")
+interface AwaitOperations {
+  @post op await(
+    @query await: string,
+    @body body: await,
+  ): await;
+}
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -113,5 +133,16 @@ describe("operation structures", () => {
     expect(r.readFile("escaping-api", "server.ts")).toMatchSnapshot();
     expect(r.readFile("escaping-api", "server-operations.ts")).toMatchSnapshot();
     expect(r.readFile("escaping-api", "server-router.ts")).toMatchSnapshot();
+  });
+
+  test("escapes await across generated declarations and operation surfaces", () => {
+    const r = compileFixture("await-identifiers", moduleReservedIdentifierSpec);
+
+    r.typecheck("await-identifiers-api");
+    expect(r.readFile("await-identifiers-api", "models.ts")).toContain("export interface await_");
+    expect(r.readFile("await-identifiers-api", "models.ts")).toContain("await: string;");
+    expect(r.readFile("await-identifiers-api", "server-operations.ts")).toContain(
+      'RequestDecoders.query("await"',
+    );
   });
 });

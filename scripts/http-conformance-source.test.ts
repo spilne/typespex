@@ -28,6 +28,29 @@ interface Send<Value extends string> {
 }
 `;
 
+const specialWordsScenarioSource = `
+import "@typespec/http";
+import "@typespec/spector";
+import "./dec.js";
+
+using Http;
+using Spector;
+
+@scenarioService("/special-words")
+namespace SpecialWords;
+
+interface Operations {
+  @opNameScenario("await") await(): void;
+}
+
+interface Parameters {
+  @paramNameScenario("await") withAwait(@query await: string): void;
+}
+
+model await { name: string; }
+@modelNameScenario("await") op withAwaitModel(@body body: await): void;
+`;
+
 describe("TypeSpec HTTP conformance source transform", () => {
   test("removes complete structured scenario decorator applications", () => {
     const transformed = removeScenarioRunnerMetadata(structuredScenarioSource, "encode/structured");
@@ -48,5 +71,14 @@ describe("TypeSpec HTTP conformance source transform", () => {
     expect(() => removeScenarioRunnerMetadata(malformed, "encode/malformed")).toThrow(
       /Could not parse TypeSpec HTTP scenario encode\/malformed.*First diagnostic: <anonymous file>:\d+:\d+ - error .+: .+/,
     );
+  });
+
+  test("replaces special-word scenario helpers with their declared routes", () => {
+    const transformed = removeScenarioRunnerMetadata(specialWordsScenarioSource, "special-words");
+
+    expect(transformed).not.toContain("./dec.js");
+    expect(transformed).not.toContain("NameScenario");
+    expect(transformed.match(/@route\("\/await"\)/g)).toHaveLength(3);
+    expect(transformed).toContain('@route("/special-words")');
   });
 });

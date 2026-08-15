@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tsLiteral } from "../src/typescript-names.js";
+import { isTsIdentifier, tsIdentifier, tsLiteral } from "../src/typescript-names.js";
 
 describe("TypeScript literal emission", () => {
   test("escapes characters that can break generated-code embedding contexts", () => {
@@ -12,5 +12,12 @@ describe("TypeScript literal emission", () => {
 
     expect(literal).toBe('{"closingTag":"\\u003C/script\\u003E","separators":"\\u2028\\u2029"}');
     expect(JSON.parse(literal)).toEqual(value);
+  });
+});
+
+describe("TypeScript identifier emission", () => {
+  test("escapes identifiers reserved in ECMAScript modules", () => {
+    expect(isTsIdentifier("await")).toBe(false);
+    expect(tsIdentifier("await")).toBe("await_");
   });
 });
