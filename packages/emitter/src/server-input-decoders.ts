@@ -51,6 +51,7 @@ import {
   shouldFlattenBodyType,
   type RequestBodyInputPlan,
 } from "./request-input-plan.js";
+import { getHandlerRequestParameters, getJsonlRequestStream } from "./request-streams.js";
 import { typeToTs } from "./type-reference.js";
 import { lowerUriTemplate } from "./uri-template.js";
 import {
@@ -112,8 +113,23 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "decodeBody",
 ] as const;
 
-export function getServerInputDecoderImports(): readonly string[] {
-  return SERVER_INPUT_DECODER_IMPORTS;
+export function getServerInputDecoderImports(
+  ctx: EmitterCtx,
+  operations: readonly HttpOperation[],
+): readonly string[] {
+  let needsJsonlBody = false;
+  let needsCombinedJsonlBody = false;
+  for (const operation of operations) {
+    if (!getJsonlRequestStream(ctx, operation)) continue;
+    if (getHandlerRequestParameters(ctx, operation).length === 0) needsJsonlBody = true;
+    else needsCombinedJsonlBody = true;
+  }
+
+  return [
+    ...SERVER_INPUT_DECODER_IMPORTS,
+    ...(needsJsonlBody ? ["decodeJsonlBody"] : []),
+    ...(needsCombinedJsonlBody ? ["decodeRequestInputAndJsonlBody"] : []),
+  ];
 }
 
 /** One property entry inside a group's input decoder object. */
@@ -147,14 +163,15 @@ export function emitDecoder(
   opName: string,
 ): DecoderEmission {
   const dec = createDecoderEmitContext(inputsRef, opName);
-  const pathParams = op.parameters.parameters.filter((p) => p.type === "path");
-  const queryParams = op.parameters.parameters.filter((p) => p.type === "query");
+  const parameters = getHandlerRequestParameters(ctx, op);
+  const pathParams = parameters.filter((p) => p.type === "path");
+  const queryParams = parameters.filter((p) => p.type === "query");
   const loweredUriTemplate = lowerUriTemplate(op);
   const literalQueryNames = loweredUriTemplate.ok
     ? (loweredUriTemplate.value.literalQuery?.map(({ name }) => name) ?? [])
     : [];
-  const headerParams = op.parameters.parameters.filter((p) => p.type === "header");
-  const cookieParams = op.parameters.parameters.filter((p) => p.type === "cookie");
+  const headerParams = parameters.filter((p) => p.type === "header");
+  const cookieParams = parameters.filter((p) => p.type === "cookie");
   const hasBody = op.parameters.body != null;
   const hasRequestInput =
     pathParams.length + queryParams.length + headerParams.length + cookieParams.length > 0;
@@ -283,6 +300,46 @@ export function emitDecoder(
       name: param.param.name,
       expr: `RequestDecoders.cookie(${tsLiteral(param.name)}, ${decoder}${options})`,
     });
+  }
+
+  const requestStream = getJsonlRequestStream(ctx, op);
+  if (requestStream) {
+    const projection = getEffectiveRequestStreamProjection(ctx, op, requestStream.streamType);
+    const itemType = payloadTypeToTs(ctx, requestStream.streamType, projection);
+    const bodyEntry = emitJsonlBodyDecoderEntry(
+      hasRequestInput ? `${opName}Body` : opName,
+      ctx,
+      dec,
+      requestStream.streamType,
+      projection,
+    );
+    const bodyOptionsArg = emitJsonlBodyOptionsArg(
+      requestStream.contentTypes,
+      op.parameters.body?.contentTypeProperty?.optional === true,
+    );
+
+    if (!hasRequestInput) {
+      return {
+        inputEntries: [bodyEntry],
+        decodeExpression: `decodeJsonlBody<${itemType}>(request, ${tsPropertyAccess(inputsRef, opName)}${bodyOptionsArg})`,
+        needsPathParams: false,
+        isAsync: true,
+        hoistedDecoders: buildHoistedDecoders(ctx, dec),
+      };
+    }
+
+    const requestRef = tsPropertyAccess(inputsRef, `${opName}Request`);
+    const bodyRef = tsPropertyAccess(inputsRef, `${opName}Body`);
+    const requestType = buildRequestOnlyType(ctx, op);
+    const bodyPlan = getRequestInputPlan(ctx, op).body;
+    const bodyProperty = bodyPlan?.placement === "wrapped" ? bodyPlan.propertyName : "body";
+    return {
+      inputEntries: [emitRequestDecoderEntry(`${opName}Request`, requestEntries), bodyEntry],
+      decodeExpression: `decodeRequestInputAndJsonlBody<${requestType}, ${itemType}, ${tsLiteral(bodyProperty)}>(${requestRef}, ${bodyRef}, ${tsLiteral(bodyProperty)}, request, pathParams${bodyOptionsArg})`,
+      needsPathParams: true,
+      isAsync: true,
+      hoistedDecoders: buildHoistedDecoders(ctx, dec),
+    };
   }
 
   const hoistedDecoders = buildHoistedDecoders(ctx, dec);
@@ -508,6 +565,36 @@ function emitBodyDecoderEntry(
   return { lines };
 }
 
+function emitJsonlBodyDecoderEntry(
+  name: string,
+  ctx: EmitterCtx,
+  dec: DecoderEmitContext,
+  streamType: Type,
+  projection?: PayloadProjection,
+): InputDecoderEntry {
+  const decoder = emitDecoderExpression(
+    ctx,
+    dec,
+    streamType,
+    "json",
+    new Set(),
+    undefined,
+    projection,
+  );
+  return { lines: [`  ${tsObjectKey(name)}: ${decoder},`] };
+}
+
+function emitJsonlBodyOptionsArg(
+  contentTypes: readonly string[],
+  allowMissingContentType: boolean,
+): string {
+  const options = [
+    `contentTypes: [${contentTypes.map((contentType) => tsLiteral(contentType)).join(", ")}]`,
+  ];
+  if (allowMissingContentType) options.push("allowMissingContentType: true");
+  return `, { ${options.join(", ")} }`;
+}
+
 function indexOverloadBodiesByMediaKind(
   ctx: EmitterCtx,
   op: HttpOperation,
@@ -713,9 +800,18 @@ function getEffectiveRequestBodyProjection(
   return payloadProjectionChangesType(ctx, body.type, projection) ? projection : undefined;
 }
 
+function getEffectiveRequestStreamProjection(
+  ctx: EmitterCtx,
+  op: HttpOperation,
+  streamType: Type,
+): PayloadProjection | undefined {
+  const projection = getRequestBodyProjection(ctx, op);
+  return payloadProjectionChangesType(ctx, streamType, projection) ? projection : undefined;
+}
+
 function buildRequestOnlyType(ctx: EmitterCtx, op: HttpOperation): string {
   const parts: string[] = [];
-  for (const param of op.parameters.parameters) {
+  for (const param of getHandlerRequestParameters(ctx, op)) {
     parts.push(
       tsPropertyDeclaration(param.param.name, typeToTs(ctx, param.param.type), {
         optional: param.param.optional,

@@ -472,13 +472,14 @@ always suppress body bytes. A wildcard response without an `@statusCode` propert
 generation time because no concrete status can be selected safely.
 
 The hosting adapters preserve stream-backed Web `Request` and `Response` bodies at their boundary.
-Generated request body decoders nevertheless consume the complete body before invoking a handler,
-including JSON, URL-encoded form, multipart, text, binary, and raw file bodies. The runtime limits
-these bodies to 10 MiB by default, rejecting larger declared or streamed payloads with a structured
-413 response. Set `maxRequestBodyBytes` on `createHttpRouter` or direct body-decoder options to a
-non-negative byte count; set it to `false` to disable runtime enforcement explicitly. Deployments
-should still configure transport-level limits and request deadlines in their trusted proxy or
-hosting runtime.
+Generated decoders consume buffered request formats before invoking a handler, including JSON,
+URL-encoded form, multipart, text, binary, and raw file bodies. A direct `JsonlStream<T>` request is
+the exception: the handler receives a single-use `AsyncIterable<T>` and must consume or close it
+before returning. The runtime limits request bodies to 10 MiB by default, rejecting larger declared
+or streamed payloads with a structured 413 response. Set `maxRequestBodyBytes` on
+`createHttpRouter` or direct body-decoder options to a non-negative byte count; set it to `false` to
+disable runtime enforcement explicitly. Deployments should still configure transport-level limits
+and request deadlines in their trusted proxy or hosting runtime.
 
 Modeled success and error values are encoded using their declared status, headers, body, and media
 type. Full-range `int64` and `uint64` handler values use `bigint` and, without an explicit
@@ -552,10 +553,12 @@ names, and unsupported `@discriminated` configurations. They also reject ambiguo
 unions that require different JSON transforms, parameter serialization styles, media/body shape
 combinations, and output layouts that the generated runtime cannot represent safely.
 Authentication and authorization enforcement belongs in application middleware. Supported
-response bodies are JSON, direct `JsonlStream<T>` responses backed by `AsyncIterable<T>`, `text/*`,
-`application/octet-stream`, resolved raw `File` media types, and empty responses. Typed request
-streams, non-JSONL stream protocols, response unions or additional response metadata involving
-streams, and multipart response bodies remain unsupported.
+streaming contracts are direct `JsonlStream<T>` requests and responses backed by
+`AsyncIterable<T>`. Other supported response bodies are JSON, `text/*`,
+`application/octet-stream`, resolved raw `File` media types, and empty responses. Non-JSONL stream
+protocols, optional stream bodies, same-endpoint overloads involving request streams, response
+unions or additional response metadata involving streams, and multipart response bodies remain
+unsupported.
 
 ## Regeneration
 

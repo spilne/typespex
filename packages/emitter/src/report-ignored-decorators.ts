@@ -8,7 +8,6 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
-import { getStreamMetadata } from "@typespec/http/experimental";
 import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
@@ -37,6 +36,7 @@ import {
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
+import { analyzeRequestStream } from "./request-streams.js";
 import { lowerUriTemplate } from "./uri-template.js";
 
 interface ServiceDecoratorReports {
@@ -79,13 +79,14 @@ export function reportIgnoredDecorators(
     }
     checkRequestBody(ctx, reported, traversal);
     if (operation.parameters.body?.type) {
+      const requestStream = analyzeRequestStream(ctx, operation);
       walkType(
         ctx,
         reported,
         traversal,
-        operation.parameters.body.type,
+        requestStream?.metadata.streamType ?? operation.parameters.body.type,
         "body",
-        operation.parameters.body.property,
+        requestStream ? undefined : operation.parameters.body.property,
       );
     }
     for (const response of operation.responses) {
@@ -108,22 +109,37 @@ function checkRequestBody(
   if (!body) return;
   if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
 
-  if (
-    body.bodyKind === "single" &&
-    getStreamMetadata(ctx.program, traversal.operation.parameters)
-  ) {
+  const overloads = getSameEndpointOverloads(traversal.operation).filter(
+    (operation) => operation.parameters.body !== undefined,
+  );
+  const requestStream = analyzeRequestStream(ctx, traversal.operation);
+  const streamOverload = overloads
+    .map((operation) => ({ operation, stream: analyzeRequestStream(ctx, operation) }))
+    .find(({ stream }) => stream !== undefined);
+  if ((requestStream && overloads.length > 0) || streamOverload) {
+    const contentTypes =
+      requestStream?.metadata.contentTypes ?? streamOverload?.stream?.metadata.contentTypes;
     reportUnsupportedBody(
       ctx,
       traversal.operation,
-      body.contentTypes.join(", ") || "application/json",
-      "typed streams require a dedicated streaming decoder",
+      contentTypes?.join(", ") || body.contentTypes.join(", ") || "application/json",
+      "typed request streams cannot participate in same-endpoint overloads",
     );
     return;
   }
 
-  const overloads = getSameEndpointOverloads(traversal.operation).filter(
-    (operation) => operation.parameters.body !== undefined,
-  );
+  if (requestStream) {
+    if (requestStream.unsupportedReason) {
+      reportUnsupportedBody(
+        ctx,
+        traversal.operation,
+        body.contentTypes.join(", ") || "application/json",
+        requestStream.unsupportedReason,
+      );
+    }
+    return;
+  }
+
   if (overloads.length > 0) {
     for (const operation of overloads) {
       checkRequestBody(ctx, reported, {

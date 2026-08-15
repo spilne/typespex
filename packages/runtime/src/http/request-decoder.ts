@@ -7,9 +7,11 @@ import {
   type BodyDecoderMap,
   type BodyDecodeOptions,
   type DecoderResult,
+  type JsonlBodyDecodeOptions,
   Decoder,
   decodeBody,
   decodeJsonBody,
+  decodeJsonlBody,
   decodeMultipartBody,
   fail,
   prefixIssues,
@@ -305,6 +307,55 @@ export async function decodeRequestInputAndBody<A extends object, B extends obje
   return Either.map(mergeRequestAndBodyResults(requestResult, bodyResult), (value) =>
     mirrorFileNameMetadata(value, options),
   );
+}
+
+/**
+ * Decodes request parameters and attaches a lazy JSONL item stream under one
+ * collision-free handler property.
+ *
+ * Boundary errors from the body retain precedence over parameter validation.
+ * When both boundaries produce validation issues, they are accumulated before
+ * the handler runs. Record-level JSONL failures still surface during iteration.
+ */
+export function decodeRequestInputAndJsonlBody<A extends object, B, P extends string>(
+  requestDecoder: RequestDecoder<A>,
+  bodyDecoder: Decoder<B>,
+  bodyProperty: P,
+  request: Request,
+  pathParams: Readonly<Record<string, string>>,
+  options: JsonlBodyDecodeOptions = {},
+): EitherT<BodyDecodeError, A & Readonly<Record<P, AsyncIterable<B>>>> {
+  const requestResult = requestDecoder.decode(createRequestInputSource(request, pathParams));
+  const bodyResult = decodeJsonlBody(request, bodyDecoder, { ...options, root: "$body" });
+
+  if (isLeft(bodyResult) && !(bodyResult.left instanceof ValidationError)) {
+    return Either.left(bodyResult.left);
+  }
+
+  const requestFailed = isLeft(requestResult);
+  const bodyFailed = isLeft(bodyResult);
+  if (requestFailed || bodyFailed) {
+    const issues: ValidationIssue[] = [];
+    if (requestFailed) issues.push(...requestResult.left);
+    if (bodyFailed) issues.push(...(bodyResult.left as ValidationError).issues);
+    return Either.left(new ValidationError(issues));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(requestResult.right, bodyProperty)) {
+    return Either.left(
+      new ValidationError([
+        {
+          path: `$body.${bodyProperty}`,
+          message: `Body property "${bodyProperty}" conflicts with another request input.`,
+        },
+      ]),
+    );
+  }
+
+  return Either.right({
+    ...requestResult.right,
+    [bodyProperty]: bodyResult.right,
+  } as A & Readonly<Record<P, AsyncIterable<B>>>);
 }
 
 /**
