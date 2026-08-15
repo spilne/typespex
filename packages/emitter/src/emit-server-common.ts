@@ -62,6 +62,7 @@ import {
 } from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
+import { isTypedStream } from "./stream-types.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
 import { isEntityLike } from "./type-guards.js";
 import {
@@ -713,6 +714,7 @@ interface SuccessResponseVariant {
   readonly bodyProperty?: string;
   readonly omitProperties: readonly string[];
   readonly type: Type;
+  readonly typedStream: boolean;
   readonly model?: Model;
   readonly tsType: string;
   readonly hiddenProperties: ReadonlySet<string>;
@@ -733,6 +735,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
   for (const resp of op.responses) {
     const statusCode = resolveResponseStatusCode(ctx, resp);
     const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
+    const typedStream = isTypedStream(ctx.program, resp.type);
     const hiddenProperties = getHiddenResponsePropertyNames(ctx, resp);
 
     if (isVoid || resp.responses.length === 0) {
@@ -748,6 +751,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
         headers: [],
         omitProperties: [],
         type: resp.type,
+        typedStream,
         model: resp.type.kind === "Model" ? resp.type : undefined,
         tsType: isVoid ? "void" : responseTypeToTs(ctx, resp),
         hiddenProperties,
@@ -808,6 +812,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           bodyProperty,
           omitProperties: metadataProperties.map((prop) => prop.property.name),
           type: body?.type ?? resp.type,
+          typedStream,
           model: variantModel,
           tsType: responseContentToTs(ctx, op, resp, content),
           hiddenProperties,
@@ -864,6 +869,7 @@ function deduplicateDynamicStatusVariants(
           existing.dynamicStatus?.property === variant.dynamicStatus?.property &&
           existing.tsType === variant.tsType &&
           existing.hasBody === variant.hasBody &&
+          existing.typedStream === variant.typedStream &&
           existing.body?.bodyKind === variant.body?.bodyKind &&
           existing.contentType === variant.contentType &&
           stringArraysEqual(existing.fileContentTypes, variant.fileContentTypes) &&
@@ -1929,6 +1935,16 @@ function classifyResponseVariant(
   response: SuccessResponseVariant,
 ): ResponseEncoderKind {
   if (!response.hasBody) return "empty";
+
+  if (response.typedStream) {
+    reportUnsupportedResponseBody(
+      ctx,
+      op,
+      response,
+      "typed streams require a dedicated streaming encoder",
+    );
+    return "unsupported";
+  }
 
   const body = response.body;
   if (body?.bodyKind === "file") {
