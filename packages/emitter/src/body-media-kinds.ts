@@ -18,8 +18,9 @@ export function normalizeMediaType(contentType: string): string | undefined {
 export function isJsonMediaType(mediaType: string): boolean {
   if (mediaType === "application/json") return true;
   const slash = mediaType.indexOf("/");
-  const suffix = mediaType.lastIndexOf("+json");
-  return slash >= 0 && suffix > slash + 1 && suffix === mediaType.length - 5;
+  if (slash < 0) return false;
+  const subtype = mediaType.slice(slash + 1);
+  return subtype.length > "+json".length && subtype.endsWith("+json");
 }
 
 export function isTextMediaType(mediaType: string): boolean {
