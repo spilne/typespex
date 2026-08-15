@@ -63,6 +63,18 @@ describe("SSE responses", () => {
           @route("/named")
           @get op named(): SSEStream<ResponseEvents>;
 
+          model Started { kind: "started"; value: string; }
+          model Stopped { kind: "stopped"; reason: string; }
+
+          @events
+          union DiscriminatedEvents {
+            @contentType("application/json") started: Started,
+            @contentType("application/json") stopped: Stopped,
+          }
+
+          @route("/discriminated")
+          @get op discriminated(): SSEStream<DiscriminatedEvents>;
+
           model RetrievalRequest { query: string; }
           model PartialResult { text: string; }
           model FinalResult { references: string[]; }
@@ -90,6 +102,7 @@ describe("SSE responses", () => {
 
     expect(server).toContain("AsyncIterable<UnnamedEvents>");
     expect(server).toContain("AsyncIterable<ResponseEvents>");
+    expect(server).toContain("AsyncIterable<DiscriminatedEvents>");
     expect(server).toContain("AsyncIterable<RetrievalEvents>");
     expect(operations).toContain("ResponseEncoders.sse<UnnamedEvents>(200");
     expect(operations).toContain('event: "responseCreated"');
@@ -103,6 +116,7 @@ describe("SSE responses", () => {
       `${result.outputDir}/sse-response-api/server-router.ts`
     );
     let query: string | undefined;
+    let invalidDiscriminatedValue: unknown;
     const router = createSseResponseApiServerRouter({
       async *unnamed() {
         yield { desc: "one", count: 9_223_372_036_854_775_807n };
@@ -114,6 +128,12 @@ describe("SSE responses", () => {
         yield { delta: " world" };
         yield "[DONE]" as const;
         yield { delta: "unreachable" };
+      },
+      async *discriminated() {
+        yield invalidDiscriminatedValue as {
+          kind: "started";
+          value: string;
+        };
       },
       async *retrieve(input: { query: string }) {
         query = input.query;
@@ -138,6 +158,19 @@ describe("SSE responses", () => {
         'event: responseDelta\ndata: {"delta":" world"}\n\n' +
         "data: [DONE]\n\n",
     );
+
+    for (const invalidValue of [
+      Object.assign([], { kind: "started", value: "array" }),
+      Object.assign(new Uint8Array(), { kind: "started", value: "bytes" }),
+    ]) {
+      invalidDiscriminatedValue = invalidValue;
+      const discriminated = await router.handle(
+        new Request("http://localhost/streaming/sse/discriminated"),
+      );
+      await expect(discriminated.text()).rejects.toThrow(
+        "SSE response value does not match any declared event variant.",
+      );
+    }
 
     const retrieve = await router.handle(
       new Request("http://localhost/streaming/sse/retrieve", {

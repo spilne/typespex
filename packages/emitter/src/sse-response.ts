@@ -37,6 +37,8 @@ const EVENTS_STATE_KEY = Symbol.for("@typespec/events/events");
 const EVENT_CONTENT_TYPE_STATE_KEY = Symbol.for("@typespec/events/contentType");
 const EVENT_DATA_STATE_KEY = Symbol.for("@typespec/events/data");
 const TERMINAL_EVENT_STATE_KEY = Symbol.for("@typespec/sse/terminalEvent");
+const MODEL_VALUE_CONDITION =
+  'typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Uint8Array)';
 
 export interface SseResponsePlan {
   readonly itemType: string;
@@ -337,8 +339,7 @@ function eventConditionFor(ctx: EmitterCtx, type: Type): EventCondition | undefi
     }
     return {
       category: "object",
-      broadCondition:
-        'typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Uint8Array)',
+      broadCondition: MODEL_VALUE_CONDITION,
       model: type,
     };
   }
@@ -405,9 +406,9 @@ function buildObjectConditions(
     if (keys.size !== models.length) continue;
     return values.map(
       (value) =>
-        `typeof value === "object" && value !== null && ` +
+        `${MODEL_VALUE_CONDITION} && ` +
         `Object.prototype.hasOwnProperty.call(value, ${tsLiteral(propertyName)}) && ` +
-        `(value as Record<string, unknown>)[${tsLiteral(propertyName)}] === ${value!.expression}`,
+        `(value as unknown as Record<string, unknown>)[${tsLiteral(propertyName)}] === ${value!.expression}`,
     );
   }
 
@@ -435,9 +436,7 @@ function buildObjectConditions(
       .filter((_, otherIndex) => otherIndex !== index)
       .map((other) => `!Object.prototype.hasOwnProperty.call(value, ${tsLiteral(other)})`);
     return [
-      'typeof value === "object"',
-      "value !== null",
-      "!Array.isArray(value)",
+      MODEL_VALUE_CONDITION,
       `Object.prototype.hasOwnProperty.call(value, ${tsLiteral(property)})`,
       ...exclusions,
     ].join(" && ");
