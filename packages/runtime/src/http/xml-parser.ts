@@ -318,7 +318,7 @@ function escapeXmlAttribute(value: string): string {
   });
 }
 
-function validateXmlCharacters(value: string): void {
+export function validateXmlCharacters(value: string): void {
   for (const character of value) {
     const codePoint = character.codePointAt(0)!;
     if (

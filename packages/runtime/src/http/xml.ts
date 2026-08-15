@@ -5,6 +5,7 @@ import {
   isParsedXmlDocument,
   isValidXmlLocalName,
   renderXmlDocument,
+  validateXmlCharacters,
   type EncodedXmlElement,
   type EncodedXmlName,
   type ParsedXmlElement,
@@ -237,7 +238,7 @@ function recordXmlCodec<A>(
             valueDefinition(),
             source[key] as A,
             `${path}${propertyPath(key)}`,
-            encodedName(key),
+            encodedDynamicName(key, `${path}${propertyPath(key)}`),
           ),
         ),
       };
@@ -470,7 +471,7 @@ function objectXmlCodec<A extends object>(
               additionalDefinition,
               propertyValue,
               `${path}${propertyPath(key)}`,
-              encodedName(key),
+              encodedDynamicName(key, `${path}${propertyPath(key)}`),
             ),
           );
         }
@@ -598,20 +599,36 @@ function scalarContentText(content: EncodedXmlContent, path: string): string {
 }
 
 function xmlScalarText(value: unknown, path: string): string {
+  let text: string;
   switch (typeof value) {
     case "string":
-      return value;
+      text = value;
+      break;
     case "boolean":
     case "bigint":
-      return String(value);
-    case "number":
-      if (Number.isFinite(value)) return String(value);
+      text = String(value);
       break;
+    case "number":
+      if (!Number.isFinite(value)) {
+        throw new XmlSerializationError(
+          path,
+          "Expected a string, finite number, bigint, or boolean XML value.",
+        );
+      }
+      text = String(value);
+      break;
+    default:
+      throw new XmlSerializationError(
+        path,
+        "Expected a string, finite number, bigint, or boolean XML value.",
+      );
   }
-  throw new XmlSerializationError(
-    path,
-    "Expected a string, finite number, bigint, or boolean XML value.",
-  );
+  try {
+    validateXmlCharacters(text);
+  } catch (error) {
+    throw asXmlSerializationError(error, path);
+  }
+  return text;
 }
 
 function validateObjectProperties(properties: readonly XmlObjectProperty[]): void {
@@ -670,6 +687,14 @@ function encodedName(localName: string, namespace?: XmlNamespace): EncodedXmlNam
   }
   validateNamespace(namespace);
   return namespace ? { localName, namespace } : { localName };
+}
+
+function encodedDynamicName(localName: string, path: string): EncodedXmlName {
+  try {
+    return encodedName(localName);
+  } catch (error) {
+    throw asXmlSerializationError(error, path);
+  }
 }
 
 function validateNamespace(namespace: XmlNamespace | undefined): void {

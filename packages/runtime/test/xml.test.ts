@@ -486,7 +486,13 @@ describe("XML codecs", () => {
       ]);
     }
 
-    expect(() => codec.serialize({ "bad:name": "value" })).toThrow(XmlSerializationError);
+    try {
+      codec.serialize({ "bad:name": "value" });
+      throw new Error("Expected an invalid dynamic XML name to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(XmlSerializationError);
+      expect((error as XmlSerializationError).path).toBe('$response["bad:name"]');
+    }
     expect(() =>
       XmlCodecs.scalar("bad name", Decoders.string, JsonSerializers.identity<string>()),
     ).toThrow(TypeError);
@@ -549,9 +555,13 @@ describe("XML codecs", () => {
     expect(() => simpleModelCodec.serialize({ name: "test" } as SimpleModel)).toThrow(
       XmlSerializationError,
     );
-    expect(() => simpleModelCodec.serialize({ name: "bad\u0000", age: 3 })).toThrow(
-      XmlSerializationError,
-    );
+    try {
+      simpleModelCodec.serialize({ name: "bad\u0000", age: 3 });
+      throw new Error("Expected an invalid XML character to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(XmlSerializationError);
+      expect((error as XmlSerializationError).path).toBe("$response.name");
+    }
     try {
       simpleModelCodec.serialize({ name: "test", age: "bad" } as unknown as SimpleModel);
       throw new Error("Expected invalid XML scalar serialization to fail.");
