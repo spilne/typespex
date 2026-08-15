@@ -166,7 +166,7 @@ export function emitDecoder(
       param.param.type.kind === "Model" ? getPayloadCollection(ctx, param.param.type) : undefined;
     if (collection?.kind === "record") {
       optionValues.push("record: true");
-      if (param.style === "label") {
+      if (param.style === "label" || param.style === "matrix") {
         optionValues.push("emptyComposite: true");
       }
       if (param.explode) {
