@@ -11,7 +11,7 @@ describe("SSE response encoder", () => {
     const response = ResponseEncoders.sse(201).encode(events());
 
     expect(response.status).toBe(201);
-    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
     expect(await response.text()).toBe(
       'data: {"desc":"one"}\n\n' + 'event: responseDelta\ndata: {"delta":"Hello"}\n\n',
     );

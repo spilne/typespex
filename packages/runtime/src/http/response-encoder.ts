@@ -124,7 +124,7 @@ function sseResponseEncoder<A = SseEvent>(
       ? new Response(null, response)
       : new Response(sseResponseBody(values, transformEvent), {
           ...response,
-          headers: { "content-type": "text/event-stream" },
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
         });
   });
 }
@@ -190,7 +190,7 @@ function sseResponseBody<A>(
 
 function encodeSseEvent(value: SseEvent): { readonly frame: string; readonly terminal: boolean } {
   if (typeof value !== "object" || value === null) {
-    throw new TypeError("SSE event transforms must return an object.");
+    throw new TypeError("SSE events must be objects.");
   }
   const { data, event, terminal } = value;
   if (typeof data !== "string") {
