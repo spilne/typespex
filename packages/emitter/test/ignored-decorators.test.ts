@@ -185,7 +185,7 @@ describe("unsupported HTTP parameter serialization", () => {
     expect(result.listFiles("nested-record-path-api")).toEqual([]);
   });
 
-  test("rejects unsupported query record shapes", () => {
+  test("rejects query records with non-scalar values", () => {
     const result = compileFixtureExpectingDiagnostics(
       "unsupported-query-records",
       `
@@ -195,19 +195,34 @@ describe("unsupported HTTP parameter serialization", () => {
       @service namespace UnsupportedQueryRecordsApi {
         @route("/nested{?filter}") @get
         op nested(filter: Record<string[]>): void;
-
-        @route("/exploded{?filter*}") @get
-        op exploded(filter: Record<string>): void;
       }
     `,
     );
 
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
     expect(diagnostics).toContain("records may contain only scalar, literal, or enum values");
-    expect(diagnostics).toContain(
-      "object and record values require location-specific serialization that is not implemented",
-    );
     expect(result.listFiles("unsupported-query-records-api")).toEqual([]);
+  });
+
+  test("rejects multiple exploded query records", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "multiple-exploded-query-records",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service namespace MultipleExplodedQueryRecordsApi {
+        @route("/ambiguous{?first*,second*}") @get
+        op read(first: Record<string>, second: Record<string>): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain(
+      "multiple exploded query records cannot be decoded unambiguously",
+    );
+    expect(result.listFiles("multiple-exploded-query-records-api")).toEqual([]);
   });
 
   test("rejects path styles the generated matcher cannot represent", () => {

@@ -362,6 +362,20 @@ function checkHttpParameter(
     return;
   }
 
+  if (isExplodedQueryRecord(ctx, parameter)) {
+    const explodedRecords = operation.parameters.parameters.filter((candidate) =>
+      isExplodedQueryRecord(ctx, candidate),
+    );
+    if (explodedRecords.length > 1 && explodedRecords[0] === parameter) {
+      reportUnsupportedParameter(
+        ctx,
+        parameter,
+        "multiple exploded query records cannot be decoded unambiguously",
+      );
+    }
+    return;
+  }
+
   if (parameter.type !== "path") return;
 
   if (parameter.style !== "simple" && !isSupportedNonSimplePathParameter(operation, parameter)) {
@@ -377,6 +391,14 @@ function checkHttpParameter(
       "allowReserved path values require one required scalar in a complete terminal path segment",
     );
   }
+}
+
+function isExplodedQueryRecord(ctx: EmitterCtx, parameter: HttpOperationParameter): boolean {
+  if (parameter.type !== "query" || !parameter.explode || parameter.param.type.kind !== "Model") {
+    return false;
+  }
+  const collection = getPayloadCollection(ctx, parameter.param.type);
+  return collection?.kind === "record" && isWireScalarType(ctx, collection.value);
 }
 
 function isSupportedReservedPathParameter(
@@ -420,7 +442,7 @@ function unsupportedParameterTypeReason(
           return "records may contain only scalar, literal, or enum values";
         }
         if (
-          (parameter.type === "query" && !parameter.explode) ||
+          parameter.type === "query" ||
           (parameter.type === "path" &&
             (parameter.style === "simple" ||
               parameter.style === "path" ||
