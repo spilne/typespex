@@ -1378,6 +1378,14 @@ export interface BodyDecodeOptions {
   readonly fileBodyProperty?: string;
 }
 
+/** Options for lazily decoding a newline-delimited JSON request body. */
+export interface JsonlBodyDecodeOptions {
+  readonly contentTypes?: readonly string[];
+  readonly root?: string;
+  readonly allowMissingContentType?: boolean;
+  readonly maxRequestBodyBytes?: RequestBodyLimit;
+}
+
 export type BodyDecodeError =
   | ValidationError
   | UnsupportedMediaTypeError
@@ -1666,6 +1674,158 @@ export async function decodeJsonBody<A>(
   } finally {
     abandonProbedBody?.();
   }
+}
+
+/**
+ * Validates a JSONL request boundary and returns a single-use, lazy item stream.
+ *
+ * Content-Type, a known oversized Content-Length, and a missing body are
+ * reported before the handler runs. UTF-8, JSON syntax, item validation, and
+ * streamed size failures surface while the handler consumes the iterable.
+ * Consumers must finish or close the iterable before the request handler
+ * returns.
+ */
+export function decodeJsonlBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: JsonlBodyDecodeOptions = {},
+): EitherT<BodyDecodeError, AsyncIterable<A>> {
+  const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
+  if (isLeft(limitedRequest)) return limitedRequest;
+  request = limitedRequest.right;
+
+  const root = options.root ?? "$body";
+  const contentTypeError = checkContentType(
+    request,
+    options.contentTypes ?? ["application/jsonl"],
+    options.allowMissingContentType,
+  );
+  if (contentTypeError) return Either.left(contentTypeError);
+
+  if (request.body === null) {
+    return Either.left(new ValidationError([{ path: root, message: "Required body is missing." }]));
+  }
+
+  return Either.right(decodeJsonlItems(request, decoder, root));
+}
+
+async function* decodeJsonlItems<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  root: string,
+): AsyncGenerator<A> {
+  const reader = request.body!.getReader();
+  const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const lines: JsonlLineState = { fragments: [] };
+  let index = 0;
+
+  try {
+    for (;;) {
+      const next = await readJsonlChunk(reader, root, index);
+      if (next.done) break;
+
+      const text = decodeJsonlText(textDecoder, next.value, true, root, index);
+      for (const line of appendJsonlText(lines, text)) {
+        const item = decodeJsonlItem(decoder, line, root, index);
+        index += 1;
+        yield item;
+      }
+    }
+
+    const remainingText = decodeJsonlText(textDecoder, undefined, false, root, index);
+    for (const line of appendJsonlText(lines, remainingText)) {
+      const item = decodeJsonlItem(decoder, line, root, index);
+      index += 1;
+      yield item;
+    }
+
+    const finalLine = finishJsonlText(lines);
+    if (finalLine !== undefined) {
+      yield decodeJsonlItem(decoder, finalLine, root, index);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } finally {
+      releaseRequestBodyLimit(request);
+    }
+  }
+}
+
+interface JsonlLineState {
+  readonly fragments: string[];
+}
+
+function* appendJsonlText(state: JsonlLineState, text: string): Generator<string> {
+  let start = 0;
+  for (;;) {
+    const newline = text.indexOf("\n", start);
+    if (newline < 0) break;
+
+    const fragment = text.slice(start, newline);
+    let line = fragment;
+    if (state.fragments.length > 0) {
+      state.fragments.push(fragment);
+      line = state.fragments.join("");
+      state.fragments.length = 0;
+    }
+    yield line.endsWith("\r") ? line.slice(0, -1) : line;
+    start = newline + 1;
+  }
+
+  if (start < text.length) state.fragments.push(text.slice(start));
+}
+
+function finishJsonlText(state: JsonlLineState): string | undefined {
+  if (state.fragments.length === 0) return undefined;
+  const line = state.fragments.join("");
+  state.fragments.length = 0;
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+async function readJsonlChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  root: string,
+  index: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  try {
+    return await reader.read();
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) throw error;
+    throw jsonlValidationError(root, index, "JSONL body could not be read.");
+  }
+}
+
+function decodeJsonlText(
+  decoder: TextDecoder,
+  chunk: Uint8Array | undefined,
+  stream: boolean,
+  root: string,
+  index: number,
+): string {
+  try {
+    return chunk === undefined ? decoder.decode() : decoder.decode(chunk, { stream });
+  } catch {
+    throw jsonlValidationError(root, index, "JSONL body must contain valid UTF-8.");
+  }
+}
+
+function decodeJsonlItem<A>(decoder: Decoder<A>, line: string, root: string, index: number): A {
+  const path = `${root}[${index}]`;
+  let value: unknown;
+  try {
+    value = parseJsonText(line);
+  } catch {
+    throw new ValidationError([{ path, message: "JSONL item must contain one valid JSON value." }]);
+  }
+
+  const decoded = toValidationResult(decoder.decode(value), path);
+  if (isLeft(decoded)) throw decoded.left;
+  return decoded.right;
+}
+
+function jsonlValidationError(root: string, index: number, message: string): ValidationError {
+  return new ValidationError([{ path: `${root}[${index}]`, message }]);
 }
 
 /** Parses and validates a URL-encoded form body. */

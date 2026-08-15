@@ -11,6 +11,14 @@ and operation primitives for TypeSpec-generated HTTP servers.
 Generated services normally import this package directly. Choose one adapter
 package to connect the router to a server framework.
 
+## JSONL streams
+
+`decodeJsonlBody` validates the request boundary immediately and returns a single-use
+`AsyncIterable` that decodes UTF-8 JSON records on demand. JSON syntax, item validation, and
+streamed body-limit failures surface during iteration, so handlers must consume or close the
+iterable before returning. `ResponseEncoders.jsonl` performs the inverse operation for response
+streams while honoring downstream backpressure.
+
 ## Shared-route matching
 
 The built-in regex and radix matchers accept a `selection` on structurally duplicate route inputs.
