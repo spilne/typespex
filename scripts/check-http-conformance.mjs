@@ -48,6 +48,9 @@ const SCENARIOS = [
   "server/endpoint/not-defined",
   "server/path/single",
   "server/versions/not-versioned",
+  "server/versions/versioned",
+  "special-headers/conditional-request",
+  "special-headers/repeatability",
   "special-words",
   "type/array",
   "type/dictionary",
@@ -68,6 +71,12 @@ const SCENARIOS = [
   "type/scalar",
   "type/union",
   "type/union/discriminated",
+  "versioning/added",
+  "versioning/madeOptional",
+  "versioning/removed",
+  "versioning/renamedFrom",
+  "versioning/returnTypeChangedFrom",
+  "versioning/typeChangedFrom",
 ];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

@@ -7,6 +7,7 @@
       "devDependencies": {
         "@js-temporal/polyfill": "^0.5.1",
         "@typespec/compiler": "^1.15.0",
+        "@typespec/versioning": "^0.85.0",
         "oxfmt": "0.62.0",
       },
     },
@@ -241,6 +242,8 @@
     "@typespec/compiler": ["@typespec/compiler@1.15.0", "", { "dependencies": { "@babel/code-frame": "^7.29.0", "@inquirer/prompts": "^8.4.1", "ajv": "^8.18.0", "change-case": "^5.4.4", "env-paths": "^4.0.0", "is-unicode-supported": "^2.1.0", "mustache": "^4.2.0", "picocolors": "^1.1.1", "prettier": "^3.9.5", "semver": "^7.7.4", "tar": "^7.5.21", "temporal-polyfill": "^1.0.1", "vscode-languageserver": "^10.0.0", "vscode-languageserver-textdocument": "^1.0.12", "yaml": "^2.8.3", "yargs": "^18.0.0" }, "bin": { "tsp": "cmd/tsp.js", "tsp-server": "cmd/tsp-server.js" } }, "sha512-NbCIRAIzyozchlSaGPVuyV43bC+y+OpXYCuT+8M8kt35Ln9zWzLFcIt7irofQ5QUXBZrHsBFpI5fTOFdCGeWCA=="],
 
     "@typespec/http": ["@typespec/http@1.15.0", "", { "peerDependencies": { "@typespec/compiler": "^1.15.0", "@typespec/streams": "^0.85.0" }, "optionalPeers": ["@typespec/streams"] }, "sha512-LNyzYHyX3C0xyQQ262jhvIaVzTn7DqiDB2gz45w1m6ngJH9ArGU8XjO3o7PaZkl/nuB5MTpImnsXpHIV1rbi4Q=="],
+
+    "@typespec/versioning": ["@typespec/versioning@0.85.0", "", { "peerDependencies": { "@typespec/compiler": "^1.15.0" } }, "sha512-8qIbWBnIWor3p9DFzcVz4xU4YK6PFgMia4+IDczhb5G4J9bYquK9gJSFNPfoF86Foq9nHad83swX25kxRiS6Jw=="],
 
     "@typespex/emitter": ["@typespex/emitter@workspace:packages/emitter"],
 
