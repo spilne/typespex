@@ -389,7 +389,7 @@ describe("typed stream diagnostics", () => {
 
           @streamOf(Info)
           model EventStream {
-            @header contentType: "text/event-stream";
+            @header contentType: "application/x-custom-stream";
             @body body: string;
           }
 

@@ -561,12 +561,13 @@ without a codec, and unsupported `@discriminated` configurations. They also reje
 unions that require different JSON transforms, parameter serialization styles, media/body shape
 combinations, and output layouts that the generated runtime cannot represent safely.
 Authentication and authorization enforcement belongs in application middleware. Supported
-streaming contracts are direct `JsonlStream<T>` requests and responses backed by
-`AsyncIterable<T>`. Other supported response bodies are JSON, XML, `text/*`,
-`application/octet-stream`, resolved raw `File` media types, and empty responses. Non-JSONL stream
-protocols, optional stream bodies, same-endpoint overloads involving request streams, response
-unions or additional response metadata involving streams, and multipart response bodies remain
-unsupported.
+streaming contracts are direct `JsonlStream<T>` requests and responses and `SSEStream<T>`
+responses backed by `AsyncIterable<T>`. SSE event unions preserve named, unnamed, and terminal
+events and serialize declared JSON or text payloads, including payloads selected with `@data`.
+Other supported response bodies are JSON, XML, `text/*`, `application/octet-stream`, resolved raw
+`File` media types, and empty responses. Other typed stream protocols, optional stream bodies,
+same-endpoint overloads involving request streams, response unions or additional response metadata
+involving streams, and multipart response bodies remain unsupported.
 
 ## Regeneration
 

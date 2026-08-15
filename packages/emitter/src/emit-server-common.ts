@@ -70,6 +70,7 @@ import { scalarToTs } from "./scalar-map.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
 import { getHandlerRequestParameters, getJsonlRequestStream } from "./request-streams.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
+import { buildSseResponsePlan } from "./sse-response.js";
 import { isEntityLike } from "./type-guards.js";
 import {
   isNamedUnionReference,
@@ -648,6 +649,19 @@ export function emitResultResponseEncoder(
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
   const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
+
+  if (kind === "sse") {
+    const result = buildSseResponsePlan(ctx, response.streamType!, response.projection);
+    if (!result.supported) {
+      reportUnsupportedResponseBody(ctx, op, response, result.reason);
+      return emitUnsupportedEncoderReason(
+        resultType,
+        `Operation "${op.operation.name}" declares an SSE response the emitter cannot serialize. ` +
+          `Regenerate after addressing the diagnostic.`,
+      );
+    }
+    return `ResponseEncoders.sse<${result.plan.itemType}>(${response.statusCode}, ${result.plan.transform})`;
+  }
 
   if (kind === "jsonl") {
     return encoderForKind(
@@ -1950,8 +1964,10 @@ function emitResponseDecisionEncoder(
     const kind = branch.response.isVoid
       ? "empty"
       : classifyResponseVariant(ctx, op, branch.response);
-    if (kind === "jsonl") {
-      throw new Error("JSONL response variants must be rejected before response dispatch emission");
+    if (kind === "jsonl" || kind === "sse") {
+      throw new Error(
+        "stream response variants must be rejected before response dispatch emission",
+      );
     }
     const branchEncoder =
       kind === "unsupported"
@@ -1976,7 +1992,7 @@ function emitResponseDecisionEncoder(
 }
 
 function emitResponseVariant(
-  kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl">,
+  kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl" | "sse">,
   response: SuccessResponseVariant,
   bodyTransform?: ResponseBodyTransform,
 ): string {
@@ -2018,6 +2034,7 @@ function emitResponseStatus(response: SuccessResponseVariant): string {
 type ResponseEncoderKind =
   | "json"
   | "jsonl"
+  | "sse"
   | "xml"
   | "text"
   | "bytes"
@@ -2033,8 +2050,8 @@ function classifyResponseVariant(
   if (!response.hasBody) return "empty";
 
   if (response.streamType) {
-    const contentType = response.contentType?.trim().toLowerCase();
-    if (contentType !== "application/jsonl") {
+    const contentType = response.contentType ? normalizeMediaType(response.contentType) : undefined;
+    if (contentType !== "application/jsonl" && contentType !== "text/event-stream") {
       reportUnsupportedResponseBody(
         ctx,
         op,
@@ -2044,7 +2061,7 @@ function classifyResponseVariant(
       return "unsupported";
     }
     if (response.body?.bodyKind !== "single") {
-      reportUnsupportedResponseBody(ctx, op, response, "JSONL streams require a single HTTP body");
+      reportUnsupportedResponseBody(ctx, op, response, "typed streams require a single HTTP body");
       return "unsupported";
     }
     if (
@@ -2056,11 +2073,11 @@ function classifyResponseVariant(
         ctx,
         op,
         response,
-        "JSONL response envelopes with dynamic status, headers, or an optional body require a dedicated encoder",
+        "typed response stream envelopes with dynamic status, headers, or an optional body require a dedicated encoder",
       );
       return "unsupported";
     }
-    return "jsonl";
+    return contentType === "application/jsonl" ? "jsonl" : "sse";
   }
 
   const body = response.body;
@@ -2113,7 +2130,7 @@ function reportUnsupportedResponseBody(
 function incompatibleResponseBodyReason(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
-  kind: Exclude<ResponseEncoderKind, "empty" | "jsonl" | "unsupported">,
+  kind: Exclude<ResponseEncoderKind, "empty" | "jsonl" | "sse" | "unsupported">,
 ): string | undefined {
   const body = response.body;
   if (!body) return "a response encoder was selected for an absent body";
@@ -2167,7 +2184,7 @@ function classifyResponseContentType(
   ctx: EmitterCtx,
   op: HttpOperation,
   response: SuccessResponseVariant,
-): Exclude<ResponseEncoderKind, "empty" | "jsonl"> {
+): Exclude<ResponseEncoderKind, "empty" | "jsonl" | "sse"> {
   const contentType = response.contentType;
   if (!contentType) return "json";
   const mediaType = normalizeMediaType(contentType);
@@ -2201,7 +2218,7 @@ function isWildcardMediaType(mediaType: string): boolean {
 }
 
 function encoderForKind(
-  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  kind: Exclude<ResponseEncoderKind, "unsupported" | "sse">,
   tsType: string,
   status: number,
   contentType: string | undefined,
