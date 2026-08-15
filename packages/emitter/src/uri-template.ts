@@ -12,7 +12,7 @@ export type RoutePatternToken =
 type ParsedRoutePatternToken =
   | RoutePatternToken
   | { readonly kind: "empty-label-record"; readonly name: string }
-  | { readonly kind: "empty-matrix-record"; readonly name: string };
+  | { readonly kind: "empty-matrix-record"; readonly name: string; readonly exploded: boolean };
 
 export interface RoutePattern {
   readonly segments: readonly (readonly RoutePatternToken[])[];
@@ -384,9 +384,6 @@ function lowerUriTemplateTextInternal(
       if (optionalPathNames.has(name)) {
         return failure(`matrix-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (scalarRecord && exploded) {
-        return failure("exploded matrix record expansions are not supported");
-      }
       if (!scalarPathNames.has(name) && !scalarArray && !scalarRecord) {
         return failure(
           `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
@@ -394,7 +391,7 @@ function lowerUriTemplateTextInternal(
       }
       matrixExpandedPathNames?.add(name);
       if (scalarRecord) {
-        segment.push({ kind: "empty-matrix-record", name });
+        segment.push({ kind: "empty-matrix-record", name, exploded });
       } else {
         appendLiteralToken(segment, `;${matrixVariables}=`);
         segment.push({ kind: "parameter", name });
@@ -568,7 +565,7 @@ function expandEmptyRecordPatterns(
         if (token.kind === "empty-label-record") {
           appendLiteralToken(present, ".");
         } else {
-          appendLiteralToken(present, `;${token.name}=`);
+          appendLiteralToken(present, token.exploded ? ";" : `;${token.name}=`);
         }
         present.push({ kind: "parameter", name: token.name });
         next.push(present, empty);

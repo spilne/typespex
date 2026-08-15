@@ -173,6 +173,7 @@ export function emitDecoder(
         optionValues.push("explode: true");
         if (param.style === "path") optionValues.push('recordSeparator: "/"');
         else if (param.style === "label") optionValues.push('recordSeparator: "."');
+        else if (param.style === "matrix") optionValues.push('recordSeparator: ";"');
       }
     } else if (isArrayInputType(ctx, param.param.type)) {
       optionValues.push("array: true");
