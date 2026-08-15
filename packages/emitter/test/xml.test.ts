@@ -335,6 +335,40 @@ describe("XML payloads", () => {
     const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
     expect(diagnostics).toContain("unsupported-request-body");
     expect(diagnostics).toContain('multipart part "value"');
-    expect(diagnostics).toContain("multipart parts support JSON, text, binary, or File content");
+    expect(diagnostics).toContain("binary bodies require the TypeSpec bytes scalar");
+  });
+
+  test("keeps textual XML multipart parts on the text decoder", () => {
+    const result = compileFixture(
+      "multipart-text-xml-parts",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service(#{ title: "MultipartTextXml" })
+        namespace MultipartTextXml;
+
+        model WildcardTextPart {
+          @header contentType: "text/*";
+          @body value: string;
+        }
+
+        model ExactTextPart {
+          @header contentType: "text/xml";
+          @body value: string;
+        }
+
+        @route("/values")
+        @post op update(@multipartBody body: {
+          wildcard: HttpPart<WildcardTextPart>;
+          exact: HttpPart<ExactTextPart>;
+        }): void;
+      `,
+    );
+    const operations = result.readFile("multipart-text-xml", "server-operations.ts");
+    const compact = operations.replace(/\s+/g, " ");
+    expect(compact).toContain('decoder: Decoders.string, kind: "text", contentTypes: ["text/*"]');
+    expect(compact).toContain('decoder: Decoders.string, kind: "text", contentTypes: ["text/xml"]');
+    result.typecheck("multipart-text-xml");
   });
 });

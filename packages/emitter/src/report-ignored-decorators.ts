@@ -8,7 +8,12 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
-import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
+import {
+  getBodyMediaKinds,
+  getMultipartPartMediaKinds,
+  normalizeMediaType,
+  type BodyMediaKind,
+} from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { propertiesShareSource } from "./http-models.js";
@@ -239,18 +244,14 @@ function checkRequestBody(
       }
 
       for (const contentType of part.body.contentTypes) {
-        for (const kind of getBodyMediaKinds([contentType])) {
+        for (const kind of getMultipartPartMediaKinds([contentType])) {
           const encodingReason = unsupportedBinaryScalarEncodingReason(
             ctx,
             part.body.type,
             part.body.property,
             kind,
           );
-          const reason =
-            encodingReason ??
-            (kind === "xml" || kind === "form" || kind === "multipart" || kind === "file"
-              ? "multipart parts support JSON, text, binary, or File content"
-              : unsupportedBodyKindReason(ctx, part.body.type, kind));
+          const reason = encodingReason ?? unsupportedBodyKindReason(ctx, part.body.type, kind);
           if (reason) {
             reportUnsupportedBody(
               ctx,

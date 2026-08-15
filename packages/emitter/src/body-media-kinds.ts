@@ -1,4 +1,5 @@
 export type BodyMediaKind = "json" | "xml" | "form" | "multipart" | "file" | "text" | "binary";
+export type MultipartPartMediaKind = "json" | "text" | "binary";
 
 const mediaTypeToken = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -65,6 +66,36 @@ export function getBodyMediaKinds(contentTypes: readonly string[]): BodyMediaKin
       kinds.add("form");
     } else if (mediaType.startsWith("multipart/")) {
       kinds.add("multipart");
+    } else if (isTextMediaType(mediaType)) {
+      kinds.add("text");
+    } else {
+      kinds.add("binary");
+    }
+  }
+
+  return [...kinds];
+}
+
+/** Maps multipart part content types to the representations supported by the multipart parser. */
+export function getMultipartPartMediaKinds(
+  contentTypes: readonly string[],
+): MultipartPartMediaKind[] {
+  const kinds = new Set<MultipartPartMediaKind>();
+
+  for (const contentType of contentTypes) {
+    const mediaType = normalizeMediaType(contentType);
+    if (!mediaType) continue;
+    if (mediaType === "*/*") {
+      kinds.add("json");
+      kinds.add("text");
+      kinds.add("binary");
+    } else if (mediaType === "application/*") {
+      kinds.add("json");
+      kinds.add("binary");
+    } else if (mediaType === "text/*") {
+      kinds.add("text");
+    } else if (isJsonMediaType(mediaType)) {
+      kinds.add("json");
     } else if (isTextMediaType(mediaType)) {
       kinds.add("text");
     } else {
