@@ -142,6 +142,9 @@ namespace UriTemplateApi;
 
 @route("/matrix-record/record{;param}")
 @get op matrixRecord(@path param: Record<int32>): void;
+
+@route("/matrix-record-explode/record{;param*}")
+@get op matrixRecordExplode(@path param: Record<int32>): void;
 `;
 
 const unsupportedUriTemplatesSpec = `
@@ -201,9 +204,6 @@ namespace InvalidUriTemplateApi;
 
 @route("/matrix-record/item{;x}")
 @get op recordMatrix(@path x: Record<string[]>): void;
-
-@route("/matrix-record-explode/item{;x*}")
-@get op explodedRecordMatrix(@path x: Record<string>): void;
 
 @route("/matrix-multiple/item{;x,y}")
 @get op multipleMatrix(@path x: string, @path y: string): void;
@@ -546,6 +546,28 @@ describe("URI-template lowering", () => {
     expect(operations).toMatch(
       /matrixRecord: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, emptyComposite: true \},\s*\)\.map/,
     );
+    expect(emittedRoutePatterns(operations, "/matrix-record-explode/record{;param*}")).toEqual([
+      {
+        segments: [
+          [{ kind: "literal", value: "matrix-record-explode" }],
+          [
+            { kind: "literal", value: "record;" },
+            { kind: "parameter", name: "param" },
+          ],
+        ],
+        trailingSlash: false,
+      },
+      {
+        segments: [
+          [{ kind: "literal", value: "matrix-record-explode" }],
+          [{ kind: "literal", value: "record" }],
+        ],
+        trailingSlash: false,
+      },
+    ]);
+    expect(operations).toMatch(
+      /matrixRecordExplode: RequestDecoders\.path\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, emptyComposite: true, explode: true, recordSeparator: ";" \},\s*\)\.map/,
+    );
     expect(operations).toContain('path: "/query/{id}"');
     expect(operations).not.toContain("{?tags");
     result.typecheck("uri-template-api");
@@ -591,6 +613,7 @@ describe("URI-template lowering", () => {
       matrixArray: capture("matrixArray"),
       matrixArrayExplode: capture("matrixArrayExplode"),
       matrixRecord: capture("matrixRecord"),
+      matrixRecordExplode: capture("matrixRecordExplode"),
     } as any);
 
     expect((await router.handle(new Request("http://localhost/suffix/example.json"))).status).toBe(
@@ -960,6 +983,39 @@ describe("URI-template lowering", () => {
       204,
     );
     expect(received.get("matrixRecord")).toEqual({ param: {} });
+
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record;a=1;b=2")))
+        .status,
+    ).toBe(204);
+    expect(received.get("matrixRecordExplode")).toEqual({ param: { a: 1, b: 2 } });
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/matrix-record-explode/record;a%3Bb%3Dc=1"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("matrixRecordExplode")).toEqual({ param: { "a;b=c": 1 } });
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record;a=1;b")))
+        .status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record;%E0%A4%A=1")))
+        .status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record;a=1;%61=2")))
+        .status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record;"))).status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/matrix-record-explode/record"))).status,
+    ).toBe(204);
+    expect(received.get("matrixRecordExplode")).toEqual({ param: {} });
   });
 
   test("reports unsafe path expressions before writing generated files", () => {
@@ -1000,7 +1056,6 @@ describe("URI-template lowering", () => {
     expect(diagnostics).toContain(
       'matrix-expanded path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     );
-    expect(diagnostics).toContain("exploded matrix record expansions are not supported");
     expect(diagnostics).toContain("matrix expansions must contain exactly one path variable");
     expect(diagnostics).toContain("path material appears after an exploded slash expansion");
     expect(diagnostics).toContain('slash-expanded scalar-array path variable "x" must be required');
@@ -1576,8 +1631,29 @@ describe("URI-template lowering", () => {
         path,
       ),
     ).toEqual({
-      ok: false,
-      reason: "exploded matrix record expansions are not supported",
+      ok: true,
+      value: {
+        path: "/matrix/record{;x*}",
+        routePatterns: [
+          {
+            segments: [
+              [{ kind: "literal", value: "matrix" }],
+              [
+                { kind: "literal", value: "record;" },
+                { kind: "parameter", name: "x" },
+              ],
+            ],
+            trailingSlash: false,
+          },
+          {
+            segments: [
+              [{ kind: "literal", value: "matrix" }],
+              [{ kind: "literal", value: "record" }],
+            ],
+            trailingSlash: false,
+          },
+        ],
+      },
     });
     expect(lowerUriTemplateText("/matrix/item{;x}", path, query, new Set(), path, path)).toEqual({
       ok: false,

@@ -577,6 +577,29 @@ describe("shared HTTP routes", () => {
     expect(result.listFiles("standard-matrix-record-path-collision-api")).toEqual([]);
   });
 
+  test("rejects collisions against exploded matrix record expansions", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "exploded-matrix-record-path-collision",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace ExplodedMatrixRecordPathCollisionApi;
+
+        @route("/items{;values*}") @get op matrix(@path values: Record<int32>): void;
+        @route("/items;{id}") @get op simple(@path id: string): void;
+        @route("/items") @get op empty(): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("ExplodedMatrixRecordPathCollisionApi.matrix");
+    expect(diagnostics).toContain("ExplodedMatrixRecordPathCollisionApi.simple");
+    expect(diagnostics).toContain("ExplodedMatrixRecordPathCollisionApi.empty");
+    expect(result.listFiles("exploded-matrix-record-path-collision-api")).toEqual([]);
+  });
+
   test("rejects collisions against exploded matrix array expansions", () => {
     const result = compileFixtureExpectingDiagnostics(
       "exploded-matrix-array-path-collision",
