@@ -55,6 +55,9 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
     xmlCodecDeclarations.length > 0 ||
     inputDecoderText.includes("XmlCodecs.") ||
     [...responseEncoders.values()].some((encoder) => encoder.includes("XmlCodecs."));
+  const usesStringifyJson = [...responseEncoders.values()].some((encoder) =>
+    encoder.includes("stringifyJson("),
+  );
   const lines: string[] = [];
 
   // --- Header ---
@@ -73,6 +76,7 @@ export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperat
   lines.push("  ResponseEncoders,");
   if (usesJsonSerializers) lines.push("  JsonSerializers,");
   if (usesXmlCodecs) lines.push("  XmlCodecs,");
+  if (usesStringifyJson) lines.push("  stringifyJson,");
   for (const name of getServerInputDecoderImports(ctx, httpOperations)) {
     lines.push(`  ${name},`);
   }
