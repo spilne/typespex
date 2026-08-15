@@ -43,6 +43,13 @@ export interface PathParameterDecodeOptions extends RequestParameterDecodeOption
   readonly emptyComposite?: boolean;
 }
 
+export interface QueryParameterDecodeOptions extends RequestParameterDecodeOptions {
+  /** Decode one non-exploded RFC 6570 record from alternating comma-separated components. */
+  readonly record?: boolean;
+  /** Treat an omitted RFC 6570 record expansion as empty and reject an explicit empty value. */
+  readonly emptyComposite?: boolean;
+}
+
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
 
 // ---------------------------------------------------------------------------
@@ -97,14 +104,14 @@ export function requiredPath<A>(
     const decodedValue: DecoderResult<string | string[] | Record<string, string>> | undefined =
       options.emptyComposite && raw === undefined
         ? options.record
-          ? uriDecodeRecord("", recordSeparator, options.explode === true)
+          ? decodeDelimitedRecord("", recordSeparator, options.explode === true, uriDecode)
           : Either.right([])
         : options.emptyComposite && raw === ""
           ? fail("", "Expected an empty composite path expansion to be omitted.")
           : raw === undefined
             ? undefined
             : options.record
-              ? uriDecodeRecord(raw, recordSeparator, options.explode === true)
+              ? decodeDelimitedRecord(raw, recordSeparator, options.explode === true, uriDecode)
               : options.array
                 ? uriDecodeArray(raw.split(arraySeparator))
                 : uriDecode(raw);
@@ -121,8 +128,17 @@ export function requiredPath<A>(
 export function requiredQuery<A>(
   name: string,
   decoder: Decoder<A>,
-  options: RequestParameterDecodeOptions = {},
+  options: QueryParameterDecodeOptions = {},
 ): RequestDecoder<A> {
+  if (options.array && options.record) {
+    throw new TypeError("Query parameters cannot use array and record decoding together.");
+  }
+  if (options.record && options.explode === true) {
+    throw new TypeError("Exploded query records require key-based decoding.");
+  }
+  if (options.emptyComposite && !options.record) {
+    throw new TypeError("Empty query composite handling requires record decoding.");
+  }
   const prefix = `$query.${name}`;
   return createRequestDecoder((input) => {
     const value = readQueryValue(input, name, options);
@@ -398,13 +414,26 @@ function createRequestInputSource(
 function readQueryValue(
   input: RequestInputSource,
   name: string,
-  options: RequestParameterDecodeOptions,
-): DecoderResult<string | readonly string[] | undefined> {
+  options: QueryParameterDecodeOptions,
+): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
   if (input.rawQuery !== undefined) {
     return readRawQueryValue(input.rawQuery, name, options);
   }
   const query = input.query;
-  if (!query.has(name)) return Either.right(undefined);
+  if (!query.has(name)) {
+    return options.record && options.emptyComposite ? Either.right({}) : Either.right(undefined);
+  }
+  if (options.record) {
+    const values = query.getAll(name);
+    if (values.length > 1) {
+      return fail("", "Expected one comma-delimited query record parameter.");
+    }
+    const value = values[0]!;
+    if (options.emptyComposite && value === "") {
+      return fail("", "Expected an empty composite query expansion to be omitted.");
+    }
+    return decodeDelimitedRecord(value, ",", false, decodedQueryComponent);
+  }
   if (options.array && options.explode === false) {
     if (query.getAll(name).length > 1) {
       return fail("", "Expected one comma-delimited query parameter.");
@@ -419,8 +448,8 @@ function readQueryValue(
 function readRawQueryValue(
   rawQuery: string,
   name: string,
-  options: RequestParameterDecodeOptions,
-): DecoderResult<string | readonly string[] | undefined> {
+  options: QueryParameterDecodeOptions,
+): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
   const rawValues: string[] = [];
   for (const pair of rawQuery.split("&")) {
     const equals = pair.indexOf("=");
@@ -430,7 +459,19 @@ function readRawQueryValue(
     rawValues.push(equals === -1 ? "" : pair.substring(equals + 1));
   }
 
-  if (rawValues.length === 0) return Either.right(undefined);
+  if (rawValues.length === 0) {
+    return options.record && options.emptyComposite ? Either.right({}) : Either.right(undefined);
+  }
+  if (options.record) {
+    if (rawValues.length > 1) {
+      return fail("", "Expected one comma-delimited query record parameter.");
+    }
+    const rawValue = rawValues[0]!;
+    if (options.emptyComposite && rawValue === "") {
+      return fail("", "Expected an empty composite query expansion to be omitted.");
+    }
+    return decodeDelimitedRecord(rawValue, ",", false, decodeQueryComponent);
+  }
   if (options.array && options.explode === false) {
     if (rawValues.length > 1) {
       return fail("", "Expected one comma-delimited query parameter.");
@@ -458,6 +499,10 @@ function decodeQueryComponent(value: string): DecoderResult<string> {
   } catch {
     return fail("", "Expected a valid percent-encoded query value.");
   }
+}
+
+function decodedQueryComponent(value: string): DecoderResult<string> {
+  return Either.right(value);
 }
 
 function splitCommaSeparated(value: string): string[] {
@@ -488,10 +533,11 @@ function uriDecodeArray(values: readonly string[]): DecoderResult<string[]> {
   });
 }
 
-function uriDecodeRecord(
+function decodeDelimitedRecord(
   raw: string,
   separator: string,
   exploded: boolean,
+  decodeComponent: (value: string) => DecoderResult<string>,
 ): DecoderResult<Record<string, string>> {
   const result: Record<string, string> = {};
   if (raw === "") return Either.right(result);
@@ -521,9 +567,9 @@ function uriDecodeRecord(
   }
 
   for (const [rawKey, rawValue, componentIndex] of entries) {
-    const key = uriDecode(rawKey);
+    const key = decodeComponent(rawKey);
     if (isLeft(key)) return prefixIssues(key, `[${componentIndex}]`);
-    const value = uriDecode(rawValue);
+    const value = decodeComponent(rawValue);
     if (isLeft(value)) {
       return prefixIssues(value, exploded ? `[${componentIndex}]` : `[${componentIndex + 1}]`);
     }

@@ -420,11 +420,12 @@ function unsupportedParameterTypeReason(
           return "records may contain only scalar, literal, or enum values";
         }
         if (
-          parameter.type === "path" &&
-          (parameter.style === "simple" ||
-            parameter.style === "path" ||
-            parameter.style === "label" ||
-            parameter.style === "matrix")
+          (parameter.type === "query" && !parameter.explode) ||
+          (parameter.type === "path" &&
+            (parameter.style === "simple" ||
+              parameter.style === "path" ||
+              parameter.style === "label" ||
+              parameter.style === "matrix"))
         ) {
           return undefined;
         }

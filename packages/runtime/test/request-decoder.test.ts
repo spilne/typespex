@@ -404,6 +404,90 @@ describe("http request decoders (sync)", () => {
     expect(result).toEqual(Either.right(["one", "two,three"]));
   });
 
+  test("standard query records split raw components before form decoding", () => {
+    const decoder = RequestDecoders.query("values", Decoders.record(Decoders.integer), {
+      emptyComposite: true,
+      explode: false,
+      record: true,
+    });
+
+    const populated = decodeRequestInput(
+      decoder,
+      new Request("http://localhost/items?values=a%2Cb,1,first+name,2,__proto__,3,constructor,4"),
+      {},
+    );
+    expect(populated._tag).toBe("Right");
+    if (populated._tag === "Right") {
+      expect(populated.right["a,b"]).toBe(1);
+      expect(populated.right["first name"]).toBe(2);
+      expect(populated.right["__proto__"]).toBe(3);
+      expect(populated.right.constructor).toBe(4);
+      expect(Object.getPrototypeOf(populated.right)).toBe(Object.prototype);
+    }
+
+    expect(decodeRequestInput(decoder, new Request("http://localhost/items"), {})).toEqual(
+      Either.right({}),
+    );
+    expect(
+      decodeRequestInput(decoder, new Request("http://localhost/items?other=value"), {}),
+    ).toEqual(Either.right({}));
+  });
+
+  test("standard query records reject ambiguous, malformed, and invalid values", () => {
+    const decoder = RequestDecoders.query("values", Decoders.record(Decoders.integer), {
+      emptyComposite: true,
+      explode: false,
+      record: true,
+    });
+    const cases = [
+      [
+        "http://localhost/items?values=a,1&values=b,2",
+        "$query.values",
+        "Expected one comma-delimited query record parameter.",
+      ],
+      [
+        "http://localhost/items?values=",
+        "$query.values",
+        "Expected an empty composite query expansion to be omitted.",
+      ],
+      [
+        "http://localhost/items?values=a,1,b",
+        "$query.values",
+        'Expected alternating record keys and values separated by ",".',
+      ],
+      [
+        "http://localhost/items?values=%E0%A4%A,1",
+        "$query.values[0]",
+        "Expected a valid percent-encoded query value.",
+      ],
+      ["http://localhost/items?values=a,1,%61,2", "$query.values[2]", 'Duplicate record key "a".'],
+    ] as const;
+
+    for (const [url, path, message] of cases) {
+      expect(decodeRequestInput(decoder, new Request(url), {})).toEqual(
+        Either.left(new ValidationError([{ path, message }])),
+      );
+    }
+  });
+
+  test("query record options reject incompatible decoder shapes", () => {
+    expect(() =>
+      RequestDecoders.query("values", Decoders.record(Decoders.string), {
+        array: true,
+        record: true,
+      }),
+    ).toThrow("Query parameters cannot use array and record decoding together.");
+    expect(() =>
+      RequestDecoders.query("values", Decoders.record(Decoders.string), {
+        explode: true,
+        record: true,
+      }),
+    ).toThrow("Exploded query records require key-based decoding.");
+    expect(() => RequestDecoders.query("value", Decoders.string, { emptyComposite: true })).toThrow(
+      "Empty query composite handling requires record decoding.",
+    );
+  });
+
   test("rejects malformed encoding in a non-exploded query array", () => {
     const decoder = RequestDecoders.query("values", Decoders.array(Decoders.string), {
       array: true,
