@@ -552,9 +552,10 @@ names, and unsupported `@discriminated` configurations. They also reject ambiguo
 unions that require different JSON transforms, parameter serialization styles, media/body shape
 combinations, and output layouts that the generated runtime cannot represent safely.
 Authentication and authorization enforcement belongs in application middleware. Supported
-response bodies are JSON, `text/*`,
-`application/octet-stream`, resolved raw `File` media types, and empty responses. Multipart
-response bodies remain unsupported.
+response bodies are JSON, direct `JsonlStream<T>` responses backed by `AsyncIterable<T>`, `text/*`,
+`application/octet-stream`, resolved raw `File` media types, and empty responses. Typed request
+streams, non-JSONL stream protocols, response unions or additional response metadata involving
+streams, and multipart response bodies remain unsupported.
 
 ## Regeneration
 
