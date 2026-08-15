@@ -44,10 +44,12 @@ export interface PathParameterDecodeOptions extends RequestParameterDecodeOption
 }
 
 export interface QueryParameterDecodeOptions extends RequestParameterDecodeOptions {
-  /** Decode an RFC 6570 record from one named value or from exploded query entries. */
+  /** Decode an RFC 6570 associative composite from one named value or exploded query entries. */
   readonly record?: boolean;
-  /** Treat an omitted non-exploded record as empty and reject an explicit empty value. */
+  /** Treat an omitted composite as empty; for named records, reject an explicit empty value. */
   readonly emptyComposite?: boolean;
+  /** The decoded query names owned by a finite exploded object. */
+  readonly includedNames?: readonly string[];
   /** Query names owned by other parameters and excluded from an exploded record. */
   readonly excludedNames?: readonly string[];
 }
@@ -138,13 +140,21 @@ export function requiredQuery<A>(
   if (options.emptyComposite && !options.record) {
     throw new TypeError("Empty query composite handling requires record decoding.");
   }
-  if (options.excludedNames !== undefined && (!options.record || options.explode !== true)) {
-    throw new TypeError("Query name exclusions require exploded record decoding.");
+  if (
+    (options.includedNames !== undefined || options.excludedNames !== undefined) &&
+    (!options.record || options.explode !== true)
+  ) {
+    throw new TypeError("Query name selection requires exploded record decoding.");
   }
+  if (options.includedNames !== undefined && options.excludedNames !== undefined) {
+    throw new TypeError("Exploded query decoding cannot combine included and excluded names.");
+  }
+  const includedNames =
+    options.includedNames === undefined ? undefined : new Set(options.includedNames);
   const excludedNames = new Set(options.excludedNames ?? []);
   const prefix = `$query.${name}`;
   return createRequestDecoder((input) => {
-    const value = readQueryValue(input, name, options, excludedNames);
+    const value = readQueryValue(input, name, options, includedNames, excludedNames);
     if (isLeft(value)) return prefixIssues(value, prefix);
     const result = decoder.decode(value.right);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
@@ -418,12 +428,23 @@ function readQueryValue(
   input: RequestInputSource,
   name: string,
   options: QueryParameterDecodeOptions,
+  includedNames: ReadonlySet<string> | undefined,
   excludedNames: ReadonlySet<string>,
 ): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
   if (options.record && options.explode === true) {
     return input.rawQuery === undefined
-      ? readExplodedQueryRecord(input.query, excludedNames)
-      : readRawExplodedQueryRecord(input.rawQuery, excludedNames);
+      ? readExplodedQueryRecord(
+          input.query,
+          includedNames,
+          excludedNames,
+          options.emptyComposite === true,
+        )
+      : readRawExplodedQueryRecord(
+          input.rawQuery,
+          includedNames,
+          excludedNames,
+          options.emptyComposite === true,
+        );
   }
   if (input.rawQuery !== undefined) {
     return readRawQueryValue(input.rawQuery, name, options);
@@ -504,27 +525,38 @@ function readRawQueryValue(
 
 function readExplodedQueryRecord(
   query: URLSearchParams,
+  includedNames: ReadonlySet<string> | undefined,
   excludedNames: ReadonlySet<string>,
-): DecoderResult<Record<string, string>> {
+  emptyComposite: boolean,
+): DecoderResult<Record<string, string> | undefined> {
   const result: Record<string, string> = {};
+  let ownedEntry = false;
   let index = 0;
   for (const [key, value] of query.entries()) {
     const path = `[${index}]`;
     index += 1;
-    if (excludedNames.has(key)) continue;
+    if (!ownsExplodedQueryName(key, includedNames, excludedNames)) continue;
+    ownedEntry = true;
     const defined = defineRecordEntry(result, key, value, path);
     if (isLeft(defined)) return defined;
   }
-  return Either.right(result);
+  return Either.right(
+    includedNames !== undefined && !ownedEntry && !emptyComposite ? undefined : result,
+  );
 }
 
 function readRawExplodedQueryRecord(
   rawQuery: string,
+  includedNames: ReadonlySet<string> | undefined,
   excludedNames: ReadonlySet<string>,
-): DecoderResult<Record<string, string>> {
+  emptyComposite: boolean,
+): DecoderResult<Record<string, string> | undefined> {
   const result: Record<string, string> = {};
-  if (rawQuery === "") return Either.right(result);
+  if (rawQuery === "") {
+    return Either.right(includedNames !== undefined && !emptyComposite ? undefined : result);
+  }
 
+  let ownedEntry = false;
   let index = 0;
   for (const pair of rawQuery.split("&")) {
     const path = `[${index}]`;
@@ -535,15 +567,29 @@ function readRawExplodedQueryRecord(
     const rawKey = equals === -1 ? pair : pair.substring(0, equals);
     const rawValue = equals === -1 ? "" : pair.substring(equals + 1);
     const key = decodeQueryComponent(rawKey);
-    if (isLeft(key)) return prefixIssues(key, `${path}.key`);
-    if (excludedNames.has(key.right)) continue;
+    if (isLeft(key)) {
+      if (includedNames !== undefined) continue;
+      return prefixIssues(key, `${path}.key`);
+    }
+    if (!ownsExplodedQueryName(key.right, includedNames, excludedNames)) continue;
+    ownedEntry = true;
     const value = decodeQueryComponent(rawValue);
     if (isLeft(value)) return prefixIssues(value, `${path}.value`);
     const defined = defineRecordEntry(result, key.right, value.right, path);
     if (isLeft(defined)) return defined;
   }
 
-  return Either.right(result);
+  return Either.right(
+    includedNames !== undefined && !ownedEntry && !emptyComposite ? undefined : result,
+  );
+}
+
+function ownsExplodedQueryName(
+  name: string,
+  includedNames: ReadonlySet<string> | undefined,
+  excludedNames: ReadonlySet<string>,
+): boolean {
+  return includedNames === undefined ? !excludedNames.has(name) : includedNames.has(name);
 }
 
 function decodeQueryComponent(value: string): DecoderResult<string> {

@@ -12,6 +12,13 @@ import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./bod
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { propertiesShareSource } from "./http-models.js";
+import {
+  getExplodedQueryModelProperties,
+  isExplodedQueryModelCandidate,
+  isExplodedQueryRecord,
+  isWireScalarType,
+  unsupportedExplodedQueryModelReason,
+} from "./http-parameter-shapes.js";
 import { $lib } from "./lib.js";
 import {
   getAdditionalPropertiesValue,
@@ -301,7 +308,7 @@ function unsupportedBodyKindReason(
         ? undefined
         : "URL-encoded forms require a flat model or record with scalar or scalar-array fields";
     case "text":
-      return isWireScalarType(ctx, type)
+      return isWireScalarType(type)
         ? undefined
         : "text bodies require a scalar, literal, or enum type";
     case "binary":
@@ -329,12 +336,12 @@ function isFlatFormBodyType(ctx: EmitterCtx, type: Type, projection?: PayloadPro
 }
 
 function isWireScalarOrArrayType(ctx: EmitterCtx, type: Type): boolean {
-  if (isWireScalarType(ctx, type)) return true;
+  if (isWireScalarType(type)) return true;
   return (
     type.kind === "Model" &&
     isArrayModelType(ctx.program, type) &&
     type.indexer !== undefined &&
-    isWireScalarType(ctx, type.indexer.value)
+    isWireScalarType(type.indexer.value)
   );
 }
 
@@ -359,6 +366,18 @@ function checkHttpParameter(
   const typeReason = unsupportedParameterTypeReason(ctx, parameter);
   if (typeReason) {
     reportUnsupportedParameter(ctx, parameter, typeReason);
+    return;
+  }
+
+  const explodedModelProperties = getExplodedQueryModelProperties(ctx, parameter);
+  if (explodedModelProperties) {
+    const conflict = explodedQueryModelConflictReason(
+      ctx,
+      operation,
+      parameter,
+      explodedModelProperties,
+    );
+    if (conflict) reportUnsupportedParameter(ctx, parameter, conflict);
     return;
   }
 
@@ -393,12 +412,37 @@ function checkHttpParameter(
   }
 }
 
-function isExplodedQueryRecord(ctx: EmitterCtx, parameter: HttpOperationParameter): boolean {
-  if (parameter.type !== "query" || !parameter.explode || parameter.param.type.kind !== "Model") {
-    return false;
+function explodedQueryModelConflictReason(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+  parameter: HttpOperationParameter,
+  properties: readonly ModelProperty[],
+): string | undefined {
+  const parameters = operation.parameters.parameters;
+  const parameterIndex = parameters.indexOf(parameter);
+
+  for (const property of properties) {
+    for (const [candidateIndex, candidate] of parameters.entries()) {
+      if (candidate.type !== "query") continue;
+      if (candidate === parameter || isExplodedQueryRecord(ctx, candidate)) continue;
+
+      const candidateProperties = getExplodedQueryModelProperties(ctx, candidate);
+      if (candidateProperties) {
+        if (
+          candidateIndex > parameterIndex &&
+          candidateProperties.some((candidateProperty) => candidateProperty.name === property.name)
+        ) {
+          return `exploded query model property ${JSON.stringify(property.name)} is claimed by parameters ${JSON.stringify(parameter.param.name)} and ${JSON.stringify(candidate.param.name)}`;
+        }
+        continue;
+      }
+
+      if (candidate.name === property.name) {
+        return `exploded query model property ${JSON.stringify(property.name)} conflicts with query parameter ${JSON.stringify(candidate.param.name)}`;
+      }
+    }
   }
-  const collection = getPayloadCollection(ctx, parameter.param.type);
-  return collection?.kind === "record" && isWireScalarType(ctx, collection.value);
+  return undefined;
 }
 
 function isSupportedReservedPathParameter(
@@ -436,9 +480,12 @@ function unsupportedParameterTypeReason(
   const type = parameter.param.type;
   if (type.kind === "Model") {
     if (!isArrayModelType(ctx.program, type)) {
+      if (isExplodedQueryModelCandidate(ctx, parameter)) {
+        return unsupportedExplodedQueryModelReason(ctx, parameter);
+      }
       const collection = getPayloadCollection(ctx, type);
       if (collection?.kind === "record") {
-        if (!isWireScalarType(ctx, collection.value)) {
+        if (!isWireScalarType(collection.value)) {
           return "records may contain only scalar, literal, or enum values";
         }
         if (
@@ -454,7 +501,7 @@ function unsupportedParameterTypeReason(
       }
       return "object and record values require location-specific serialization that is not implemented";
     }
-    if (!type.indexer || !isWireScalarType(ctx, type.indexer.value)) {
+    if (!type.indexer || !isWireScalarType(type.indexer.value)) {
       return "arrays may contain only scalar, literal, or enum values";
     }
     return undefined;
@@ -466,34 +513,12 @@ function unsupportedParameterTypeReason(
 
   if (
     type.kind === "Union" &&
-    [...type.variants.values()].some((variant) => !isWireScalarType(ctx, variant.type))
+    [...type.variants.values()].some((variant) => !isWireScalarType(variant.type))
   ) {
     return "unions in HTTP parameters may contain only scalar, literal, or enum values";
   }
 
   return undefined;
-}
-
-function isWireScalarType(ctx: EmitterCtx, type: Type): boolean {
-  switch (type.kind) {
-    case "Scalar":
-    case "Enum":
-    case "String":
-    case "StringTemplate":
-    case "Number":
-    case "Boolean":
-    case "Intrinsic":
-      return true;
-    case "Union":
-      return [...type.variants.values()].every((variant) => isWireScalarType(ctx, variant.type));
-    case "UnionVariant":
-    case "ModelProperty":
-      return isWireScalarType(ctx, type.type);
-    case "Model":
-      return false;
-    default:
-      return false;
-  }
 }
 
 function reportUnsupportedParameter(

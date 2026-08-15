@@ -1,4 +1,9 @@
-import type { HttpOperation, HttpOperationMultipartBody, HttpOperationPart } from "@typespec/http";
+import type {
+  HttpOperation,
+  HttpOperationMultipartBody,
+  HttpOperationParameter,
+  HttpOperationPart,
+} from "@typespec/http";
 import { isHeader } from "@typespec/http";
 import type {
   DiscriminatedUnion,
@@ -20,6 +25,7 @@ import {
 } from "./discriminated-unions.js";
 import { buildInputType } from "./emit-server-common.js";
 import { propertiesShareSource } from "./http-models.js";
+import { getExplodedQueryModelProperties, isExplodedQueryRecord } from "./http-parameter-shapes.js";
 import { getJsonPropertyWireName } from "./json-wire-transforms.js";
 import {
   getAdditionalPropertiesValue,
@@ -192,11 +198,12 @@ export function emitDecoder(
     });
   }
   for (const param of queryParams) {
+    const explodedModelProperties = getExplodedQueryModelProperties(ctx, param);
     const valueDecoder = emitDecoderExpression(
       ctx,
       dec,
       param.param.type,
-      "text",
+      explodedModelProperties ? "form" : "text",
       new Set(),
       param.param,
     );
@@ -208,15 +215,25 @@ export function emitDecoder(
       const optionValues = ["record: true"];
       if (param.explode) {
         optionValues.push("explode: true");
-        const excludedNames = queryParams
-          .filter((candidate) => candidate !== param)
-          .map((candidate) => tsLiteral(candidate.name));
+        const excludedNames = [
+          ...new Set(
+            queryParams
+              .filter((candidate) => candidate !== param)
+              .flatMap((candidate) => queryParameterClaimedNames(ctx, candidate)),
+          ),
+        ].map(tsLiteral);
         if (excludedNames.length > 0) {
           optionValues.push(`excludedNames: [${excludedNames.join(", ")}]`);
         }
       } else {
         optionValues.push("emptyComposite: true", "explode: false");
       }
+      options = `, { ${optionValues.join(", ")} }`;
+    } else if (explodedModelProperties) {
+      const optionValues = ["record: true", "explode: true"];
+      if (!param.param.optional) optionValues.push("emptyComposite: true");
+      const includedNames = explodedModelProperties.map((property) => tsLiteral(property.name));
+      optionValues.push(`includedNames: [${includedNames.join(", ")}]`);
       options = `, { ${optionValues.join(", ")} }`;
     } else if (isArrayInputType(ctx, param.param.type)) {
       options = `, { array: true, explode: ${param.explode} }`;
@@ -319,6 +336,17 @@ export function emitDecoder(
     isAsync: true,
     hoistedDecoders: buildHoistedDecoders(ctx, dec),
   };
+}
+
+function queryParameterClaimedNames(
+  ctx: EmitterCtx,
+  parameter: HttpOperationParameter,
+): readonly string[] {
+  const explodedModelProperties = getExplodedQueryModelProperties(ctx, parameter);
+  if (explodedModelProperties) {
+    return explodedModelProperties.map((property) => property.name);
+  }
+  return isExplodedQueryRecord(ctx, parameter) ? [] : [parameter.name];
 }
 
 /** Emits the trailing body decode options argument, or an empty string. */

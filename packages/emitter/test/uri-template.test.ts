@@ -80,6 +80,43 @@ namespace UriTemplateApi;
 @route("/query-record-explode{?param*,tag}")
 @get op queryRecordExplode(param: Record<int32>, tag?: string): void;
 
+model QueryExpansionBase {
+  field: string;
+}
+
+enum QueryExpansionMode {
+  active: "active",
+  paused: "paused",
+}
+
+model QueryExpansionParameters extends QueryExpansionBase {
+  value: string;
+  @minValue(1) count?: int32;
+  enabled: boolean;
+  mode: QueryExpansionMode;
+  @encode(string) sequence?: int64;
+}
+
+@route("/query-model-explode{?param*,tag}")
+@get op queryModelExplode(param: QueryExpansionParameters, tag?: string): void;
+
+@route("/query-model-inline{?filter*}")
+@get op queryModelInline(filter: { role: string; active: boolean }): void;
+
+@route("/query-model-optional{?filter*}")
+@get op queryModelOptional(filter?: { value: string }): void;
+
+model QueryModelKeys {
+  field: string;
+}
+
+@route("/query-model-record{?parameters*,extra*,tag}")
+@get op queryModelRecord(
+  parameters: QueryModelKeys,
+  extra: Record<int32>,
+  tag?: string,
+): void;
+
 @route("/optional{/name}")
 @get op optional(@path name?: string): void;
 
@@ -583,6 +620,13 @@ describe("URI-template lowering", () => {
     expect(operations).toMatch(
       /queryRecordExplode: RequestDecoders\.combine\([\s\S]*?RequestDecoders\.query\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, explode: true, excludedNames: \["tag"\] \},\s*\)[\s\S]*?RequestDecoders\.query\("tag", Decoders\.string\.optional\(\)\)[\s\S]*?\(param, tag\) => \(\{ param, tag \}\)/,
     );
+    expect(operations).toMatch(
+      /queryModelExplode: RequestDecoders\.combine\([\s\S]*?RequestDecoders\.query\(\s*"param",\s*Decoders\.object<QueryExpansionParameters>\([\s\S]*?\),\s*\{\s*record: true,\s*explode: true,\s*emptyComposite: true,\s*includedNames: \[[\s\S]*?"value"[\s\S]*?"count"[\s\S]*?"enabled"[\s\S]*?"mode"[\s\S]*?"sequence"[\s\S]*?"field"[\s\S]*?\]\s*\},\s*\)[\s\S]*?RequestDecoders\.query\("tag", Decoders\.string\.optional\(\)\)/,
+    );
+    expect(operations).toContain("Decoders.encodedBigIntString");
+    expect(operations).toMatch(
+      /queryModelRecord: RequestDecoders\.combine\([\s\S]*?emptyComposite: true[\s\S]*?includedNames: \["field"\][\s\S]*?RequestDecoders\.query\(\s*"extra",\s*Decoders\.record\([\s\S]*?excludedNames: \["field", "tag"\][\s\S]*?RequestDecoders\.query\("tag", Decoders\.string\.optional\(\)\)/,
+    );
     result.typecheck("uri-template-api");
 
     const { createUriTemplateApiServerRouter } = await import(
@@ -605,6 +649,10 @@ describe("URI-template lowering", () => {
       query: capture("query"),
       queryRecord: capture("queryRecord"),
       queryRecordExplode: capture("queryRecordExplode"),
+      queryModelExplode: capture("queryModelExplode"),
+      queryModelInline: capture("queryModelInline"),
+      queryModelOptional: capture("queryModelOptional"),
+      queryModelRecord: capture("queryModelRecord"),
       optional: capture("optional"),
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
@@ -745,6 +793,95 @@ describe("URI-template lowering", () => {
     expect(
       (await router.handle(new Request("http://localhost/query-record-explode?%E0%A4%A=1"))).status,
     ).toBe(400);
+
+    expect(
+      (
+        await router.handle(
+          new Request(
+            "http://localhost/query-model-explode?f%69eld=status&value=a%26b%3Dc&count=2&enabled=true&mode=active&sequence=9223372036854775807&t%61g=keep&ignored=value",
+          ),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("queryModelExplode")).toEqual({
+      param: {
+        field: "status",
+        value: "a&b=c",
+        count: 2,
+        enabled: true,
+        mode: "active",
+        sequence: 9223372036854775807n,
+      },
+      tag: "keep",
+    });
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/query-model-explode?field=status&enabled=true&mode=active"),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await router.handle(
+          new Request(
+            "http://localhost/query-model-explode?field=status&value=active&count=0&enabled=true&mode=active",
+          ),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await router.handle(
+          new Request(
+            "http://localhost/query-model-explode?field=status&f%69eld=duplicate&value=active&enabled=true&mode=active",
+          ),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await router.handle(
+          new Request(
+            "http://localhost/query-model-explode?field=status&value=%E0%A4%A&enabled=true&mode=active",
+          ),
+        )
+      ).status,
+    ).toBe(400);
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/query-model-inline?role=admin&active=false&ignored=value"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("queryModelInline")).toEqual({
+      filter: { role: "admin", active: false },
+    });
+    expect(
+      (await router.handle(new Request("http://localhost/query-model-optional?ignored=value")))
+        .status,
+    ).toBe(204);
+    expect(received.get("queryModelOptional")).toEqual({ filter: undefined });
+    expect(
+      (await router.handle(new Request("http://localhost/query-model-optional?value=present")))
+        .status,
+    ).toBe(204);
+    expect(received.get("queryModelOptional")).toEqual({ filter: { value: "present" } });
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/query-model-record?field=status&a=1&extra=2&tag=keep"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("queryModelRecord")).toEqual({
+      parameters: { field: "status" },
+      extra: { a: 1, extra: 2 },
+      tag: "keep",
+    });
 
     expect((await router.handle(new Request("http://localhost/optional"))).status).toBe(204);
     expect(received.get("optional")).toEqual({ name: undefined });
