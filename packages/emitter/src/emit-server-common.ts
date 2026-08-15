@@ -21,6 +21,7 @@ import {
   isHeader,
   isStatusCode,
 } from "@typespec/http";
+import { getStreamMetadata } from "@typespec/http/experimental";
 import { isJsonMediaType, isTextMediaType, normalizeMediaType } from "./body-media-kinds.js";
 import {
   allocateGeneratedNames,
@@ -62,7 +63,6 @@ import {
 } from "./payload-context.js";
 import { scalarToTs } from "./scalar-map.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
-import { isTypedStream } from "./stream-types.js";
 import { getRequestInputPlan, shouldFlattenBodyType } from "./request-input-plan.js";
 import { isEntityLike } from "./type-guards.js";
 import {
@@ -103,12 +103,20 @@ function collectTypeNames(ctx: EmitterCtx, op: HttpOperation, names: Set<string>
   if (op.parameters.body?.type) {
     addModelName(ctx, op.parameters.body.type, names, new Set());
   }
+  const requestStream = getStreamMetadata(ctx.program, op.parameters);
+  if (requestStream) {
+    addModelName(ctx, requestStream.streamType, names, new Set());
+  }
 
   addModelName(ctx, op.operation.returnType, names, new Set());
 
   for (const resp of op.responses) {
     addModelName(ctx, resp.type, names, new Set());
     for (const respBody of resp.responses) {
+      const responseStream = getStreamMetadata(ctx.program, respBody);
+      if (responseStream) {
+        addModelName(ctx, responseStream.streamType, names, new Set());
+      }
       if (respBody.body?.type) {
         addModelName(ctx, respBody.body.type, names, new Set());
       }
@@ -566,6 +574,22 @@ export function emitResultResponseEncoder(
   resultType: string,
 ): string {
   const responses = collectResponseVariants(ctx, op);
+  const streamResponses = responses.filter((response) => response.streamType !== undefined);
+  if (streamResponses.length > 0 && responses.length > 1) {
+    for (const response of streamResponses) {
+      reportUnsupportedResponseBody(
+        ctx,
+        op,
+        response,
+        "typed stream responses cannot be combined with other response variants",
+      );
+    }
+    return emitUnsupportedEncoderReason(
+      resultType,
+      `Operation "${op.operation.name}" combines a typed stream with other response variants. ` +
+        `@typespex/emitter cannot serialize this; regenerate after addressing the diagnostic.`,
+    );
+  }
   if (responses.length > 1) {
     const branches = buildResponseBranches(ctx, op, responses);
     if (branches.length > 0) {
@@ -600,6 +624,16 @@ export function emitResultResponseEncoder(
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
   const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
+
+  if (kind === "jsonl") {
+    return encoderForKind(
+      kind,
+      resultType,
+      response.statusCode,
+      bodyTransform,
+      responseStreamItemTypeToTs(ctx, response),
+    );
+  }
 
   if (shouldUseVariantEncoder(response)) {
     return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
@@ -642,7 +676,7 @@ function getResponseBodyTransform(
   response: SuccessResponseVariant,
   kind: Exclude<ResponseEncoderKind, "unsupported">,
 ): ResponseBodyTransform | undefined {
-  if (kind !== "json" && kind !== "text") return undefined;
+  if (kind !== "json" && kind !== "jsonl" && kind !== "text") return undefined;
   return getResponseWireTransform(ctx, op, response, kind === "text" ? "text" : "value");
 }
 
@@ -655,13 +689,14 @@ function getResponseWireTransform(
   const body = response.body;
   const serializationType = response.serializationType;
   if (!body || body.bodyKind !== "single" || !serializationType) return undefined;
+  const target = response.streamType ? undefined : body.property;
 
   const reason = unsupportedJsonWireTransformReason(
     ctx,
     serializationType,
     response.projection,
     new Set(),
-    body.property,
+    target,
   );
   if (reason) {
     if (encodingContext === "text") {
@@ -680,17 +715,19 @@ function getResponseWireTransform(
     ctx,
     serializationType,
     response.projection,
-    body.property,
+    target,
     encodingContext,
   );
   if (!serializer) return undefined;
   return {
     serializer,
     bodyType: payloadTypeToTs(ctx, serializationType, response.projection),
-    optional: body.property?.optional === true,
-    path: response.bodyProperty
-      ? tsPropertyAccess("$response", response.bodyProperty)
-      : "$response",
+    optional: response.streamType ? false : body.property?.optional === true,
+    path: response.streamType
+      ? "$response[]"
+      : response.bodyProperty
+        ? tsPropertyAccess("$response", response.bodyProperty)
+        : "$response",
   };
 }
 
@@ -714,7 +751,7 @@ interface SuccessResponseVariant {
   readonly bodyProperty?: string;
   readonly omitProperties: readonly string[];
   readonly type: Type;
-  readonly typedStream: boolean;
+  readonly streamType?: Type;
   readonly model?: Model;
   readonly tsType: string;
   readonly hiddenProperties: ReadonlySet<string>;
@@ -735,7 +772,6 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
   for (const resp of op.responses) {
     const statusCode = resolveResponseStatusCode(ctx, resp);
     const isVoid = resp.type.kind === "Intrinsic" && resp.type.name === "void";
-    const typedStream = isTypedStream(ctx.program, resp.type);
     const hiddenProperties = getHiddenResponsePropertyNames(ctx, resp);
 
     if (isVoid || resp.responses.length === 0) {
@@ -751,7 +787,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
         headers: [],
         omitProperties: [],
         type: resp.type,
-        typedStream,
+        streamType: undefined,
         model: resp.type.kind === "Model" ? resp.type : undefined,
         tsType: isVoid ? "void" : responseTypeToTs(ctx, resp),
         hiddenProperties,
@@ -769,6 +805,7 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
     // the first.
     for (const content of resp.responses) {
       const body = content.body;
+      const streamType = getStreamMetadata(ctx.program, content)?.streamType;
       const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
       const projection = body ? getResponseBodyProjection(ctx, op, content) : undefined;
       const bodyProperty = getResponseBodyProperty(ctx, content, projection);
@@ -812,11 +849,11 @@ function collectResponseVariants(ctx: EmitterCtx, op: HttpOperation): SuccessRes
           bodyProperty,
           omitProperties: metadataProperties.map((prop) => prop.property.name),
           type: body?.type ?? resp.type,
-          typedStream,
+          streamType,
           model: variantModel,
           tsType: responseContentToTs(ctx, op, resp, content),
           hiddenProperties,
-          serializationType,
+          serializationType: streamType ?? serializationType,
           projection,
         });
       }
@@ -869,7 +906,7 @@ function deduplicateDynamicStatusVariants(
           existing.dynamicStatus?.property === variant.dynamicStatus?.property &&
           existing.tsType === variant.tsType &&
           existing.hasBody === variant.hasBody &&
-          existing.typedStream === variant.typedStream &&
+          existing.streamType === variant.streamType &&
           existing.body?.bodyKind === variant.body?.bodyKind &&
           existing.contentType === variant.contentType &&
           stringArraysEqual(existing.fileContentTypes, variant.fileContentTypes) &&
@@ -923,6 +960,10 @@ function responseContentToTs(
   const headers = content.properties.filter((property) => property.kind === "header");
   const dynamicStatus = getDynamicResponseStatusPlan(ctx, content);
   const projection = body ? getResponseBodyProjection(ctx, op, content) : undefined;
+  const streamType = getStreamMetadata(ctx.program, content)?.streamType;
+  if (streamType) {
+    return `AsyncIterable<${payloadTypeToTs(ctx, streamType, projection)}>`;
+  }
   const bodyProperty = getResponseBodyProperty(ctx, content, projection);
   if (!body) {
     const parts: string[] = [];
@@ -1865,6 +1906,9 @@ function emitResponseDecisionEncoder(
     const kind = branch.response.isVoid
       ? "empty"
       : classifyResponseVariant(ctx, op, branch.response);
+    if (kind === "jsonl") {
+      throw new Error("JSONL response variants must be rejected before response dispatch emission");
+    }
     const branchEncoder =
       kind === "unsupported"
         ? emitUnsupportedEncoder(
@@ -1888,7 +1932,7 @@ function emitResponseDecisionEncoder(
 }
 
 function emitResponseVariant(
-  kind: Exclude<ResponseEncoderKind, "unsupported">,
+  kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl">,
   response: SuccessResponseVariant,
   bodyTransform?: ResponseBodyTransform,
 ): string {
@@ -1927,7 +1971,7 @@ function emitResponseStatus(response: SuccessResponseVariant): string {
   return `{ property: ${tsLiteral(response.dynamicStatus.property.name)}, allowed: [${allowed}] }`;
 }
 
-type ResponseEncoderKind = "json" | "text" | "bytes" | "file" | "empty" | "unsupported";
+type ResponseEncoderKind = "json" | "jsonl" | "text" | "bytes" | "file" | "empty" | "unsupported";
 
 function classifyResponseVariant(
   ctx: EmitterCtx,
@@ -1936,14 +1980,35 @@ function classifyResponseVariant(
 ): ResponseEncoderKind {
   if (!response.hasBody) return "empty";
 
-  if (response.typedStream) {
-    reportUnsupportedResponseBody(
-      ctx,
-      op,
-      response,
-      "typed streams require a dedicated streaming encoder",
-    );
-    return "unsupported";
+  if (response.streamType) {
+    const contentType = response.contentType?.trim().toLowerCase();
+    if (contentType !== "application/jsonl") {
+      reportUnsupportedResponseBody(
+        ctx,
+        op,
+        response,
+        "typed streams require a dedicated streaming encoder for this content type",
+      );
+      return "unsupported";
+    }
+    if (response.body?.bodyKind !== "single") {
+      reportUnsupportedResponseBody(ctx, op, response, "JSONL streams require a single HTTP body");
+      return "unsupported";
+    }
+    if (
+      response.dynamicStatus ||
+      response.headers.length > 0 ||
+      response.body.property?.optional === true
+    ) {
+      reportUnsupportedResponseBody(
+        ctx,
+        op,
+        response,
+        "JSONL response envelopes with dynamic status, headers, or an optional body require a dedicated encoder",
+      );
+      return "unsupported";
+    }
+    return "jsonl";
   }
 
   const body = response.body;
@@ -1996,7 +2061,7 @@ function reportUnsupportedResponseBody(
 function incompatibleResponseBodyReason(
   ctx: EmitterCtx,
   response: SuccessResponseVariant,
-  kind: Exclude<ResponseEncoderKind, "empty" | "unsupported">,
+  kind: Exclude<ResponseEncoderKind, "empty" | "jsonl" | "unsupported">,
 ): string | undefined {
   const body = response.body;
   if (!body) return "a response encoder was selected for an absent body";
@@ -2046,7 +2111,7 @@ function classifyResponseContentType(
   ctx: EmitterCtx,
   op: HttpOperation,
   response: SuccessResponseVariant,
-): Exclude<ResponseEncoderKind, "empty"> {
+): Exclude<ResponseEncoderKind, "empty" | "jsonl"> {
   const contentType = response.contentType;
   if (!contentType) return "json";
   const mediaType = normalizeMediaType(contentType);
@@ -2083,6 +2148,7 @@ function encoderForKind(
   tsType: string,
   status: number,
   bodyTransform?: ResponseBodyTransform,
+  streamItemType?: string,
 ): string {
   switch (kind) {
     case "empty":
@@ -2099,7 +2165,25 @@ function encoderForKind(
       return bodyTransform
         ? `ResponseEncoders.json<unknown>(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`
         : `ResponseEncoders.json<${tsType}>(${status})`;
+    case "jsonl": {
+      if (!streamItemType) {
+        throw new Error("JSONL response encoder emission requires a stream item type");
+      }
+      const transform = bodyTransform
+        ? `, (value) => ${emitResponseBodyTransform("value", bodyTransform)}`
+        : "";
+      return `ResponseEncoders.jsonl<${streamItemType}>(${status}${transform})`;
+    }
   }
+}
+
+function responseStreamItemTypeToTs(
+  ctx: EmitterCtx,
+  response: SuccessResponseVariant,
+): string | undefined {
+  return response.streamType
+    ? payloadTypeToTs(ctx, response.streamType, response.projection)
+    : undefined;
 }
 
 function emitUnsupportedEncoder(

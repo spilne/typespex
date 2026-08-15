@@ -8,6 +8,7 @@ import type {
 } from "@typespec/compiler";
 import { isArrayModelType, resolveEncodedName, walkPropertiesInherited } from "@typespec/compiler";
 import type { HttpOperation, HttpOperationParameter } from "@typespec/http";
+import { getStreamMetadata } from "@typespec/http/experimental";
 import { getBodyMediaKinds, normalizeMediaType, type BodyMediaKind } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { discriminatedVariants, resolveDiscriminatedUnion } from "./discriminated-unions.js";
@@ -36,7 +37,6 @@ import {
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
-import { isTypedStream } from "./stream-types.js";
 import { lowerUriTemplate } from "./uri-template.js";
 
 interface ServiceDecoratorReports {
@@ -108,7 +108,10 @@ function checkRequestBody(
   if (!body) return;
   if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
 
-  if (body.bodyKind === "single" && isTypedStream(ctx.program, body.property?.model)) {
+  if (
+    body.bodyKind === "single" &&
+    getStreamMetadata(ctx.program, traversal.operation.parameters)
+  ) {
     reportUnsupportedBody(
       ctx,
       traversal.operation,
