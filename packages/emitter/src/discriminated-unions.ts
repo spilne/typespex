@@ -1,6 +1,6 @@
 import type { DiscriminatedUnion, Program, Type, Union, UnionVariant } from "@typespec/compiler";
 import { discriminatedDecorator, getDiscriminatedUnion } from "@typespec/compiler";
-import { tsPropertyDeclaration } from "./typescript-names.js";
+import { tsLiteral, tsPropertyDeclaration } from "./typescript-names.js";
 
 export interface DiscriminatedVariant {
   /** Undefined identifies the union's unnamed default variant. */
@@ -83,7 +83,7 @@ export function discriminatedVariantToTs(
   variant: Pick<DiscriminatedVariant, "tag">,
   payloadType: string,
 ): string {
-  const discriminatorType = variant.tag === undefined ? "string" : JSON.stringify(variant.tag);
+  const discriminatorType = variant.tag === undefined ? "string" : tsLiteral(variant.tag);
   const discriminator = tsPropertyDeclaration(
     discriminated.options.discriminatorPropertyName,
     discriminatorType,

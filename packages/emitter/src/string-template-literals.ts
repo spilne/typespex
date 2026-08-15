@@ -4,6 +4,7 @@ import {
   type StringTemplate,
   type Type,
 } from "@typespec/compiler";
+import { tsLiteral } from "./typescript-names.js";
 
 export type StringLikeLiteral = StringLiteral | StringTemplate;
 
@@ -23,5 +24,5 @@ export function stringLiteralExpression(type: StringLikeLiteral): string {
     "An unresolved string template reached TypeScript emission.",
     type,
   );
-  return JSON.stringify(value);
+  return tsLiteral(value);
 }

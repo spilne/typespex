@@ -11,7 +11,7 @@ import {
   getServerInputDecoderImports,
 } from "./server-input-decoders.js";
 import { buildServerEmission } from "./server-emission.js";
-import { tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
+import { tsLiteral, tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
 import type { RoutePattern } from "./uri-template.js";
 
 export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
@@ -178,7 +178,7 @@ function emitEndpoint(
 ): void {
   lines.push("    endpoint: {");
   lines.push(
-    `      service: { name: ${JSON.stringify(serviceName)}, hints: ${emitHintsExpression(operation.serviceHints)} },`,
+    `      service: { name: ${tsLiteral(serviceName)}, hints: ${emitHintsExpression(operation.serviceHints)} },`,
   );
 
   if (operation.namespaces.length === 0) {
@@ -187,24 +187,24 @@ function emitEndpoint(
     lines.push("      namespaces: [");
     for (const ns of operation.namespaces) {
       lines.push(
-        `        { name: ${JSON.stringify(ns.name)}, fullName: ${JSON.stringify(ns.fullName)}, hints: ${emitHintsExpression(ns.hints)} },`,
+        `        { name: ${tsLiteral(ns.name)}, fullName: ${tsLiteral(ns.fullName)}, hints: ${emitHintsExpression(ns.hints)} },`,
       );
     }
     lines.push("      ],");
   }
 
   lines.push("      operation: {");
-  lines.push(`        name: ${JSON.stringify(operation.name)},`);
-  lines.push(`        operationId: ${JSON.stringify(operation.operationId)},`);
-  lines.push(`        method: ${JSON.stringify(operation.method)} as const,`);
-  lines.push(`        path: ${JSON.stringify(operation.path)},`);
+  lines.push(`        name: ${tsLiteral(operation.name)},`);
+  lines.push(`        operationId: ${tsLiteral(operation.operationId)},`);
+  lines.push(`        method: ${tsLiteral(operation.method)} as const,`);
+  lines.push(`        path: ${tsLiteral(operation.path)},`);
   if (operation.routePatterns.length === 1) {
-    lines.push(`        routePattern: ${JSON.stringify(operation.routePatterns[0])},`);
+    lines.push(`        routePattern: ${tsLiteral(operation.routePatterns[0])},`);
   } else {
-    lines.push(`        routePatterns: ${JSON.stringify(operation.routePatterns)},`);
+    lines.push(`        routePatterns: ${tsLiteral(operation.routePatterns)},`);
   }
   if (operation.routeSelection) {
-    lines.push(`        routeSelection: ${JSON.stringify(operation.routeSelection)},`);
+    lines.push(`        routeSelection: ${tsLiteral(operation.routeSelection)},`);
   }
   lines.push(`        hints: ${emitHintsExpression(operation.operationHints)},`);
   lines.push("      },");

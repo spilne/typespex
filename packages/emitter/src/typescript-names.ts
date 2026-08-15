@@ -82,6 +82,19 @@ const RESERVED_IDENTIFIERS = new Set([
 
 const UNSAFE_DOT_PROPERTIES = new Set(["__proto__", "constructor", "prototype"]);
 
+const TYPESCRIPT_LITERAL_ESCAPES: Readonly<Record<string, string>> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+  "\0": "\\0",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
 function isIdentifierText(value: string): boolean {
   return IDENTIFIER_RE.test(value);
 }
@@ -105,8 +118,20 @@ export function tsIdentifier(value: string | undefined, fallback = "value"): str
   return identifier;
 }
 
+/** Render a JSON-compatible value as a string safe to embed in generated TypeScript source. */
+export function tsLiteral(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new TypeError("Expected a JSON-compatible TypeScript literal value.");
+  }
+  return serialized.replace(
+    /[<>\b\f\n\r\t\0\u2028\u2029]/g,
+    (character) => TYPESCRIPT_LITERAL_ESCAPES[character]!,
+  );
+}
+
 export function tsPropertyName(value: string): string {
-  return isTsIdentifier(value) ? value : JSON.stringify(value);
+  return isTsIdentifier(value) ? value : tsLiteral(value);
 }
 
 export function tsPropertyDeclaration(
@@ -121,7 +146,7 @@ export function tsPropertyDeclaration(
 
 export function tsObjectKey(value: string): string {
   if (value === "__proto__") {
-    return `[${JSON.stringify(value)}]`;
+    return `[${tsLiteral(value)}]`;
   }
   return tsPropertyName(value);
 }
@@ -130,5 +155,5 @@ export function tsPropertyAccess(target: string, property: string): string {
   if (isIdentifierText(property) && !UNSAFE_DOT_PROPERTIES.has(property)) {
     return `${target}.${property}`;
   }
-  return `${target}[${JSON.stringify(property)}]`;
+  return `${target}[${tsLiteral(property)}]`;
 }

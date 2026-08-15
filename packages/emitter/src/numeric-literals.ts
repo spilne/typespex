@@ -4,6 +4,7 @@ import {
   type NumericLiteral,
   type Program,
 } from "@typespec/compiler";
+import { tsLiteral } from "./typescript-names.js";
 
 const MAX_EXACT_JSON_INTEGER_DIGITS = 20;
 const MIN_SAFE_INTEGER = BigInt(Number.MIN_SAFE_INTEGER);
@@ -111,8 +112,8 @@ export function numericLiteralExpression(type: NumericLiteral): string {
 }
 
 export function enumMemberLiteralExpression(program: Program, member: EnumMember): string {
-  if (member.value === undefined) return JSON.stringify(member.name);
-  if (typeof member.value === "string") return JSON.stringify(member.value);
+  if (member.value === undefined) return tsLiteral(member.name);
+  if (typeof member.value === "string") return tsLiteral(member.value);
   const source = getEnumMemberNumericLiteral(program, member);
   return source ? numericLiteralExpression(source) : String(member.value);
 }
