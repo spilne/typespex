@@ -203,12 +203,24 @@ export function emitDecoder(
     const decoder = param.param.optional ? `${valueDecoder}.optional()` : valueDecoder;
     const collection =
       param.param.type.kind === "Model" ? getPayloadCollection(ctx, param.param.type) : undefined;
-    const options =
-      collection?.kind === "record"
-        ? ", { record: true, emptyComposite: true, explode: false }"
-        : isArrayInputType(ctx, param.param.type)
-          ? `, { array: true, explode: ${param.explode} }`
-          : "";
+    let options = "";
+    if (collection?.kind === "record") {
+      const optionValues = ["record: true"];
+      if (param.explode) {
+        optionValues.push("explode: true");
+        const excludedNames = queryParams
+          .filter((candidate) => candidate !== param)
+          .map((candidate) => tsLiteral(candidate.name));
+        if (excludedNames.length > 0) {
+          optionValues.push(`excludedNames: [${excludedNames.join(", ")}]`);
+        }
+      } else {
+        optionValues.push("emptyComposite: true", "explode: false");
+      }
+      options = `, { ${optionValues.join(", ")} }`;
+    } else if (isArrayInputType(ctx, param.param.type)) {
+      options = `, { array: true, explode: ${param.explode} }`;
+    }
     requestEntries.push({
       name: param.param.name,
       expr: `RequestDecoders.query(${tsLiteral(param.name)}, ${decoder}${options})`,

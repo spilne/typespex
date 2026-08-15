@@ -44,10 +44,12 @@ export interface PathParameterDecodeOptions extends RequestParameterDecodeOption
 }
 
 export interface QueryParameterDecodeOptions extends RequestParameterDecodeOptions {
-  /** Decode one non-exploded RFC 6570 record from alternating comma-separated components. */
+  /** Decode an RFC 6570 record from one named value or from exploded query entries. */
   readonly record?: boolean;
-  /** Treat an omitted RFC 6570 record expansion as empty and reject an explicit empty value. */
+  /** Treat an omitted non-exploded record as empty and reject an explicit empty value. */
   readonly emptyComposite?: boolean;
+  /** Query names owned by other parameters and excluded from an exploded record. */
+  readonly excludedNames?: readonly string[];
 }
 
 export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
@@ -133,15 +135,16 @@ export function requiredQuery<A>(
   if (options.array && options.record) {
     throw new TypeError("Query parameters cannot use array and record decoding together.");
   }
-  if (options.record && options.explode === true) {
-    throw new TypeError("Exploded query records require key-based decoding.");
-  }
   if (options.emptyComposite && !options.record) {
     throw new TypeError("Empty query composite handling requires record decoding.");
   }
+  if (options.excludedNames !== undefined && (!options.record || options.explode !== true)) {
+    throw new TypeError("Query name exclusions require exploded record decoding.");
+  }
+  const excludedNames = new Set(options.excludedNames ?? []);
   const prefix = `$query.${name}`;
   return createRequestDecoder((input) => {
-    const value = readQueryValue(input, name, options);
+    const value = readQueryValue(input, name, options, excludedNames);
     if (isLeft(value)) return prefixIssues(value, prefix);
     const result = decoder.decode(value.right);
     return isLeft(result) ? prefixIssues(result, prefix) : result;
@@ -415,7 +418,13 @@ function readQueryValue(
   input: RequestInputSource,
   name: string,
   options: QueryParameterDecodeOptions,
+  excludedNames: ReadonlySet<string>,
 ): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
+  if (options.record && options.explode === true) {
+    return input.rawQuery === undefined
+      ? readExplodedQueryRecord(input.query, excludedNames)
+      : readRawExplodedQueryRecord(input.rawQuery, excludedNames);
+  }
   if (input.rawQuery !== undefined) {
     return readRawQueryValue(input.rawQuery, name, options);
   }
@@ -491,6 +500,50 @@ function readRawQueryValue(
   if (isLeft(values)) return values;
   if (options.array) return values;
   return Either.right(values.right.length === 1 ? values.right[0] : values.right);
+}
+
+function readExplodedQueryRecord(
+  query: URLSearchParams,
+  excludedNames: ReadonlySet<string>,
+): DecoderResult<Record<string, string>> {
+  const result: Record<string, string> = {};
+  let index = 0;
+  for (const [key, value] of query.entries()) {
+    const path = `[${index}]`;
+    index += 1;
+    if (excludedNames.has(key)) continue;
+    const defined = defineRecordEntry(result, key, value, path);
+    if (isLeft(defined)) return defined;
+  }
+  return Either.right(result);
+}
+
+function readRawExplodedQueryRecord(
+  rawQuery: string,
+  excludedNames: ReadonlySet<string>,
+): DecoderResult<Record<string, string>> {
+  const result: Record<string, string> = {};
+  if (rawQuery === "") return Either.right(result);
+
+  let index = 0;
+  for (const pair of rawQuery.split("&")) {
+    const path = `[${index}]`;
+    index += 1;
+    if (pair === "") continue;
+
+    const equals = pair.indexOf("=");
+    const rawKey = equals === -1 ? pair : pair.substring(0, equals);
+    const rawValue = equals === -1 ? "" : pair.substring(equals + 1);
+    const key = decodeQueryComponent(rawKey);
+    if (isLeft(key)) return prefixIssues(key, `${path}.key`);
+    if (excludedNames.has(key.right)) continue;
+    const value = decodeQueryComponent(rawValue);
+    if (isLeft(value)) return prefixIssues(value, `${path}.value`);
+    const defined = defineRecordEntry(result, key.right, value.right, path);
+    if (isLeft(defined)) return defined;
+  }
+
+  return Either.right(result);
 }
 
 function decodeQueryComponent(value: string): DecoderResult<string> {
@@ -573,18 +626,29 @@ function decodeDelimitedRecord(
     if (isLeft(value)) {
       return prefixIssues(value, exploded ? `[${componentIndex}]` : `[${componentIndex + 1}]`);
     }
-    if (Object.prototype.hasOwnProperty.call(result, key.right)) {
-      return fail(`[${componentIndex}]`, `Duplicate record key ${JSON.stringify(key.right)}.`);
-    }
-    Object.defineProperty(result, key.right, {
-      configurable: true,
-      enumerable: true,
-      value: value.right,
-      writable: true,
-    });
+    const defined = defineRecordEntry(result, key.right, value.right, `[${componentIndex}]`);
+    if (isLeft(defined)) return defined;
   }
 
   return Either.right(result);
+}
+
+function defineRecordEntry(
+  result: Record<string, string>,
+  key: string,
+  value: string,
+  path: string,
+): DecoderResult<void> {
+  if (Object.prototype.hasOwnProperty.call(result, key)) {
+    return fail(path, `Duplicate record key ${JSON.stringify(key)}.`);
+  }
+  Object.defineProperty(result, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+  return Either.right(undefined);
 }
 
 const EMPTY_COOKIES: Record<string, string> = Object.freeze(Object.create(null));

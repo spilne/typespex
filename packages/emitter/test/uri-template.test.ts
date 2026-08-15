@@ -77,6 +77,9 @@ namespace UriTemplateApi;
 @route("/query-record{?param}")
 @get op queryRecord(param: Record<int32>): void;
 
+@route("/query-record-explode{?param*,tag}")
+@get op queryRecordExplode(param: Record<int32>, tag?: string): void;
+
 @route("/optional{/name}")
 @get op optional(@path name?: string): void;
 
@@ -577,6 +580,9 @@ describe("URI-template lowering", () => {
     expect(operations).toMatch(
       /queryRecord: RequestDecoders\.query\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, emptyComposite: true, explode: false \},\s*\)\.map/,
     );
+    expect(operations).toMatch(
+      /queryRecordExplode: RequestDecoders\.combine\([\s\S]*?RequestDecoders\.query\(\s*"param",\s*Decoders\.record\([\s\S]*?\),\s*\{ record: true, explode: true, excludedNames: \["tag"\] \},\s*\)[\s\S]*?RequestDecoders\.query\("tag", Decoders\.string\.optional\(\)\)[\s\S]*?\(param, tag\) => \(\{ param, tag \}\)/,
+    );
     result.typecheck("uri-template-api");
 
     const { createUriTemplateApiServerRouter } = await import(
@@ -598,6 +604,7 @@ describe("URI-template lowering", () => {
       trail: capture("trail"),
       query: capture("query"),
       queryRecord: capture("queryRecord"),
+      queryRecordExplode: capture("queryRecordExplode"),
       optional: capture("optional"),
       required: capture("required"),
       requiredExplode: capture("requiredExplode"),
@@ -707,6 +714,36 @@ describe("URI-template lowering", () => {
     ).toBe(400);
     expect(
       (await router.handle(new Request("http://localhost/query-record?param=a,1,%61,2"))).status,
+    ).toBe(400);
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/query-record-explode?a=1&b%26c=2&t%61g=keep"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("queryRecordExplode")).toEqual({
+      param: { a: 1, "b&c": 2 },
+      tag: "keep",
+    });
+    expect(
+      (await router.handle(new Request("http://localhost/query-record-explode?param=3"))).status,
+    ).toBe(204);
+    expect(received.get("queryRecordExplode")).toEqual({ param: { param: 3 }, tag: undefined });
+    expect(
+      (await router.handle(new Request("http://localhost/query-record-explode?tag=keep"))).status,
+    ).toBe(204);
+    expect(received.get("queryRecordExplode")).toEqual({ param: {}, tag: "keep" });
+    expect((await router.handle(new Request("http://localhost/query-record-explode"))).status).toBe(
+      204,
+    );
+    expect(received.get("queryRecordExplode")).toEqual({ param: {}, tag: undefined });
+    expect(
+      (await router.handle(new Request("http://localhost/query-record-explode?a=1&%61=2"))).status,
+    ).toBe(400);
+    expect(
+      (await router.handle(new Request("http://localhost/query-record-explode?%E0%A4%A=1"))).status,
     ).toBe(400);
 
     expect((await router.handle(new Request("http://localhost/optional"))).status).toBe(204);

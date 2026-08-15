@@ -470,6 +470,73 @@ describe("http request decoders (sync)", () => {
     }
   });
 
+  test("exploded query records decode key-based entries without claiming excluded names", () => {
+    const decoder = RequestDecoders.query("values", Decoders.record(Decoders.integer), {
+      excludedNames: ["tag"],
+      explode: true,
+      record: true,
+    });
+
+    const populated = decodeRequestInput(
+      decoder,
+      new Request(
+        "http://localhost/items?a%26b=1&c%3Dd=2&first+name=3&t%61g=ignored&__proto__=4&constructor=5",
+      ),
+      {},
+    );
+    expect(populated._tag).toBe("Right");
+    if (populated._tag === "Right") {
+      expect(populated.right["a&b"]).toBe(1);
+      expect(populated.right["c=d"]).toBe(2);
+      expect(populated.right["first name"]).toBe(3);
+      expect(populated.right["__proto__"]).toBe(4);
+      expect(populated.right.constructor).toBe(5);
+      expect(Object.hasOwn(populated.right, "tag")).toBe(false);
+      expect(Object.getPrototypeOf(populated.right)).toBe(Object.prototype);
+    }
+
+    expect(decodeRequestInput(decoder, new Request("http://localhost/items"), {})).toEqual(
+      Either.right({}),
+    );
+    expect(decodeRequestInput(decoder, new Request("http://localhost/items?tag=only"), {})).toEqual(
+      Either.right({}),
+    );
+    expect(
+      decoder.decode({
+        pathParams: {},
+        query: new URLSearchParams("a=1&tag=ignored"),
+        headers: new Headers(),
+      }),
+    ).toEqual(Either.right({ a: 1 }));
+  });
+
+  test("exploded query records reject duplicate and malformed entries", () => {
+    const decoder = RequestDecoders.query("values", Decoders.record(Decoders.integer), {
+      explode: true,
+      record: true,
+    });
+    const cases = [
+      ["http://localhost/items?a=1&%61=2", "$query.values[1]", 'Duplicate record key "a".'],
+      [
+        "http://localhost/items?%E0%A4%A=1",
+        "$query.values[0].key",
+        "Expected a valid percent-encoded query value.",
+      ],
+      [
+        "http://localhost/items?a=%E0%A4%A",
+        "$query.values[0].value",
+        "Expected a valid percent-encoded query value.",
+      ],
+      ["http://localhost/items?a=bad", "$query.values.a", "Expected a finite number."],
+    ] as const;
+
+    for (const [url, path, message] of cases) {
+      expect(decodeRequestInput(decoder, new Request(url), {})).toEqual(
+        Either.left(new ValidationError([{ path, message }])),
+      );
+    }
+  });
+
   test("query record options reject incompatible decoder shapes", () => {
     expect(() =>
       RequestDecoders.query("values", Decoders.record(Decoders.string), {
@@ -479,10 +546,10 @@ describe("http request decoders (sync)", () => {
     ).toThrow("Query parameters cannot use array and record decoding together.");
     expect(() =>
       RequestDecoders.query("values", Decoders.record(Decoders.string), {
-        explode: true,
         record: true,
+        excludedNames: [],
       }),
-    ).toThrow("Exploded query records require key-based decoding.");
+    ).toThrow("Query name exclusions require exploded record decoding.");
     expect(() => RequestDecoders.query("value", Decoders.string, { emptyComposite: true })).toThrow(
       "Empty query composite handling requires record decoding.",
     );
