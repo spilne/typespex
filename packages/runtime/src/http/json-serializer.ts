@@ -242,7 +242,16 @@ function unionJsonSerializer<A>(variants: readonly JsonSerializer<unknown>[]): J
         result = candidate;
         continue;
       }
-      if (!jsonWireValuesEqual(result, candidate)) {
+      let equivalent: boolean;
+      try {
+        equivalent = jsonWireValuesEqual(result, candidate);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new JsonSerializationError(path, `Failed to compare union variants: ${message}`, {
+          cause: error,
+        });
+      }
+      if (!equivalent) {
         throw new JsonSerializationError(
           path,
           "Value matches multiple union variants with different JSON wire representations.",

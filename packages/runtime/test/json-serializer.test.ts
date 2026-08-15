@@ -238,6 +238,25 @@ describe("JsonSerializers", () => {
         "multiple union variants with different JSON wire representations",
       );
     }
+
+    const comparisonFailure = new Error("toJSON failed");
+    const throwing = JsonSerializers.union([
+      serializeAs({ toJSON: () => null }),
+      serializeAs({
+        toJSON: () => {
+          throw comparisonFailure;
+        },
+      }),
+    ]);
+    try {
+      throwing.serialize("input");
+      throw new Error("Expected union comparison to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(JsonSerializationError);
+      expect((error as JsonSerializationError).path).toBe("$response");
+      expect((error as Error).message).toContain("Failed to compare union variants: toJSON failed");
+      expect((error as Error).cause).toBe(comparisonFailure);
+    }
   });
 
   test("supports recursive serializers lazily", () => {
