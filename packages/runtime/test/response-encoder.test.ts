@@ -59,6 +59,84 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ value: 42 });
   });
 
+  test("jsonl streams transformed values one line at a time", async () => {
+    async function* values() {
+      yield { displayName: "Milo", count: 9_223_372_036_854_775_807n };
+      yield { displayName: "Otis", count: 2n };
+    }
+
+    const response = ResponseEncoders.jsonl<{
+      displayName: string;
+      count: bigint;
+    }>(201, (value) => ({ display_name: value.displayName, count: value.count })).encode(values());
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("content-type")).toBe("application/jsonl");
+    expect(await response.text()).toBe(
+      '{"display_name":"Milo","count":9223372036854775807}\n' +
+        '{"display_name":"Otis","count":2}\n',
+    );
+  });
+
+  test("jsonl applies backpressure and closes a canceled source", async () => {
+    let nextCalls = 0;
+    let returned = false;
+    const values: AsyncIterable<{ id: number }> = {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            nextCalls += 1;
+            return { done: false as const, value: { id: nextCalls } };
+          },
+          async return() {
+            returned = true;
+            return { done: true as const, value: undefined };
+          },
+        };
+      },
+    };
+
+    const response = ResponseEncoders.jsonl(200).encode(values);
+    const reader = response.body!.getReader();
+
+    expect(nextCalls).toBe(0);
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('{"id":1}\n');
+    expect(nextCalls).toBe(1);
+
+    await reader.cancel();
+    expect(returned).toBe(true);
+    expect(nextCalls).toBe(1);
+  });
+
+  test("jsonl surfaces serialization failures through the response stream", async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    let closed = false;
+    async function* values() {
+      try {
+        yield circular;
+      } finally {
+        closed = true;
+      }
+    }
+
+    const response = ResponseEncoders.jsonl(200).encode(values());
+
+    await expect(response.text()).rejects.toThrow("circular");
+    expect(closed).toBe(true);
+  });
+
+  test("jsonl validates sources unless the status forbids a body", async () => {
+    const encoder = ResponseEncoders.jsonl(200);
+    expect(() => encoder.encode([] as unknown as AsyncIterable<unknown>)).toThrow("AsyncIterable");
+
+    const response = ResponseEncoders.jsonl(204).encode(
+      undefined as unknown as AsyncIterable<unknown>,
+    );
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(await response.text()).toBe("");
+  });
+
   test("empty encodes no body", async () => {
     const response = ResponseEncoders.empty(204).encode(undefined);
 

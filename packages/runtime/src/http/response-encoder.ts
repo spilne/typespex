@@ -37,6 +37,73 @@ function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEnco
   });
 }
 
+function jsonlResponseEncoder<A>(
+  status = 200,
+  transformItem?: (value: A) => unknown,
+): ResponseEncoder<AsyncIterable<A>> {
+  return ResponseEncoder.of((values) => {
+    const response = responseInit(status);
+    return isBodyForbiddenStatus(status)
+      ? new Response(null, response)
+      : new Response(jsonlResponseBody(values, transformItem), {
+          ...response,
+          headers: { "content-type": "application/jsonl" },
+        });
+  });
+}
+
+function jsonlResponseBody<A>(
+  values: AsyncIterable<A>,
+  transformItem?: (value: A) => unknown,
+): ReadableStream<Uint8Array> {
+  if (
+    typeof values !== "object" ||
+    values === null ||
+    typeof values[Symbol.asyncIterator] !== "function"
+  ) {
+    throw new TypeError("JSONL responses require an AsyncIterable value.");
+  }
+
+  const iterator = values[Symbol.asyncIterator]();
+  const textEncoder = new TextEncoder();
+  let finished = false;
+
+  const closeIterator = async (): Promise<void> => {
+    if (finished) return;
+    finished = true;
+    await iterator.return?.();
+  };
+
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const next = await iterator.next();
+          if (next.done) {
+            finished = true;
+            controller.close();
+            return;
+          }
+
+          const item = transformItem ? transformItem(next.value) : next.value;
+          controller.enqueue(textEncoder.encode(`${stringifyJson(item)}\n`));
+        } catch (error) {
+          try {
+            await closeIterator();
+          } catch {
+            // Preserve the iteration or serialization failure.
+          }
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await closeIterator();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
 function emptyResponseEncoder(status = 204, init?: ResponseInit): ResponseEncoder<void> {
   return ResponseEncoder.of(() => new Response(null, responseInit(status, init)));
 }
@@ -485,6 +552,7 @@ function unsupportedResponseEncoder<A>(reason: string): ResponseEncoder<A> {
 
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
+  jsonl: jsonlResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
   empty: emptyResponseEncoder,
   text: textResponseEncoder,
