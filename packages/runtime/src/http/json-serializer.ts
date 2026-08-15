@@ -428,19 +428,29 @@ function jsonWireValuesEqual(
   right: unknown,
   seen: WeakMap<object, WeakSet<object>> = new WeakMap(),
 ): boolean {
+  return normalizedJsonWireValuesEqual(
+    normalizeJsonWireValue(left, ""),
+    normalizeJsonWireValue(right, ""),
+    seen,
+  );
+}
+
+const omittedJsonWireValue = Symbol("omittedJsonWireValue");
+
+function normalizedJsonWireValuesEqual(
+  left: unknown | typeof omittedJsonWireValue,
+  right: unknown | typeof omittedJsonWireValue,
+  seen: WeakMap<object, WeakSet<object>>,
+): boolean {
   if (Object.is(left, right)) return true;
-  if (isJsonNullValue(left) || isJsonNullValue(right)) {
-    return isJsonNullValue(left) && isJsonNullValue(right);
-  }
-  if (typeof left === "number" && typeof right === "number") {
-    return left === right;
+  if (left === omittedJsonWireValue || right === omittedJsonWireValue) return false;
+  const leftIsNumber = typeof left === "number" || typeof left === "bigint";
+  const rightIsNumber = typeof right === "number" || typeof right === "bigint";
+  if (leftIsNumber || rightIsNumber) {
+    return leftIsNumber && rightIsNumber && String(left) === String(right);
   }
   if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
     return false;
-  }
-  if (left instanceof Uint8Array || right instanceof Uint8Array) {
-    if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) return false;
-    return left.length === right.length && left.every((value, index) => value === right[index]);
   }
   if (Array.isArray(left) || Array.isArray(right)) {
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
@@ -457,9 +467,9 @@ function jsonWireValuesEqual(
   if (Array.isArray(left) && Array.isArray(right)) {
     for (let index = 0; index < left.length; index += 1) {
       if (
-        !jsonWireValuesEqual(
-          jsonArrayComparisonValue(left[index]),
-          jsonArrayComparisonValue(right[index]),
+        !normalizedJsonWireValuesEqual(
+          normalizeJsonArrayValue(left[index], String(index)),
+          normalizeJsonArrayValue(right[index], String(index)),
           seen,
         )
       ) {
@@ -471,33 +481,57 @@ function jsonWireValuesEqual(
 
   const leftObject = left as Record<string, unknown>;
   const rightObject = right as Record<string, unknown>;
-  const leftKeys = Object.keys(leftObject).filter(
-    (key) => !isOmittedJsonObjectValue(leftObject[key]),
-  );
-  const rightKeys = Object.keys(rightObject).filter(
-    (key) => !isOmittedJsonObjectValue(rightObject[key]),
-  );
-  if (leftKeys.length !== rightKeys.length) return false;
-  const rightKeySet = new Set(rightKeys);
-  for (const key of leftKeys) {
-    if (!rightKeySet.has(key)) return false;
-    if (!jsonWireValuesEqual(leftObject[key], rightObject[key], seen)) {
+  const leftProperties = normalizedJsonObjectProperties(leftObject);
+  const rightProperties = normalizedJsonObjectProperties(rightObject);
+  if (leftProperties.size !== rightProperties.size) return false;
+  for (const [key, leftValue] of leftProperties) {
+    if (!rightProperties.has(key)) return false;
+    if (!normalizedJsonWireValuesEqual(leftValue, rightProperties.get(key), seen)) {
       return false;
     }
   }
   return true;
 }
 
-function isJsonNullValue(value: unknown): boolean {
-  return value === null || (typeof value === "number" && !Number.isFinite(value));
+function normalizeJsonWireValue(
+  value: unknown,
+  key: string,
+): unknown | typeof omittedJsonWireValue {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+    return omittedJsonWireValue;
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  if (value instanceof Uint8Array) return ScalarEncodings.encodeBase64(value);
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+    return normalizeJsonWireValue(value.valueOf(), key);
+  }
+  if (typeof value === "object" && value !== null) {
+    const toJSON = (value as { toJSON?: (key: string) => unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      const replacement = toJSON.call(value, key);
+      if (replacement !== value) return normalizeJsonWireValue(replacement, key);
+    }
+  }
+  return value;
 }
 
-function isOmittedJsonObjectValue(value: unknown): boolean {
-  return value === undefined || typeof value === "function" || typeof value === "symbol";
+function normalizeJsonArrayValue(
+  value: unknown,
+  key: string,
+): unknown | typeof omittedJsonWireValue {
+  const normalized = normalizeJsonWireValue(value, key);
+  return normalized === omittedJsonWireValue ? null : normalized;
 }
 
-function jsonArrayComparisonValue(value: unknown): unknown {
-  return isOmittedJsonObjectValue(value) ? null : value;
+function normalizedJsonObjectProperties(
+  value: Record<string, unknown>,
+): Map<string, unknown | typeof omittedJsonWireValue> {
+  const properties = new Map<string, unknown | typeof omittedJsonWireValue>();
+  for (const key of Object.keys(value)) {
+    const normalized = normalizeJsonWireValue(value[key], key);
+    if (normalized !== omittedJsonWireValue) properties.set(key, normalized);
+  }
+  return properties;
 }
 
 function appendPropertyPath(path: string, property: string): string {

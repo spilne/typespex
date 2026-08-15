@@ -202,7 +202,12 @@ describe("JsonSerializers", () => {
     const equivalentPairs: readonly (readonly [unknown, unknown])[] = [
       [Number.NaN, null],
       [Number.POSITIVE_INFINITY, null],
+      [1n, 1],
+      [new Number(1), 1],
+      [new Date(0), new Date(0)],
+      [new Uint8Array([0, 255]), "AP8="],
       [sparse, [null, null, null]],
+      [[{ toJSON: () => undefined }], [null]],
       [
         {
           kept: true,
@@ -212,12 +217,26 @@ describe("JsonSerializers", () => {
         },
         { kept: true },
       ],
+      [{ kept: true, omitted: { toJSON: () => undefined } }, { kept: true }],
+      [{ value: { toJSON: (key: string) => key } }, { value: "value" }],
     ];
 
     for (const [left, right] of equivalentPairs) {
       const serializer = JsonSerializers.union([serializeAs(left), serializeAs(right)]);
       const serialized = serializer.serialize("input");
       expect(stringifyJson(serialized)).toBe(stringifyJson(right));
+    }
+
+    const conflictingPairs: readonly (readonly [unknown, unknown])[] = [
+      [new Number(1), new Number(2)],
+      [new Date(0), new Date(1)],
+      [{ toJSON: () => ({ value: 1 }) }, { toJSON: () => ({ value: 2 }) }],
+    ];
+    for (const [left, right] of conflictingPairs) {
+      const serializer = JsonSerializers.union([serializeAs(left), serializeAs(right)]);
+      expect(() => serializer.serialize("input")).toThrow(
+        "multiple union variants with different JSON wire representations",
+      );
     }
   });
 
