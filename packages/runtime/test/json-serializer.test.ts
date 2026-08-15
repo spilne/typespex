@@ -126,6 +126,17 @@ describe("JsonSerializers", () => {
     }
   });
 
+  test("reports numeric literal expectations without losing their value", () => {
+    expect(() => JsonSerializers.literal(Number.NaN).serialize(0)).toThrow("Expected literal NaN");
+    expect(() => JsonSerializers.literal(Number.POSITIVE_INFINITY).serialize(0)).toThrow(
+      "Expected literal Infinity",
+    );
+    expect(() => JsonSerializers.literal(Number.NEGATIVE_INFINITY).serialize(0)).toThrow(
+      "Expected literal -Infinity",
+    );
+    expect(() => JsonSerializers.literal(-0).serialize(0)).toThrow("Expected literal -0");
+  });
+
   test("tries exact union shapes and rejects conflicting wire representations", () => {
     type TextValue = { kind: "same"; start: string };
     type DateValue = { kind: "same"; start: string; end?: string };

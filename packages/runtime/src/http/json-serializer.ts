@@ -77,11 +77,19 @@ function literalJsonSerializer<A extends string | number | bigint | boolean | nu
 ): JsonSerializer<A> {
   return JsonSerializer.of((value, path) => {
     if (!Object.is(value, expected)) {
-      const literal = typeof expected === "bigint" ? `${expected}n` : JSON.stringify(expected);
-      throw new JsonSerializationError(path, `Expected literal ${literal}.`);
+      throw new JsonSerializationError(path, `Expected literal ${formatJsonLiteral(expected)}.`);
     }
     return value;
   });
+}
+
+function formatJsonLiteral(value: string | number | bigint | boolean | null): string {
+  if (typeof value === "bigint") return `${value}n`;
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return "-0";
+    if (!Number.isFinite(value)) return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function arrayJsonSerializer<A>(item: JsonSerializer<A>): JsonSerializer<readonly A[]> {
