@@ -46,6 +46,7 @@ const SCENARIOS = [
   "routes",
   "serialization/encoded-name/json",
   "server/endpoint/not-defined",
+  "server/path/multiple",
   "server/path/single",
   "server/versions/not-versioned",
   "server/versions/versioned",
