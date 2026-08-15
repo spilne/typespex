@@ -53,6 +53,7 @@ const SCENARIOS = [
   "special-headers/conditional-request",
   "special-headers/repeatability",
   "special-words",
+  "streaming/jsonl",
   "type/array",
   "type/dictionary",
   "type/enum/extensible",
