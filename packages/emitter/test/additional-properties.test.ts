@@ -201,9 +201,27 @@ model ByContainerShape {
   ...Record<WidgetData2[] | WidgetData1>;
 }
 
+model NullKind {
+  kind: null;
+  @encodedName("application/json", "wire_value")
+  value: string;
+}
+
+model StringKind {
+  kind: string;
+  @encodedName("application/json", "wire_value")
+  value: string;
+}
+
+model ByLiteralValue {
+  name: string;
+  ...Record<NullKind | StringKind>;
+}
+
 @route("/required") @get op required(): ByRequiredProperty;
 @route("/optional") @get op optional(): ByOptionalProperty;
 @route("/container") @get op container(): ByContainerShape;
+@route("/literal") @get op literal(): ByLiteralValue;
 `;
 
 describe("TypeSpec model additional properties", () => {
@@ -534,6 +552,7 @@ void invalidAdditionalDecoder;
     expect(operations).toContain("JsonSerializers.union<");
     expect(operations).toContain("JsonSerializers.exactObject(");
     expect(operations).toContain('JsonSerializers.literal("kind0")');
+    expect(operations).toContain("JsonSerializers.literal(null)");
     expect(operations).toContain('wireName: "foo_prop"');
     result.typecheck("additional-properties-union-api");
 
@@ -564,6 +583,11 @@ void invalidAdditionalDecoder;
         name: "container",
         list: [{ kind: "kind1", start: "plain text" }],
         object: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+      }),
+      literal: () => ({
+        name: "literal",
+        none: { kind: null, value: "empty" },
+        text: { kind: "text", value: "present" },
       }),
     });
 
@@ -598,6 +622,14 @@ void invalidAdditionalDecoder;
       name: "container",
       list: [{ kind: "kind1", start: "plain text" }],
       object: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+    });
+
+    const literal = await router.handle(new Request("http://localhost/literal"));
+    expect(literal.status).toBe(200);
+    expect(await literal.json()).toEqual({
+      name: "literal",
+      none: { kind: null, wire_value: "empty" },
+      text: { kind: "text", wire_value: "present" },
     });
   });
 });

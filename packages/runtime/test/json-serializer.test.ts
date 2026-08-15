@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { JsonSerializationError, JsonSerializers, type JsonSerializer } from "../src/server.js";
+import {
+  JsonSerializationError,
+  JsonSerializer,
+  JsonSerializers,
+  stringifyJson,
+} from "../src/server.js";
 
 interface Profile {
   displayName: string;
@@ -186,6 +191,34 @@ describe("JsonSerializers", () => {
     expect(() => ambiguous.serialize({ value: "conflict" })).toThrow(
       "multiple union variants with different JSON wire representations",
     );
+  });
+
+  test("compares successful union variants using JSON wire semantics", () => {
+    const serializeAs = (output: unknown) => JsonSerializer.of<unknown>(() => output);
+    const sparse = new Array<unknown>(3);
+    sparse[1] = undefined;
+    sparse[2] = () => "omitted";
+
+    const equivalentPairs: readonly (readonly [unknown, unknown])[] = [
+      [Number.NaN, null],
+      [Number.POSITIVE_INFINITY, null],
+      [sparse, [null, null, null]],
+      [
+        {
+          kept: true,
+          undefinedValue: undefined,
+          functionValue: () => "omitted",
+          symbolValue: Symbol("omitted"),
+        },
+        { kept: true },
+      ],
+    ];
+
+    for (const [left, right] of equivalentPairs) {
+      const serializer = JsonSerializers.union([serializeAs(left), serializeAs(right)]);
+      const serialized = serializer.serialize("input");
+      expect(stringifyJson(serialized)).toBe(stringifyJson(right));
+    }
   });
 
   test("supports recursive serializers lazily", () => {

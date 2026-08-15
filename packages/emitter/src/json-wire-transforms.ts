@@ -701,6 +701,8 @@ function literalShapeKey(type: Type): string {
       return `literal:${numericLiteralExpression(type)}`;
     case "Boolean":
       return `literal:${String(type.value)}`;
+    case "Intrinsic":
+      return type.name === "null" ? "literal:null" : "value";
     default:
       return "value";
   }

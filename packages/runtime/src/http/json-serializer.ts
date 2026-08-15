@@ -429,6 +429,12 @@ function jsonWireValuesEqual(
   seen: WeakMap<object, WeakSet<object>> = new WeakMap(),
 ): boolean {
   if (Object.is(left, right)) return true;
+  if (isJsonNullValue(left) || isJsonNullValue(right)) {
+    return isJsonNullValue(left) && isJsonNullValue(right);
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left === right;
+  }
   if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
     return false;
   }
@@ -448,23 +454,50 @@ function jsonWireValuesEqual(
   }
   paired.add(right);
 
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
+  if (Array.isArray(left) && Array.isArray(right)) {
+    for (let index = 0; index < left.length; index += 1) {
+      if (
+        !jsonWireValuesEqual(
+          jsonArrayComparisonValue(left[index]),
+          jsonArrayComparisonValue(right[index]),
+          seen,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const leftObject = left as Record<string, unknown>;
+  const rightObject = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftObject).filter(
+    (key) => !isOmittedJsonObjectValue(leftObject[key]),
+  );
+  const rightKeys = Object.keys(rightObject).filter(
+    (key) => !isOmittedJsonObjectValue(rightObject[key]),
+  );
   if (leftKeys.length !== rightKeys.length) return false;
   const rightKeySet = new Set(rightKeys);
   for (const key of leftKeys) {
     if (!rightKeySet.has(key)) return false;
-    if (
-      !jsonWireValuesEqual(
-        (left as Record<string, unknown>)[key],
-        (right as Record<string, unknown>)[key],
-        seen,
-      )
-    ) {
+    if (!jsonWireValuesEqual(leftObject[key], rightObject[key], seen)) {
       return false;
     }
   }
   return true;
+}
+
+function isJsonNullValue(value: unknown): boolean {
+  return value === null || (typeof value === "number" && !Number.isFinite(value));
+}
+
+function isOmittedJsonObjectValue(value: unknown): boolean {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+function jsonArrayComparisonValue(value: unknown): unknown {
+  return isOmittedJsonObjectValue(value) ? null : value;
 }
 
 function appendPropertyPath(path: string, property: string): string {
