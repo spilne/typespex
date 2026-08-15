@@ -209,6 +209,12 @@ namespace InvalidUriTemplateApi;
 @route("/prefix-modifier/{x:2}")
 @get op prefixModifier(@path x: string): void;
 
+@route("/query-prefix{?q:2}")
+@get op queryPrefix(@query q: string): void;
+
+@route("/query-continuation?fixed=true{&q:2}")
+@get op queryContinuationPrefix(@query q: string): void;
+
 @route("/reserved/prefix{+x}")
 @get op embeddedReserved(@path x: string): void;
 
@@ -1270,6 +1276,7 @@ describe("URI-template lowering", () => {
       'exploded simple path variable "x" must have a scalar, scalar-array, or scalar-record wire shape',
     );
     expect(diagnostics).toContain('modifier ":2"');
+    expect(diagnostics).toContain('modifier ":2" on query variable "q" is not supported');
     expect(diagnostics).toContain("a reserved expansion must occupy a complete path segment");
     expect(diagnostics).toContain("path material appears after a reserved expansion");
     expect(diagnostics).toContain("appears more than once");
@@ -2278,6 +2285,14 @@ describe("URI-template lowering", () => {
           },
         ],
       },
+    });
+    expect(lowerUriTemplateText("/query{?q:2}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: 'modifier ":2" on query variable "q" is not supported',
+    });
+    expect(lowerUriTemplateText("/query?fixed=true{&q:2}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: 'modifier ":2" on query variable "q" is not supported',
     });
     expect(
       lowerUriTemplateText("/query?f%69xed=tr%75e&mode=full+text{&q*}", new Set(), new Set(["q"])),

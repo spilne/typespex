@@ -761,9 +761,15 @@ function validateExpressionVariables(
   expected: ReadonlySet<string>,
   seen: Set<string>,
   location: "path" | "query",
-  allowModifiers: boolean,
+  allowExplodeModifier: boolean,
 ): UriTemplateLowering | undefined {
-  const result = parseExpressionVariables(expression, expected, seen, location, allowModifiers);
+  const result = parseExpressionVariables(
+    expression,
+    expected,
+    seen,
+    location,
+    allowExplodeModifier,
+  );
   return result.ok ? undefined : result;
 }
 
@@ -772,7 +778,7 @@ function parseExpressionVariables(
   expected: ReadonlySet<string>,
   seen: Set<string>,
   location: "path" | "query",
-  allowModifiers: boolean,
+  allowExplodeModifier: boolean,
 ):
   | { readonly ok: true; readonly names: readonly string[] }
   | { readonly ok: false; readonly reason: string } {
@@ -780,7 +786,7 @@ function parseExpressionVariables(
   const names: string[] = [];
   for (const rawSpec of expression.split(",")) {
     if (rawSpec.length === 0) return failure("URI-template expression contains an empty variable");
-    const parsed = parseVariableSpec(rawSpec, allowModifiers, location);
+    const parsed = parseVariableSpec(rawSpec, allowExplodeModifier, location);
     if (!parsed.ok) return parsed;
     const name = parsed.name;
     if (!expected.has(name)) {
@@ -797,7 +803,7 @@ function parseExpressionVariables(
 
 function parseVariableSpec(
   rawSpec: string,
-  allowModifiers: boolean,
+  allowExplodeModifier: boolean,
   location: "path" | "query",
 ): { readonly ok: true; readonly name: string } | { readonly ok: false; readonly reason: string } {
   let rawName = rawSpec;
@@ -819,7 +825,7 @@ function parseVariableSpec(
   if (rawName.includes("*") || rawName.includes(":")) {
     return failure(`malformed variable specification ${JSON.stringify(rawSpec)}`);
   }
-  if (modifier && !allowModifiers) {
+  if (modifier && (modifier !== "*" || !allowExplodeModifier)) {
     return failure(
       `modifier ${JSON.stringify(modifier)} on ${location} variable ${JSON.stringify(rawName)} is not supported`,
     );
