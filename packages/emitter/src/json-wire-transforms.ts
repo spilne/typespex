@@ -24,6 +24,8 @@ import {
   type ScalarEncodingContext,
 } from "./scalar-encoding.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
+import { numericLiteralExpression } from "./numeric-literals.js";
+import { stringLiteralExpression } from "./string-template-literals.js";
 import { tsIdentifier, tsLiteral, tsObjectKey } from "./typescript-names.js";
 
 const JSON_MEDIA_TYPE = "application/json";
@@ -162,6 +164,20 @@ export function unsupportedJsonWireTransformReason(
       if (nonNull && nonNull.length === 1) {
         return unsupportedJsonWireTransformReason(ctx, nonNull[0]!, projection, nextSeen, target);
       }
+      const runtimeVariants = runtimeSerializableUnionVariants(ctx, type, projection);
+      if (runtimeVariants) {
+        for (const variant of runtimeVariants) {
+          const reason = unsupportedJsonWireTransformReason(
+            ctx,
+            variant,
+            projection,
+            nextSeen,
+            target,
+          );
+          if (reason) return reason;
+        }
+        return undefined;
+      }
       return `nested union ${JSON.stringify(type.name || "(anonymous)")} has multiple wire-transforming variants that cannot be distinguished from the handler value`;
     }
     case "Tuple": {
@@ -210,12 +226,7 @@ export function getJsonWireSerializerDeclarations(ctx: EmitterCtx): readonly str
     const body =
       pending.type.kind === "Model"
         ? emitObjectSerializer(ctx, pending.type, pending.projection, pending.encodingContext)
-        : emitDiscriminatedUnionSerializerBody(
-            ctx,
-            pending.type,
-            pending.projection,
-            pending.encodingContext,
-          );
+        : emitUnionSerializerBody(ctx, pending.type, pending.projection, pending.encodingContext);
     pending.declaration = `const ${pending.name}: JsonSerializer<${typeTs}> = JsonSerializers.lazy<${typeTs}>(() => ${body});`;
     pending.building = false;
     pending = nextPendingSerializer(state);
@@ -387,6 +398,11 @@ function emitRequiredSerializer(
       if (nonNull?.length === 1) {
         return `JsonSerializers.nullable(${emitRequiredSerializer(ctx, nonNull[0]!, projection, target, encodingContext)})`;
       }
+      if (runtimeSerializableUnionVariants(ctx, type, projection)) {
+        return type.name
+          ? getOrCreateSerializer(ctx, type, projection, encodingContext).name
+          : emitRuntimeUnionSerializerBody(ctx, type, projection, encodingContext);
+      }
       return identitySerializer(ctx, type, projection);
     }
     case "Tuple":
@@ -409,6 +425,17 @@ function emitRequiredSerializer(
           ? emitDateTimeSerializer(ctx, type, "JsonSerializers.identity<string>()")
           : identitySerializer(ctx, type, projection);
     }
+    case "String":
+    case "StringTemplate":
+      return `JsonSerializers.literal(${stringLiteralExpression(type)})`;
+    case "Number":
+      return `JsonSerializers.literal(${numericLiteralExpression(type)})`;
+    case "Boolean":
+      return `JsonSerializers.literal(${String(type.value)})`;
+    case "Intrinsic":
+      return type.name === "null"
+        ? "JsonSerializers.literal(null)"
+        : identitySerializer(ctx, type, projection);
     case "ModelProperty":
     case "UnionVariant":
       return emitRequiredSerializer(ctx, type.type, projection, target, encodingContext);
@@ -466,6 +493,52 @@ function emitObjectSerializer(
 
 function emitSyntheticDiscriminatorSerializer(name: string): string {
   return `{ property: ${tsLiteral(name)}, wireName: ${tsLiteral(name)}, serializer: JsonSerializers.identity() }`;
+}
+
+function emitUnionSerializerBody(
+  ctx: EmitterCtx,
+  union: Union,
+  projection?: PayloadProjection,
+  encodingContext: ScalarEncodingContext = "value",
+): string {
+  return resolveDiscriminatedUnion(ctx.program, union)
+    ? emitDiscriminatedUnionSerializerBody(ctx, union, projection, encodingContext)
+    : emitRuntimeUnionSerializerBody(ctx, union, projection, encodingContext);
+}
+
+function emitRuntimeUnionSerializerBody(
+  ctx: EmitterCtx,
+  union: Union,
+  projection?: PayloadProjection,
+  encodingContext: ScalarEncodingContext = "value",
+): string {
+  const variants = runtimeSerializableUnionVariants(ctx, union, projection);
+  if (!variants) return identitySerializer(ctx, union, projection);
+
+  const serializers = variants.map((variant) =>
+    emitRuntimeUnionVariantSerializer(ctx, variant, projection, encodingContext),
+  );
+  return `JsonSerializers.union<${payloadTypeToTs(ctx, union, projection)}>([${serializers.join(
+    ", ",
+  )}])`;
+}
+
+function emitRuntimeUnionVariantSerializer(
+  ctx: EmitterCtx,
+  type: Type,
+  projection: PayloadProjection | undefined,
+  encodingContext: ScalarEncodingContext,
+): string {
+  const serializer = emitRequiredSerializer(ctx, type, projection, undefined, encodingContext);
+  if (type.kind !== "Model") return serializer;
+  if (getPayloadCollection(ctx, type) || getHttpPartType(ctx.program, type)) return serializer;
+
+  const additional = getAdditionalPropertiesValue(type);
+  if (additional && !isNeverAdditionalProperties(type)) return serializer;
+  const properties = payloadModelProperties(type, projection).map((property) =>
+    tsLiteral(property.name),
+  );
+  return `JsonSerializers.exactObject(${serializer}, [${properties.join(", ")}])`;
 }
 
 function emitDiscriminatedUnionSerializerBody(
@@ -572,6 +645,67 @@ function nextPendingSerializer(state: JsonWireState): JsonSerializerEmission | u
     }
   }
   return undefined;
+}
+
+/**
+ * Returns variants whose handler-facing shapes can be tried independently at
+ * runtime. Duplicate shapes remain a generation-time error because the
+ * handler value carries no evidence that can select between them.
+ */
+function runtimeSerializableUnionVariants(
+  ctx: EmitterCtx,
+  union: Union,
+  projection?: PayloadProjection,
+): readonly Type[] | undefined {
+  const variants = [...union.variants.values()].map((variant) => variant.type);
+  const shapeKeys = variants.map((variant) =>
+    runtimeUnionVariantShapeKey(ctx, variant, projection),
+  );
+  if (shapeKeys.some((key) => key === undefined)) return undefined;
+  return new Set(shapeKeys).size === shapeKeys.length ? variants : undefined;
+}
+
+function runtimeUnionVariantShapeKey(
+  ctx: EmitterCtx,
+  type: Type,
+  projection?: PayloadProjection,
+): string | undefined {
+  if (type.kind === "Model") {
+    const collection = getPayloadCollection(ctx, type);
+    if (collection?.kind === "array") return "array";
+    if (collection?.kind === "record") return "record";
+    const httpPartType = getHttpPartType(ctx.program, type);
+    if (httpPartType) return runtimeUnionVariantShapeKey(ctx, httpPartType, projection);
+
+    const additional = getAdditionalPropertiesValue(type);
+    const openness = additional && !isNeverAdditionalProperties(type) ? "open" : "closed";
+    const properties = payloadModelProperties(type, projection)
+      .map((property) => {
+        const optional = payloadPropertyOptional(property, projection) ? "optional" : "required";
+        return `${JSON.stringify(property.name)}:${optional}:${literalShapeKey(property.type)}`;
+      })
+      .sort();
+    return `object:${openness}:{${properties.join(",")}}`;
+  }
+  if (type.kind === "Tuple") return `tuple:${type.values.length}`;
+  if (type.kind === "Intrinsic" && type.name === "null") return "literal:null";
+  return undefined;
+}
+
+function literalShapeKey(type: Type): string {
+  switch (type.kind) {
+    case "String":
+    case "StringTemplate":
+      return `literal:${stringLiteralExpression(type)}`;
+    case "Number":
+      return `literal:${numericLiteralExpression(type)}`;
+    case "Boolean":
+      return `literal:${String(type.value)}`;
+    case "Intrinsic":
+      return type.name === "null" ? "literal:null" : "value";
+    default:
+      return "value";
+  }
 }
 
 /** Returns non-null variants when the union is nullable, otherwise undefined. */

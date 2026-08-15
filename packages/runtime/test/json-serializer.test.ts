@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { JsonSerializationError, JsonSerializers, type JsonSerializer } from "../src/server.js";
+import {
+  JsonSerializationError,
+  JsonSerializer,
+  JsonSerializers,
+  stringifyJson,
+} from "../src/server.js";
 
 interface Profile {
   displayName: string;
@@ -118,6 +123,150 @@ describe("JsonSerializers", () => {
       expect(error).toBeInstanceOf(JsonSerializationError);
       expect((error as JsonSerializationError).path).toBe("$response.profile");
       expect((error as Error).message).toContain("Expected an object");
+    }
+  });
+
+  test("reports numeric literal expectations without losing their value", () => {
+    expect(() => JsonSerializers.literal(Number.NaN).serialize(0)).toThrow("Expected literal NaN");
+    expect(() => JsonSerializers.literal(Number.POSITIVE_INFINITY).serialize(0)).toThrow(
+      "Expected literal Infinity",
+    );
+    expect(() => JsonSerializers.literal(Number.NEGATIVE_INFINITY).serialize(0)).toThrow(
+      "Expected literal -Infinity",
+    );
+    expect(() => JsonSerializers.literal(-0).serialize(0)).toThrow("Expected literal -0");
+  });
+
+  test("tries exact union shapes and rejects conflicting wire representations", () => {
+    type TextValue = { kind: "same"; start: string };
+    type DateValue = { kind: "same"; start: string; end?: string };
+    type Value = TextValue | DateValue;
+
+    const text = JsonSerializers.exactObject(
+      JsonSerializers.object<TextValue>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("same") },
+        { property: "start", wireName: "start", serializer: JsonSerializers.identity() },
+      ]),
+      ["kind", "start"],
+    );
+    const dated = JsonSerializers.exactObject(
+      JsonSerializers.object<DateValue>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("same") },
+        { property: "start", wireName: "start", serializer: JsonSerializers.rfc3339DateTime },
+        {
+          property: "end",
+          wireName: "end",
+          serializer: JsonSerializers.rfc3339DateTime,
+          optional: true,
+        },
+      ]),
+      ["kind", "start", "end"],
+    );
+    const values = JsonSerializers.union<Value>([text, dated]);
+
+    expect(values.serialize({ kind: "same", start: "plain text" })).toEqual({
+      kind: "same",
+      start: "plain text",
+    });
+    expect(
+      values.serialize({
+        kind: "same",
+        start: "2021-01-01T00:00:00Z",
+        end: "2021-01-02T00:00:00Z",
+      }),
+    ).toEqual({
+      kind: "same",
+      start: "2021-01-01T00:00:00Z",
+      end: "2021-01-02T00:00:00Z",
+    });
+    expect(() => values.serialize({ kind: "same", start: "invalid", end: "invalid" })).toThrow(
+      "Value did not match any union variant",
+    );
+
+    type Left = { value: string };
+    type Right = { value: string };
+    const ambiguous = JsonSerializers.union<Left | Right>([
+      JsonSerializers.exactObject(
+        JsonSerializers.object<Left>([
+          { property: "value", wireName: "left_value", serializer: JsonSerializers.identity() },
+        ]),
+        ["value"],
+      ),
+      JsonSerializers.exactObject(
+        JsonSerializers.object<Right>([
+          { property: "value", wireName: "right_value", serializer: JsonSerializers.identity() },
+        ]),
+        ["value"],
+      ),
+    ]);
+    expect(() => ambiguous.serialize({ value: "conflict" })).toThrow(
+      "multiple union variants with different JSON wire representations",
+    );
+  });
+
+  test("compares successful union variants using JSON wire semantics", () => {
+    const serializeAs = (output: unknown) => JsonSerializer.of<unknown>(() => output);
+    const sparse = new Array<unknown>(3);
+    sparse[1] = undefined;
+    sparse[2] = () => "omitted";
+
+    const equivalentPairs: readonly (readonly [unknown, unknown])[] = [
+      [Number.NaN, null],
+      [Number.POSITIVE_INFINITY, null],
+      [1n, 1],
+      [new Number(1), 1],
+      [new Date(0), new Date(0)],
+      [new Uint8Array([0, 255]), "AP8="],
+      [sparse, [null, null, null]],
+      [[{ toJSON: () => undefined }], [null]],
+      [
+        {
+          kept: true,
+          undefinedValue: undefined,
+          functionValue: () => "omitted",
+          symbolValue: Symbol("omitted"),
+        },
+        { kept: true },
+      ],
+      [{ kept: true, omitted: { toJSON: () => undefined } }, { kept: true }],
+      [{ value: { toJSON: (key: string) => key } }, { value: "value" }],
+    ];
+
+    for (const [left, right] of equivalentPairs) {
+      const serializer = JsonSerializers.union([serializeAs(left), serializeAs(right)]);
+      const serialized = serializer.serialize("input");
+      expect(stringifyJson(serialized)).toBe(stringifyJson(right));
+    }
+
+    const conflictingPairs: readonly (readonly [unknown, unknown])[] = [
+      [new Number(1), new Number(2)],
+      [new Date(0), new Date(1)],
+      [{ toJSON: () => ({ value: 1 }) }, { toJSON: () => ({ value: 2 }) }],
+    ];
+    for (const [left, right] of conflictingPairs) {
+      const serializer = JsonSerializers.union([serializeAs(left), serializeAs(right)]);
+      expect(() => serializer.serialize("input")).toThrow(
+        "multiple union variants with different JSON wire representations",
+      );
+    }
+
+    const comparisonFailure = new Error("toJSON failed");
+    const throwing = JsonSerializers.union([
+      serializeAs({ toJSON: () => null }),
+      serializeAs({
+        toJSON: () => {
+          throw comparisonFailure;
+        },
+      }),
+    ]);
+    try {
+      throwing.serialize("input");
+      throw new Error("Expected union comparison to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(JsonSerializationError);
+      expect((error as JsonSerializationError).path).toBe("$response");
+      expect((error as Error).message).toContain("Failed to compare union variants: toJSON failed");
+      expect((error as Error).cause).toBe(comparisonFailure);
     }
   });
 

@@ -67,6 +67,7 @@ const SCENARIOS = [
   "type/model/inheritance/single-discriminator",
   "type/model/usage",
   "type/model/visibility",
+  "type/property/additional-properties",
   "type/property/nullable",
   "type/property/optionality",
   "type/property/value-types",

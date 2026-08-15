@@ -34,25 +34,21 @@ type _TypespexPayload_UnauthorizedError_response_1_payload = {
 const _jsonSerializer_ConflictError_response_1_payload: JsonSerializer<_TypespexPayload_ConflictError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_ConflictError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_ConflictError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"CONFLICT">() },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("CONFLICT") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
 const _jsonSerializer_NotFoundError_response_1_payload: JsonSerializer<_TypespexPayload_NotFoundError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_NotFoundError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_NotFoundError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"NOT_FOUND">() },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("NOT_FOUND") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
 const _jsonSerializer_UnauthorizedError_response_1_payload: JsonSerializer<_TypespexPayload_UnauthorizedError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_UnauthorizedError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_UnauthorizedError_response_1_payload>([
-      {
-        property: "code",
-        wireName: "code",
-        serializer: JsonSerializers.identity<"UNAUTHORIZED">(),
-      },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("UNAUTHORIZED") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );

@@ -313,14 +313,14 @@ const _jsonSerializer_ConflictError_response_1_payload: JsonSerializer<_Typespex
 const _jsonSerializer_ForbiddenError_response_1_payload: JsonSerializer<_TypespexPayload_ForbiddenError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_ForbiddenError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_ForbiddenError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"FORBIDDEN">() },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("FORBIDDEN") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
 const _jsonSerializer_NotFoundError_response_1_payload: JsonSerializer<_TypespexPayload_NotFoundError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_NotFoundError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_NotFoundError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"NOT_FOUND">() },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("NOT_FOUND") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
@@ -824,7 +824,7 @@ type _TypespexPayload_CreatedItem_response_1_payload = { kind: "created"; id: st
 const _jsonSerializer_AcceptedJob_response_1_payload: JsonSerializer<_TypespexPayload_AcceptedJob_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_AcceptedJob_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_AcceptedJob_response_1_payload>([
-      { property: "kind", wireName: "kind", serializer: JsonSerializers.identity<"accepted">() },
+      { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("accepted") },
       {
         property: "operationId",
         wireName: "operationId",
@@ -835,7 +835,7 @@ const _jsonSerializer_AcceptedJob_response_1_payload: JsonSerializer<_TypespexPa
 const _jsonSerializer_CreatedItem_response_1_payload: JsonSerializer<_TypespexPayload_CreatedItem_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_CreatedItem_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_CreatedItem_response_1_payload>([
-      { property: "kind", wireName: "kind", serializer: JsonSerializers.identity<"created">() },
+      { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("created") },
       { property: "id", wireName: "id", serializer: JsonSerializers.identity<string>() },
     ]),
   );

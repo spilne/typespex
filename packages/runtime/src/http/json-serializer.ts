@@ -72,6 +72,26 @@ function identityJsonSerializer<A>(): JsonSerializer<A> {
   return identitySerializer as JsonSerializer<A>;
 }
 
+function literalJsonSerializer<A extends string | number | bigint | boolean | null>(
+  expected: A,
+): JsonSerializer<A> {
+  return JsonSerializer.of((value, path) => {
+    if (!Object.is(value, expected)) {
+      throw new JsonSerializationError(path, `Expected literal ${formatJsonLiteral(expected)}.`);
+    }
+    return value;
+  });
+}
+
+function formatJsonLiteral(value: string | number | bigint | boolean | null): string {
+  if (typeof value === "bigint") return `${value}n`;
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return "-0";
+    if (!Number.isFinite(value)) return String(value);
+  }
+  return JSON.stringify(value);
+}
+
 function arrayJsonSerializer<A>(item: JsonSerializer<A>): JsonSerializer<readonly A[]> {
   return JsonSerializer.of((value, path) => {
     if (!Array.isArray(value)) {
@@ -177,6 +197,80 @@ function objectJsonSerializer<A extends object>(
     }
 
     return output;
+  });
+}
+
+function exactObjectJsonSerializer<A extends object>(
+  serializer: JsonSerializer<A>,
+  properties: readonly string[],
+): JsonSerializer<A> {
+  const allowed = new Set(properties);
+  if (allowed.size !== properties.length) {
+    throw new TypeError("Exact JSON object properties must be unique.");
+  }
+
+  return JsonSerializer.of((value, path) => {
+    const source = expectObject(value, path);
+    for (const property of Object.keys(source)) {
+      if (!allowed.has(property)) {
+        throw new JsonSerializationError(
+          appendPropertyPath(path, property),
+          "Unexpected property.",
+        );
+      }
+    }
+    return serializeNested(serializer, value, path);
+  });
+}
+
+function unionJsonSerializer<A>(variants: readonly JsonSerializer<unknown>[]): JsonSerializer<A> {
+  if (variants.length === 0) {
+    throw new TypeError("A JSON union serializer requires at least one variant.");
+  }
+
+  return JsonSerializer.of((value, path) => {
+    let matched = false;
+    let result: unknown;
+    const errors: JsonSerializationError[] = [];
+
+    for (const variant of variants) {
+      let candidate: unknown;
+      try {
+        candidate = serializeNested(variant, value, path);
+      } catch (error) {
+        if (error instanceof JsonSerializationError) {
+          errors.push(error);
+          continue;
+        }
+        throw error;
+      }
+
+      if (!matched) {
+        matched = true;
+        result = candidate;
+        continue;
+      }
+      let equivalent: boolean;
+      try {
+        equivalent = jsonWireValuesEqual(result, candidate);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new JsonSerializationError(path, `Failed to compare union variants: ${message}`, {
+          cause: error,
+        });
+      }
+      if (!equivalent) {
+        throw new JsonSerializationError(
+          path,
+          "Value matches multiple union variants with different JSON wire representations.",
+        );
+      }
+    }
+
+    if (matched) return result;
+    throw new JsonSerializationError(path, "Value did not match any union variant.", {
+      cause: new AggregateError(errors),
+    });
   });
 }
 
@@ -346,6 +440,117 @@ function validateObjectSchema(properties: readonly ErasedJsonObjectProperty[]): 
   }
 }
 
+function jsonWireValuesEqual(
+  left: unknown,
+  right: unknown,
+  seen: WeakMap<object, WeakSet<object>> = new WeakMap(),
+): boolean {
+  return normalizedJsonWireValuesEqual(
+    normalizeJsonWireValue(left, ""),
+    normalizeJsonWireValue(right, ""),
+    seen,
+  );
+}
+
+const omittedJsonWireValue = Symbol("omittedJsonWireValue");
+
+function normalizedJsonWireValuesEqual(
+  left: unknown | typeof omittedJsonWireValue,
+  right: unknown | typeof omittedJsonWireValue,
+  seen: WeakMap<object, WeakSet<object>>,
+): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === omittedJsonWireValue || right === omittedJsonWireValue) return false;
+  const leftIsNumber = typeof left === "number" || typeof left === "bigint";
+  const rightIsNumber = typeof right === "number" || typeof right === "bigint";
+  if (leftIsNumber || rightIsNumber) {
+    return leftIsNumber && rightIsNumber && String(left) === String(right);
+  }
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  }
+
+  let paired = seen.get(left);
+  if (paired?.has(right)) return true;
+  if (!paired) {
+    paired = new WeakSet();
+    seen.set(left, paired);
+  }
+  paired.add(right);
+
+  if (Array.isArray(left) && Array.isArray(right)) {
+    for (let index = 0; index < left.length; index += 1) {
+      if (
+        !normalizedJsonWireValuesEqual(
+          normalizeJsonArrayValue(left[index], String(index)),
+          normalizeJsonArrayValue(right[index], String(index)),
+          seen,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const leftObject = left as Record<string, unknown>;
+  const rightObject = right as Record<string, unknown>;
+  const leftProperties = normalizedJsonObjectProperties(leftObject);
+  const rightProperties = normalizedJsonObjectProperties(rightObject);
+  if (leftProperties.size !== rightProperties.size) return false;
+  for (const [key, leftValue] of leftProperties) {
+    if (!rightProperties.has(key)) return false;
+    if (!normalizedJsonWireValuesEqual(leftValue, rightProperties.get(key), seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function normalizeJsonWireValue(
+  value: unknown,
+  key: string,
+): unknown | typeof omittedJsonWireValue {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+    return omittedJsonWireValue;
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  if (value instanceof Uint8Array) return ScalarEncodings.encodeBase64(value);
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+    return normalizeJsonWireValue(value.valueOf(), key);
+  }
+  if (typeof value === "object" && value !== null) {
+    const toJSON = (value as { toJSON?: (key: string) => unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      const replacement = toJSON.call(value, key);
+      if (replacement !== value) return normalizeJsonWireValue(replacement, key);
+    }
+  }
+  return value;
+}
+
+function normalizeJsonArrayValue(
+  value: unknown,
+  key: string,
+): unknown | typeof omittedJsonWireValue {
+  const normalized = normalizeJsonWireValue(value, key);
+  return normalized === omittedJsonWireValue ? null : normalized;
+}
+
+function normalizedJsonObjectProperties(
+  value: Record<string, unknown>,
+): Map<string, unknown | typeof omittedJsonWireValue> {
+  const properties = new Map<string, unknown | typeof omittedJsonWireValue>();
+  for (const key of Object.keys(value)) {
+    const normalized = normalizeJsonWireValue(value[key], key);
+    if (normalized !== omittedJsonWireValue) properties.set(key, normalized);
+  }
+  return properties;
+}
+
 function appendPropertyPath(path: string, property: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(property)
     ? `${path}.${property}`
@@ -363,10 +568,13 @@ function defineDataProperty(target: Record<string, unknown>, key: string, value:
 
 export const JsonSerializers = {
   identity: identityJsonSerializer,
+  literal: literalJsonSerializer,
   array: arrayJsonSerializer,
   tuple: tupleJsonSerializer,
   record: recordJsonSerializer,
   object: objectJsonSerializer,
+  exactObject: exactObjectJsonSerializer,
+  union: unionJsonSerializer,
   nullable: nullableJsonSerializer,
   discriminated: discriminatedJsonSerializer,
   lazy: lazyJsonSerializer,
