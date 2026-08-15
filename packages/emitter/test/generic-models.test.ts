@@ -245,6 +245,29 @@ interface Types {
 }
 `;
 
+const nonTemplatedScalarUnionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ScalarUnionApi" })
+namespace ScalarUnionApi;
+
+scalar Count extends int32;
+
+union Value {
+  Count,
+  string,
+}
+
+model Payload {
+  value: Value;
+}
+
+@route("/value")
+@get
+op read(): Payload;
+`;
+
 const arrayUnionElementSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
@@ -466,6 +489,15 @@ export const handlers: NestedGenericApiServer = {
     );
     expect(operations).toContain('RequestDecoders.query("tag", Decoders.string)');
     r.typecheck("template-type-api");
+  });
+
+  test("lowers source references to non-templated scalar wire types", () => {
+    const r = compileFixture("non-templated-scalar-union", nonTemplatedScalarUnionSpec);
+    const models = r.readFile("scalar-union-api", "models.ts");
+
+    expect(models).toContain("export type Value = number | string;");
+    expect(models).not.toContain("export type Count");
+    r.typecheck("scalar-union-api");
   });
 
   test("preserves union element semantics for nominal Array instantiations", () => {
