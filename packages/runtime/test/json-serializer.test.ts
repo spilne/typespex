@@ -121,6 +121,73 @@ describe("JsonSerializers", () => {
     }
   });
 
+  test("tries exact union shapes and rejects conflicting wire representations", () => {
+    type TextValue = { kind: "same"; start: string };
+    type DateValue = { kind: "same"; start: string; end?: string };
+    type Value = TextValue | DateValue;
+
+    const text = JsonSerializers.exactObject(
+      JsonSerializers.object<TextValue>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("same") },
+        { property: "start", wireName: "start", serializer: JsonSerializers.identity() },
+      ]),
+      ["kind", "start"],
+    );
+    const dated = JsonSerializers.exactObject(
+      JsonSerializers.object<DateValue>([
+        { property: "kind", wireName: "kind", serializer: JsonSerializers.literal("same") },
+        { property: "start", wireName: "start", serializer: JsonSerializers.rfc3339DateTime },
+        {
+          property: "end",
+          wireName: "end",
+          serializer: JsonSerializers.rfc3339DateTime,
+          optional: true,
+        },
+      ]),
+      ["kind", "start", "end"],
+    );
+    const values = JsonSerializers.union<Value>([text, dated]);
+
+    expect(values.serialize({ kind: "same", start: "plain text" })).toEqual({
+      kind: "same",
+      start: "plain text",
+    });
+    expect(
+      values.serialize({
+        kind: "same",
+        start: "2021-01-01T00:00:00Z",
+        end: "2021-01-02T00:00:00Z",
+      }),
+    ).toEqual({
+      kind: "same",
+      start: "2021-01-01T00:00:00Z",
+      end: "2021-01-02T00:00:00Z",
+    });
+    expect(() => values.serialize({ kind: "same", start: "invalid", end: "invalid" })).toThrow(
+      "Value did not match any union variant",
+    );
+
+    type Left = { value: string };
+    type Right = { value: string };
+    const ambiguous = JsonSerializers.union<Left | Right>([
+      JsonSerializers.exactObject(
+        JsonSerializers.object<Left>([
+          { property: "value", wireName: "left_value", serializer: JsonSerializers.identity() },
+        ]),
+        ["value"],
+      ),
+      JsonSerializers.exactObject(
+        JsonSerializers.object<Right>([
+          { property: "value", wireName: "right_value", serializer: JsonSerializers.identity() },
+        ]),
+        ["value"],
+      ),
+    ]);
+    expect(() => ambiguous.serialize({ value: "conflict" })).toThrow(
+      "multiple union variants with different JSON wire representations",
+    );
+  });
+
   test("supports recursive serializers lazily", () => {
     interface Node {
       name: string;

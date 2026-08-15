@@ -163,6 +163,49 @@ function jsonRequest(path: string, body: unknown, headers: Record<string, string
   });
 }
 
+const additionalPropertiesUnionSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service namespace AdditionalPropertiesUnionApi;
+
+model WidgetData0 {
+  kind: "kind0";
+  @encodedName("application/json", "foo_prop")
+  fooProp: string;
+}
+
+model WidgetData1 {
+  kind: "kind1";
+  start: utcDateTime;
+  end?: utcDateTime;
+}
+
+model WidgetData2 {
+  kind: "kind1";
+  start: string;
+}
+
+model ByRequiredProperty {
+  name: string;
+  ...Record<WidgetData0 | WidgetData1>;
+}
+
+model ByOptionalProperty {
+  name: string;
+  ...Record<WidgetData2 | WidgetData1>;
+}
+
+model ByContainerShape {
+  name: string;
+  ...Record<WidgetData2[] | WidgetData1>;
+}
+
+@route("/required") @get op required(): ByRequiredProperty;
+@route("/optional") @get op optional(): ByOptionalProperty;
+@route("/container") @get op container(): ByContainerShape;
+`;
+
 describe("TypeSpec model additional properties", () => {
   test("emits and decodes declared and additional properties independently", async () => {
     const result = compileFixture("additional-properties", additionalPropertiesSpec);
@@ -482,5 +525,79 @@ void invalidAdditionalDecoder;
     expect(
       (await router.handle(jsonRequest("/generic-closed", { known: "yes", invalid: true }))).status,
     ).toBe(400);
+  });
+
+  test("serializes structurally distinct unions in additional properties", async () => {
+    const result = compileFixture("additional-properties-unions", additionalPropertiesUnionSpec);
+    const operations = result.readFile("additional-properties-union-api", "server-operations.ts");
+
+    expect(operations).toContain("JsonSerializers.union<");
+    expect(operations).toContain("JsonSerializers.exactObject(");
+    expect(operations).toContain('JsonSerializers.literal("kind0")');
+    expect(operations).toContain('wireName: "foo_prop"');
+    result.typecheck("additional-properties-union-api");
+
+    const { createAdditionalPropertiesUnionApiServerRouter } = await import(
+      `${result.outputDir}/additional-properties-union-api/server-router.ts`
+    );
+    const router = createAdditionalPropertiesUnionApiServerRouter({
+      required: () => ({
+        name: "required",
+        first: { kind: "kind0", fooProp: "renamed" },
+        second: {
+          kind: "kind1",
+          start: "2021-01-01T00:00:00Z",
+          end: "2021-01-02T00:00:00Z",
+        },
+      }),
+      optional: () => ({
+        name: "optional",
+        text: { kind: "kind1", start: "plain text" },
+        overlap: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+        dated: {
+          kind: "kind1",
+          start: "2021-01-01T00:00:00Z",
+          end: "2021-01-02T00:00:00Z",
+        },
+      }),
+      container: () => ({
+        name: "container",
+        list: [{ kind: "kind1", start: "plain text" }],
+        object: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+      }),
+    });
+
+    const required = await router.handle(new Request("http://localhost/required"));
+    expect(required.status).toBe(200);
+    expect(await required.json()).toEqual({
+      name: "required",
+      first: { kind: "kind0", foo_prop: "renamed" },
+      second: {
+        kind: "kind1",
+        start: "2021-01-01T00:00:00Z",
+        end: "2021-01-02T00:00:00Z",
+      },
+    });
+
+    const optional = await router.handle(new Request("http://localhost/optional"));
+    expect(optional.status).toBe(200);
+    expect(await optional.json()).toEqual({
+      name: "optional",
+      text: { kind: "kind1", start: "plain text" },
+      overlap: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+      dated: {
+        kind: "kind1",
+        start: "2021-01-01T00:00:00Z",
+        end: "2021-01-02T00:00:00Z",
+      },
+    });
+
+    const container = await router.handle(new Request("http://localhost/container"));
+    expect(container.status).toBe(200);
+    expect(await container.json()).toEqual({
+      name: "container",
+      list: [{ kind: "kind1", start: "plain text" }],
+      object: { kind: "kind1", start: "2021-01-01T00:00:00Z" },
+    });
   });
 });

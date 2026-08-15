@@ -88,7 +88,7 @@ type _TypespexPayload_NotFoundError_response_1_payload = { code: "NOT_FOUND"; me
 const _jsonSerializer_NotFoundError_response_1_payload: JsonSerializer<_TypespexPayload_NotFoundError_response_1_payload> =
   JsonSerializers.lazy<_TypespexPayload_NotFoundError_response_1_payload>(() =>
     JsonSerializers.object<_TypespexPayload_NotFoundError_response_1_payload>([
-      { property: "code", wireName: "code", serializer: JsonSerializers.identity<"NOT_FOUND">() },
+      { property: "code", wireName: "code", serializer: JsonSerializers.literal("NOT_FOUND") },
       { property: "message", wireName: "message", serializer: JsonSerializers.identity<string>() },
     ]),
   );
