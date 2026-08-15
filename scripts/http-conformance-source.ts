@@ -9,18 +9,26 @@ interface SourceRange {
 export function removeScenarioRunnerMetadata(source: string, scenario: string): string {
   const prepared = prepareScenarioSource(source, scenario);
   const serviceMatches = [...prepared.matchAll(/@scenarioService\("([^"]+)"\)/g)];
-  if (serviceMatches.length !== 1) {
-    throw new Error(`Expected one @scenarioService decorator in ${scenario}.`);
+  if (serviceMatches.length > 1) {
+    throw new Error(`Expected at most one @scenarioService decorator in ${scenario}.`);
+  }
+  if (
+    serviceMatches.length === 0 &&
+    collectDecoratorApplicationRanges(prepared, "service", scenario).length === 0
+  ) {
+    throw new Error(`Expected @scenarioService or @service in ${scenario}.`);
   }
 
-  const transformed = removeDecoratorApplications(prepared, "scenarioDoc", scenario)
+  let transformed = removeDecoratorApplications(prepared, "scenarioDoc", scenario)
     .replace(/^import "@typespec\/spector";\r?\n/m, "")
     .replace(/^using Spector;\r?\n/m, "")
-    .replace(/^\s*@scenario\s*$\r?\n/gm, "")
-    .replace(
+    .replace(/^\s*@scenario\s*$\r?\n/gm, "");
+  if (serviceMatches.length === 1) {
+    transformed = transformed.replace(
       /@scenarioService\("([^"]+)"\)/,
       '@service(#{ title: "TypeSpec HTTP conformance" })\n@route("$1")',
     );
+  }
 
   if (transformed.includes("Spector") || transformed.includes("@scenario")) {
     throw new Error(`Could not remove all scenario-runner metadata from ${scenario}.`);
@@ -40,6 +48,20 @@ function prepareScenarioSource(source: string, scenario: string): string {
 }
 
 function removeDecoratorApplications(source: string, name: string, scenario: string): string {
+  const ranges = collectDecoratorApplicationRanges(source, name, scenario);
+  let transformed = source;
+  ranges.sort((left, right) => right.pos - left.pos);
+  for (const range of ranges) {
+    transformed = `${transformed.slice(0, range.pos)}${transformed.slice(range.end)}`;
+  }
+  return transformed;
+}
+
+function collectDecoratorApplicationRanges(
+  source: string,
+  name: string,
+  scenario: string,
+): SourceRange[] {
   const script = parse(source);
   if (script.parseDiagnostics.length > 0) {
     const firstDiagnostic = formatDiagnostic(script.parseDiagnostics[0]);
@@ -61,11 +83,5 @@ function removeDecoratorApplications(source: string, name: string, scenario: str
     visitChildren(node, visit);
   }
   visit(script);
-
-  let transformed = source;
-  ranges.sort((left, right) => right.pos - left.pos);
-  for (const range of ranges) {
-    transformed = `${transformed.slice(0, range.pos)}${transformed.slice(range.end)}`;
-  }
-  return transformed;
+  return ranges;
 }
