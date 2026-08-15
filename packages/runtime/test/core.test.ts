@@ -163,6 +163,15 @@ describe("getSearchParams", () => {
     expect([...params.keys()]).toEqual([]);
   });
 
+  test("isolates mutable params for URLs without queries", () => {
+    const first = getSearchParams("/pets");
+    first.set("role", "admin");
+
+    const second = getSearchParams("/pets");
+    expect(second).not.toBe(first);
+    expect(second.get("role")).toBeNull();
+  });
+
   test("handles bare path with query", () => {
     const params = getSearchParams("/pets?tag=cat");
     expect(params.get("tag")).toBe("cat");
