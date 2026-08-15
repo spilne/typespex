@@ -5,6 +5,7 @@ const RESERVED_IDENTIFIERS = new Set([
   "any",
   "as",
   "asserts",
+  "await",
   "bigint",
   "boolean",
   "break",

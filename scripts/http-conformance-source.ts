@@ -7,12 +7,13 @@ interface SourceRange {
 }
 
 export function removeScenarioRunnerMetadata(source: string, scenario: string): string {
-  const serviceMatches = [...source.matchAll(/@scenarioService\("([^"]+)"\)/g)];
+  const prepared = prepareScenarioSource(source, scenario);
+  const serviceMatches = [...prepared.matchAll(/@scenarioService\("([^"]+)"\)/g)];
   if (serviceMatches.length !== 1) {
     throw new Error(`Expected one @scenarioService decorator in ${scenario}.`);
   }
 
-  const transformed = removeDecoratorApplications(source, "scenarioDoc", scenario)
+  const transformed = removeDecoratorApplications(prepared, "scenarioDoc", scenario)
     .replace(/^import "@typespec\/spector";\r?\n/m, "")
     .replace(/^using Spector;\r?\n/m, "")
     .replace(/^\s*@scenario\s*$\r?\n/gm, "")
@@ -25,6 +26,17 @@ export function removeScenarioRunnerMetadata(source: string, scenario: string): 
     throw new Error(`Could not remove all scenario-runner metadata from ${scenario}.`);
   }
   return transformed;
+}
+
+function prepareScenarioSource(source: string, scenario: string): string {
+  if (scenario !== "special-words") return source;
+
+  return source
+    .replace(/^import "\.\/dec\.js";\r?\n/m, "")
+    .replace(
+      /@(?:opName|paramName|modelName)Scenario\("([^"]+)"\)/g,
+      (_application, name: string) => `@route(${JSON.stringify(`/${name}`)})`,
+    );
 }
 
 function removeDecoratorApplications(source: string, name: string, scenario: string): string {

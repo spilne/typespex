@@ -44,6 +44,7 @@ const SCENARIOS = [
   "payload/multipart",
   "routes",
   "serialization/encoded-name/json",
+  "special-words",
   "type/array",
   "type/dictionary",
   "type/enum/extensible",
