@@ -654,6 +654,7 @@ export function emitResultResponseEncoder(
       kind,
       resultType,
       response.statusCode,
+      response.contentType,
       bodyTransform,
       responseStreamItemTypeToTs(ctx, response),
     );
@@ -664,7 +665,13 @@ export function emitResultResponseEncoder(
   }
 
   const headers = response.headers;
-  const encoder = encoderForKind(kind, resultType, response.statusCode, bodyTransform);
+  const encoder = encoderForKind(
+    kind,
+    resultType,
+    response.statusCode,
+    response.contentType,
+    bodyTransform,
+  );
 
   if (headers.length > 0 && kind === "json") {
     const entries = headers.map(emitResponseHeaderEntry).join(", ");
@@ -2197,6 +2204,7 @@ function encoderForKind(
   kind: Exclude<ResponseEncoderKind, "unsupported">,
   tsType: string,
   status: number,
+  contentType: string | undefined,
   bodyTransform?: ResponseBodyTransform,
   streamItemType?: string,
 ): string {
@@ -2208,10 +2216,10 @@ function encoderForKind(
         ? `ResponseEncoders.text(${status}).mapInput((value: ${tsType}) => String(${emitResponseBodyTransform("value", bodyTransform)}))`
         : `ResponseEncoders.text(${status})`;
     case "xml":
-      if (!bodyTransform) {
-        throw new Error("XML response encoder emission requires an XML body codec");
+      if (!contentType || !bodyTransform) {
+        throw new Error("XML response encoder emission requires a content type and XML body codec");
       }
-      return `ResponseEncoders.xml(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`;
+      return `ResponseEncoders.xml(${status}, { headers: { "content-type": ${tsLiteral(contentType)} } }).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`;
     case "bytes":
       return `ResponseEncoders.bytes(${status})`;
     case "file":

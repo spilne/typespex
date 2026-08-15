@@ -69,6 +69,11 @@ model TextDocument {
   @unwrapped content: string;
 }
 
+@mediaTypeHint("text/xml")
+model HintedDocument {
+  value: string;
+}
+
 @route("/document")
 interface Documents {
   @get read(): {
@@ -93,6 +98,9 @@ interface Documents {
   @header("content-type") contentType: "application/problem+xml";
   @body body: Document;
 };
+
+@route("/hinted")
+@get op readHinted(): HintedDocument;
 `;
 
 describe("XML payloads", () => {
@@ -126,6 +134,9 @@ describe("XML payloads", () => {
     expect(operations).toContain('kind: "xml"');
     expect(compact).toContain(".serialize(body as Document");
     expect(operations).toContain('contentType: "text/xml"');
+    expect(compact).toContain(
+      'ResponseEncoders.xml(200, { headers: { "content-type": "text/xml" } })',
+    );
     result.typecheck("xml-api");
 
     const generated = (await import(
@@ -142,6 +153,7 @@ describe("XML payloads", () => {
       XmlApiOperations: {
         readText: { encodeResult(result: { body: unknown }): Response };
         readProblem: { encodeResult(result: { body: unknown }): Response };
+        readHinted: { encodeResult(result: { value: string }): Response };
       };
     };
     const decoded = await generated.DocumentsOperations.update.decodeInput(
@@ -201,6 +213,12 @@ describe("XML payloads", () => {
     });
     expect(problemResponse.headers.get("content-type")).toBe("application/problem+xml");
     expect(await problemResponse.text()).toContain("<doc:XmlDocument");
+
+    const hintedResponse = generated.XmlApiOperations.readHinted.encodeResult({ value: "hinted" });
+    expect(hintedResponse.headers.get("content-type")).toBe("text/xml");
+    expect(await hintedResponse.text()).toBe(
+      "<HintedDocument><value>hinted</value></HintedDocument>",
+    );
   });
 
   test("reports XML shapes without a defined TypeSpec representation", () => {
