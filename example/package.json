@@ -6,8 +6,8 @@
     "typecheck": "node ../node_modules/.bun/typescript@*/node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@typespec/compiler": "^1.14.0",
-    "@typespec/http": "^1.14.0",
+    "@typespec/compiler": "^1.15.0",
+    "@typespec/http": "^1.15.0",
     "@typespex/emitter": "workspace:*",
     "@typespex/runtime": "workspace:*",
     "@typespex/shim-bun": "workspace:*"

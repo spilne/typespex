@@ -6,7 +6,7 @@
       "name": "typespex",
       "devDependencies": {
         "@js-temporal/polyfill": "^0.5.1",
-        "@typespec/compiler": "^1.14.0",
+        "@typespec/compiler": "^1.15.0",
         "oxfmt": "0.62.0",
       },
     },
@@ -30,8 +30,8 @@
     "example": {
       "name": "typespex-example",
       "dependencies": {
-        "@typespec/compiler": "^1.14.0",
-        "@typespec/http": "^1.14.0",
+        "@typespec/compiler": "^1.15.0",
+        "@typespec/http": "^1.15.0",
         "@typespex/emitter": "workspace:*",
         "@typespex/runtime": "workspace:*",
         "@typespex/shim-bun": "workspace:*",
@@ -49,8 +49,8 @@
         "oxfmt": "0.62.0",
       },
       "devDependencies": {
-        "@typespec/compiler": "^1.14.0",
-        "@typespec/http": "^1.14.0",
+        "@typespec/compiler": "^1.15.0",
+        "@typespec/http": "^1.15.0",
         "typescript": "^5.7.0",
       },
       "peerDependencies": {
@@ -238,9 +238,9 @@
 
     "@types/serve-static": ["@types/serve-static@2.2.0", "", { "dependencies": { "@types/http-errors": "*", "@types/node": "*" } }, "sha512-8mam4H1NHLtu7nmtalF7eyBH14QyOASmcxHhSfEoRyr0nP/YdoesEtU+uSRvMe96TW/HPTtkoKqQLl53N7UXMQ=="],
 
-    "@typespec/compiler": ["@typespec/compiler@1.14.0", "", { "dependencies": { "@babel/code-frame": "^7.29.0", "@inquirer/prompts": "^8.4.1", "ajv": "^8.18.0", "change-case": "^5.4.4", "env-paths": "^4.0.0", "is-unicode-supported": "^2.1.0", "mustache": "^4.2.0", "picocolors": "^1.1.1", "prettier": "^3.8.1", "semver": "^7.7.4", "tar": "^7.5.13", "temporal-polyfill": "^1.0.1", "vscode-languageserver": "^10.0.0", "vscode-languageserver-textdocument": "^1.0.12", "yaml": "^2.8.3", "yargs": "^18.0.0" }, "bin": { "tsp": "cmd/tsp.js", "tsp-server": "cmd/tsp-server.js" } }, "sha512-RRN0LGVDlonG/IbB2b4mvRjdCo6LywwB9/J8lOp6UaH7vtaFnKe5FL+rpxhof4rXx/zI/4OWnQO6c01bTCz4/Q=="],
+    "@typespec/compiler": ["@typespec/compiler@1.15.0", "", { "dependencies": { "@babel/code-frame": "^7.29.0", "@inquirer/prompts": "^8.4.1", "ajv": "^8.18.0", "change-case": "^5.4.4", "env-paths": "^4.0.0", "is-unicode-supported": "^2.1.0", "mustache": "^4.2.0", "picocolors": "^1.1.1", "prettier": "^3.9.5", "semver": "^7.7.4", "tar": "^7.5.21", "temporal-polyfill": "^1.0.1", "vscode-languageserver": "^10.0.0", "vscode-languageserver-textdocument": "^1.0.12", "yaml": "^2.8.3", "yargs": "^18.0.0" }, "bin": { "tsp": "cmd/tsp.js", "tsp-server": "cmd/tsp-server.js" } }, "sha512-NbCIRAIzyozchlSaGPVuyV43bC+y+OpXYCuT+8M8kt35Ln9zWzLFcIt7irofQ5QUXBZrHsBFpI5fTOFdCGeWCA=="],
 
-    "@typespec/http": ["@typespec/http@1.14.0", "", { "peerDependencies": { "@typespec/compiler": "^1.14.0", "@typespec/streams": "^0.84.0" }, "optionalPeers": ["@typespec/streams"] }, "sha512-W+heCzu8K63AVcoX8MachVWaRxSAMFWOI1yBTc2Kq8QHaJeDiLL5JbU8VfTZ4tL/6EoGSdKfIT5ZNRW7oVCzhg=="],
+    "@typespec/http": ["@typespec/http@1.15.0", "", { "peerDependencies": { "@typespec/compiler": "^1.15.0", "@typespec/streams": "^0.85.0" }, "optionalPeers": ["@typespec/streams"] }, "sha512-LNyzYHyX3C0xyQQ262jhvIaVzTn7DqiDB2gz45w1m6ngJH9ArGU8XjO3o7PaZkl/nuB5MTpImnsXpHIV1rbi4Q=="],
 
     "@typespex/emitter": ["@typespex/emitter@workspace:packages/emitter"],
 
@@ -472,7 +472,7 @@
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
-    "prettier": ["prettier@3.8.2", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-8c3mgTe0ASwWAJK+78dpviD+A8EqhndQPUBpNUIPt6+xWlIigCwfN01lWr9MAede4uqXGTEKeQWTvzb3vjia0Q=="],
+    "prettier": ["prettier@3.9.6", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g=="],
 
     "pretty-bytes": ["pretty-bytes@5.6.0", "", {}, "sha512-FFw039TmrBqFK8ma/7OL3sDz/VytdtJr044/QUJtH0wK9lb9jLq9tJyIxUwtQJHwar2BqtiA4iCWSwo9JLkzFg=="],
 

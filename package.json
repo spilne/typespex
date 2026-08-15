@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@js-temporal/polyfill": "^0.5.1",
-    "@typespec/compiler": "^1.14.0",
+    "@typespec/compiler": "^1.15.0",
     "oxfmt": "0.62.0"
   },
   "overrides": {
