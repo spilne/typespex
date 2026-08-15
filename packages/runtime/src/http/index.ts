@@ -3,6 +3,7 @@ export * from "./context.js";
 export * from "./media-type.js";
 export * from "./json.js";
 export * from "./json-serializer.js";
+export * from "./xml.js";
 export * from "./scalar-encoding.js";
 export * from "./validation.js";
 export {

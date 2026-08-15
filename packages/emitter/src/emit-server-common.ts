@@ -22,7 +22,12 @@ import {
   isStatusCode,
 } from "@typespec/http";
 import { getStreamMetadata } from "@typespec/http/experimental";
-import { isJsonMediaType, isTextMediaType, normalizeMediaType } from "./body-media-kinds.js";
+import {
+  isJsonMediaType,
+  isTextMediaType,
+  isXmlMediaType,
+  normalizeMediaType,
+} from "./body-media-kinds.js";
 import {
   allocateGeneratedNames,
   getGeneratedTypeName,
@@ -80,6 +85,8 @@ import {
   tsPropertyDeclaration,
 } from "./typescript-names.js";
 import { isBytesScalar, isTextResponseType, unsupportedFileContentsReason } from "./wire-types.js";
+import { unsupportedXmlTypeReason } from "./xml-metadata.js";
+import { emitXmlCodec } from "./xml-wire-codecs.js";
 
 export interface OperationGroup {
   interfaceName?: string;
@@ -693,6 +700,19 @@ function getResponseBodyTransform(
   response: SuccessResponseVariant,
   kind: Exclude<ResponseEncoderKind, "unsupported">,
 ): ResponseBodyTransform | undefined {
+  if (kind === "xml") {
+    const body = response.body;
+    if (!body || body.bodyKind !== "single") return undefined;
+    const serializationType = response.serializationType ?? body.type;
+    return {
+      serializer: emitXmlCodec(ctx, serializationType, response.projection, body.property),
+      bodyType: payloadTypeToTs(ctx, serializationType, response.projection),
+      optional: body.property?.optional === true,
+      path: response.bodyProperty
+        ? tsPropertyAccess("$response", response.bodyProperty)
+        : "$response",
+    };
+  }
   if (kind !== "json" && kind !== "jsonl" && kind !== "text") return undefined;
   return getResponseWireTransform(ctx, op, response, kind === "text" ? "text" : "value");
 }
@@ -1988,7 +2008,15 @@ function emitResponseStatus(response: SuccessResponseVariant): string {
   return `{ property: ${tsLiteral(response.dynamicStatus.property.name)}, allowed: [${allowed}] }`;
 }
 
-type ResponseEncoderKind = "json" | "jsonl" | "text" | "bytes" | "file" | "empty" | "unsupported";
+type ResponseEncoderKind =
+  | "json"
+  | "jsonl"
+  | "xml"
+  | "text"
+  | "bytes"
+  | "file"
+  | "empty"
+  | "unsupported";
 
 function classifyResponseVariant(
   ctx: EmitterCtx,
@@ -2087,6 +2115,10 @@ function incompatibleResponseBodyReason(
   switch (kind) {
     case "json":
       return undefined;
+    case "xml": {
+      const serializationType = response.serializationType ?? body.type;
+      return unsupportedXmlTypeReason(ctx, serializationType, response.projection);
+    }
     case "text": {
       if (body.type.kind === "Scalar") {
         const encoding = resolveScalarEncoding(ctx, body.type, body.property, "text");
@@ -2118,7 +2150,7 @@ function incompatibleResponseBodyReason(
  * A concrete media type on a bytes body selects the raw bytes encoder,
  * allowing contracts such as image/png while preserving the declared
  * Content-Type. Malformed types, wildcard ranges, and other unrecognized
- * types (e.g. application/xml on a model body) report a hard diagnostic and
+ * media types report a hard diagnostic and
  * return `"unsupported"`; callers emit a placeholder encoder that throws at
  * runtime so we never silently coerce a non-conforming response to JSON.
  * Missing content types default to JSON without warning — TypeSpec doesn't
@@ -2141,6 +2173,7 @@ function classifyResponseContentType(
     return "unsupported";
   }
   if (isJsonMediaType(mediaType)) return "json";
+  if (isXmlMediaType(mediaType)) return "xml";
   if (isTextMediaType(mediaType)) return "text";
   if (mediaType === "application/octet-stream") return "bytes";
   if (response.body?.bodyKind === "single" && isBytesScalar(response.body.type)) {
@@ -2174,6 +2207,11 @@ function encoderForKind(
       return bodyTransform
         ? `ResponseEncoders.text(${status}).mapInput((value: ${tsType}) => String(${emitResponseBodyTransform("value", bodyTransform)}))`
         : `ResponseEncoders.text(${status})`;
+    case "xml":
+      if (!bodyTransform) {
+        throw new Error("XML response encoder emission requires an XML body codec");
+      }
+      return `ResponseEncoders.xml(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`;
     case "bytes":
       return `ResponseEncoders.bytes(${status})`;
     case "file":

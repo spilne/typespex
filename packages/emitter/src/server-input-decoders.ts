@@ -73,6 +73,7 @@ import {
   isStringLikeLiteral,
   stringLiteralExpression,
 } from "./string-template-literals.js";
+import { emitXmlCodec } from "./xml-wire-codecs.js";
 
 type DecoderMode = "json" | "text" | "form" | "binary";
 
@@ -640,6 +641,9 @@ function emitBodyDecoderExpression(
   }
   if (kind === "multipart" && body.bodyKind === "multipart") {
     return emitMultipartDecoderExpression(ctx, dec, body);
+  }
+  if (kind === "xml") {
+    return emitXmlCodec(ctx, body.type, getEffectiveRequestBodyProjection(ctx, op), body.property);
   }
 
   const mode: DecoderMode =

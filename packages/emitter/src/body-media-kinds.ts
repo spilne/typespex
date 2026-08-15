@@ -1,4 +1,4 @@
-export type BodyMediaKind = "json" | "form" | "multipart" | "file" | "text" | "binary";
+export type BodyMediaKind = "json" | "xml" | "form" | "multipart" | "file" | "text" | "binary";
 
 const mediaTypeToken = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -27,6 +27,14 @@ export function isTextMediaType(mediaType: string): boolean {
   return mediaType.startsWith("text/");
 }
 
+export function isXmlMediaType(mediaType: string): boolean {
+  if (mediaType === "application/xml" || mediaType === "text/xml") return true;
+  const slash = mediaType.indexOf("/");
+  if (slash < 0) return false;
+  const subtype = mediaType.slice(slash + 1);
+  return subtype.length > "+xml".length && subtype.endsWith("+xml");
+}
+
 /** Maps declared request content types to the decoders that may handle them. */
 export function getBodyMediaKinds(contentTypes: readonly string[]): BodyMediaKind[] {
   const kinds = new Set<BodyMediaKind>();
@@ -36,16 +44,23 @@ export function getBodyMediaKinds(contentTypes: readonly string[]): BodyMediaKin
     if (!mediaType) continue;
     if (mediaType === "*/*") {
       kinds.add("json");
+      kinds.add("xml");
       kinds.add("form");
       kinds.add("multipart");
       kinds.add("text");
       kinds.add("binary");
     } else if (mediaType === "application/*") {
       kinds.add("json");
+      kinds.add("xml");
       kinds.add("form");
       kinds.add("binary");
+    } else if (mediaType === "text/*") {
+      kinds.add("xml");
+      kinds.add("text");
     } else if (isJsonMediaType(mediaType)) {
       kinds.add("json");
+    } else if (isXmlMediaType(mediaType)) {
+      kinds.add("xml");
     } else if (mediaType === "application/x-www-form-urlencoded") {
       kinds.add("form");
     } else if (mediaType.startsWith("multipart/")) {

@@ -10,6 +10,14 @@ bindings backed by `@typespex/runtime`.
 Configure the package as an emitter in `tspconfig.yaml`. Generated files import
 `@typespex/runtime`, which must be installed by the generated service.
 
+## XML payloads
+
+Install and import `@typespec/xml` in a TypeSpec project to generate `application/xml`, `text/xml`,
+or structured `+xml` operations. The emitter consumes `@name`/`@encodedName`, `@attribute`,
+`@unwrapped`, and `@ns` metadata and generates one bidirectional runtime codec for each payload
+shape. XML attributes and unwrapped text must be scalar-valued; tuple bodies and structural unions
+without a defined XML representation produce diagnostics instead of partial output.
+
 ## Options
 
 `omit-unreachable-types` follows the standard TypeSpec emitter convention. It defaults to `false`,

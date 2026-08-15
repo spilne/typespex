@@ -128,7 +128,7 @@ namespace UnsupportedApi;
 
 @route("/feed")
 interface Feed {
-  @get list(): { @header contentType: "application/xml"; @body body: string };
+  @get list(): { @header contentType: "application/yaml"; @body body: string };
 }
 `;
 
@@ -390,7 +390,7 @@ describe("response encoding", () => {
 
     const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
     expect(combined).toContain("unsupported-response-content-type");
-    expect(combined).toContain("application/xml");
+    expect(combined).toContain("application/yaml");
     expect(combined).toContain("list");
 
     expect(r.listFiles("unsupported-api")).toEqual([]);

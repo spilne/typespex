@@ -38,6 +38,7 @@ import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
 import { analyzeRequestStream } from "./request-streams.js";
 import { lowerUriTemplate } from "./uri-template.js";
+import { unsupportedXmlTypeReason } from "./xml-metadata.js";
 
 interface ServiceDecoratorReports {
   readonly encodedNames: Set<ModelProperty>;
@@ -247,7 +248,7 @@ function checkRequestBody(
           );
           const reason =
             encodingReason ??
-            (kind === "form" || kind === "multipart" || kind === "file"
+            (kind === "xml" || kind === "form" || kind === "multipart" || kind === "file"
               ? "multipart parts support JSON, text, binary, or File content"
               : unsupportedBodyKindReason(ctx, part.body.type, kind));
           if (reason) {
@@ -333,6 +334,8 @@ function unsupportedBodyKindReason(
   switch (kind) {
     case "json":
       return undefined;
+    case "xml":
+      return unsupportedXmlTypeReason(ctx, type, projection);
     case "form":
       return isFlatFormBodyType(ctx, type, projection)
         ? undefined
