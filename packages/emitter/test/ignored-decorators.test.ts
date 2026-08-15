@@ -145,7 +145,7 @@ describe("unsupported decorator diagnostics", () => {
 });
 
 describe("unsupported HTTP parameter serialization", () => {
-  test("rejects object-valued query parameters", () => {
+  test("rejects non-exploded object-valued query parameters", () => {
     const result = compileFixtureExpectingDiagnostics(
       "object-query",
       `
@@ -153,8 +153,8 @@ describe("unsupported HTTP parameter serialization", () => {
       using TypeSpec.Http;
 
       @service namespace ObjectQueryApi {
-        @route("/search") @get
-        op search(@query(#{ explode: true }) filter: { role: string; active: boolean }): void;
+        @route("/search{?filter}") @get
+        op search(filter: { role: string; active: boolean }): void;
       }
     `,
     );
@@ -163,6 +163,72 @@ describe("unsupported HTTP parameter serialization", () => {
     expect(diagnostics).toContain("unsupported-http-parameter");
     expect(diagnostics).toContain('HTTP query parameter "filter"');
     expect(result.listFiles("object-query-api")).toEqual([]);
+  });
+
+  test("rejects nested and open exploded query models", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "unsupported-exploded-query-models",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service namespace UnsupportedExplodedQueryModelsApi {
+        model NestedFilter {
+          profile: { role: string };
+        }
+
+        model OpenFilter extends Record<string> {
+          field: string;
+        }
+
+        @route("/nested{?filter*}") @get
+        op nested(filter: NestedFilter): void;
+
+        @route("/open{?filter*}") @get
+        op open(filter: OpenFilter): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain(
+      'exploded query model property "profile" must have a scalar, literal, enum, or scalar-union wire shape',
+    );
+    expect(diagnostics).toContain(
+      "exploded query models cannot declare open additional properties",
+    );
+    expect(result.listFiles("unsupported-exploded-query-models-api")).toEqual([]);
+  });
+
+  test("rejects overlapping exploded query model keys", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "overlapping-exploded-query-models",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service namespace OverlappingExplodedQueryModelsApi {
+        model First { shared: string; }
+        model Second { shared: int32; }
+        model Third { tag: string; }
+
+        @route("/models{?first*,second*}") @get
+        op models(first: First, second: Second): void;
+
+        @route("/declared{?filter*,tag}") @get
+        op declared(filter: Third, tag: string): void;
+      }
+    `,
+    );
+
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+    expect(diagnostics).toContain(
+      'exploded query model property "shared" is claimed by parameters "first" and "second"',
+    );
+    expect(diagnostics).toContain(
+      'exploded query model property "tag" conflicts with query parameter "tag"',
+    );
+    expect(result.listFiles("overlapping-exploded-query-models-api")).toEqual([]);
   });
 
   test("rejects path records with non-scalar values", () => {
