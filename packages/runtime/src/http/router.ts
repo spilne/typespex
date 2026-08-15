@@ -13,6 +13,7 @@ import {
 import type { RequestContext } from "./context.js";
 import type { MatchedEndpoint } from "./metadata.js";
 import type { ServerOperation } from "./operation.js";
+import { getSearchParams } from "./query-params.js";
 
 /** Extracts the request pathname without allocating a `URL` instance. */
 function extractPathname(url: string): string {
@@ -161,9 +162,17 @@ export function createHttpRouter<Ctx extends RequestContext>(
   });
 
   const routeMatcher = matcher ?? createRegexMatcher(matcherInput);
+  const needsQuerySelection = matcherInput.some(
+    ({ selection }) => (selection?.query?.length ?? 0) > 0,
+  );
 
   function matchRequest(request: Request) {
-    return routeMatcher.match(request.method, extractPathname(request.url), request.headers);
+    return routeMatcher.match(
+      request.method,
+      extractPathname(request.url),
+      request.headers,
+      needsQuerySelection ? getSearchParams(request.url) : undefined,
+    );
   }
 
   async function execute(

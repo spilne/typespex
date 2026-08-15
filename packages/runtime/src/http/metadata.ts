@@ -30,7 +30,7 @@ export interface OperationMeta {
    * When present, this non-empty list takes precedence over `routePattern`.
    */
   readonly routePatterns?: readonly RoutePattern[];
-  /** Explicit request metadata used to distinguish this operation on a shared route. */
+  /** Explicit request metadata that must match before this operation can be selected. */
   readonly routeSelection?: RouteSelection;
   readonly hints: Hints;
 }

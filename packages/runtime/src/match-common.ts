@@ -78,7 +78,7 @@ export function normalizeRouteInputs<R>(
       if (previous.structure === structure) {
         if (routeSelectionsAreDisjoint(previous.selection, current.selection)) continue;
         throw new Error(
-          `Duplicate route: ${describeRoute(current)} conflicts with ${describeRoute(previous)}. Shared routes require pairwise non-overlapping header constraints.`,
+          `Duplicate route: ${describeRoute(current)} conflicts with ${describeRoute(previous)}. Route variants require pairwise non-overlapping request constraints.`,
         );
       }
       if (routePatternsAreAmbiguous(previous, current)) {
@@ -99,10 +99,10 @@ export function normalizeRouteInputs<R>(
 export function selectRouteVariant<R>(
   routes: readonly NormalizedRouteInput<R>[],
   headers?: Headers,
+  query?: URLSearchParams,
 ): NormalizedRouteInput<R> | undefined {
-  if (routes.length === 1) return routes[0];
-  if (!headers) return undefined;
-  return routes.find((route) => routeSelectionMatches(route.selection, headers));
+  if (routes.length === 1 && !routes[0]!.selection) return routes[0];
+  return routes.find((route) => routeSelectionMatches(route.selection, headers, query));
 }
 
 /** True when two selections cannot both match the same request. */
@@ -111,10 +111,14 @@ export function routeSelectionsAreDisjoint(
   right: RouteSelection | undefined,
 ): boolean {
   if (!left || !right) return false;
-  for (const leftHeader of left.headers) {
-    const rightHeader = right.headers.find((header) => header.name === leftHeader.name);
+  for (const leftHeader of left.headers ?? []) {
+    const rightHeader = right.headers?.find((header) => header.name === leftHeader.name);
     if (!rightHeader || rightHeader.kind !== leftHeader.kind) continue;
     if (!headerValueSetsOverlap(leftHeader, rightHeader)) return true;
+  }
+  for (const leftQuery of left.query ?? []) {
+    const rightQuery = right.query?.find((constraint) => constraint.name === leftQuery.name);
+    if (rightQuery && rightQuery.value !== leftQuery.value) return true;
   }
   return false;
 }
@@ -125,13 +129,19 @@ function normalizeRouteSelection(
   path: string,
 ): RouteSelection | undefined {
   if (!selection) return undefined;
-  if (!Array.isArray(selection.headers) || selection.headers.length === 0) {
+  const rawHeaders = selection.headers ?? [];
+  const rawQuery = selection.query ?? [];
+  if (
+    !Array.isArray(rawHeaders) ||
+    !Array.isArray(rawQuery) ||
+    (rawHeaders.length === 0 && rawQuery.length === 0)
+  ) {
     throw new Error(`Invalid route selection: ${method} ${path}`);
   }
 
   const names = new Set<string>();
-  const headers: RouteSelection["headers"][number][] = selection.headers.map(
-    (header: RouteSelection["headers"][number]) => {
+  const headers: NonNullable<RouteSelection["headers"]>[number][] = rawHeaders.map(
+    (header: NonNullable<RouteSelection["headers"]>[number]) => {
       if (typeof header !== "object" || header === null || typeof header.name !== "string") {
         throw invalidRouteSelection(method, path);
       }
@@ -161,16 +171,41 @@ function normalizeRouteSelection(
       return { name, values, kind };
     },
   );
-  return { headers };
+  const queryNames = new Set<string>();
+  const query: NonNullable<RouteSelection["query"]>[number][] = rawQuery.map(
+    (constraint: NonNullable<RouteSelection["query"]>[number]) => {
+      if (
+        typeof constraint !== "object" ||
+        constraint === null ||
+        typeof constraint.name !== "string" ||
+        constraint.name.length === 0 ||
+        queryNames.has(constraint.name) ||
+        typeof constraint.value !== "string"
+      ) {
+        throw invalidRouteSelection(method, path);
+      }
+      queryNames.add(constraint.name);
+      return { name: constraint.name, value: constraint.value };
+    },
+  );
+  return {
+    ...(headers.length > 0 ? { headers } : {}),
+    ...(query.length > 0 ? { query } : {}),
+  };
 }
 
 function invalidRouteSelection(method: string, path: string): Error {
   return new Error(`Invalid route selection: ${method} ${path}`);
 }
 
-function routeSelectionMatches(selection: RouteSelection | undefined, headers: Headers): boolean {
+function routeSelectionMatches(
+  selection: RouteSelection | undefined,
+  headers?: Headers,
+  query?: URLSearchParams,
+): boolean {
   if (!selection) return false;
-  return selection.headers.every((constraint) => {
+  const headersMatch = (selection.headers ?? []).every((constraint) => {
+    if (!headers) return false;
     const received = headers.get(constraint.name);
     if (constraint.kind === "media-type") {
       const mediaType = parseMediaRange(received);
@@ -179,11 +214,17 @@ function routeSelectionMatches(selection: RouteSelection | undefined, headers: H
     }
     return received !== null && constraint.values.includes(received);
   });
+  if (!headersMatch) return false;
+  return (selection.query ?? []).every((constraint) => {
+    if (!query) return false;
+    const values = query.getAll(constraint.name);
+    return values.length === 1 && values[0] === constraint.value;
+  });
 }
 
 function headerValueSetsOverlap(
-  left: RouteSelection["headers"][number],
-  right: RouteSelection["headers"][number],
+  left: NonNullable<RouteSelection["headers"]>[number],
+  right: NonNullable<RouteSelection["headers"]>[number],
 ): boolean {
   if (left.kind === "media-type") {
     return left.values.some((leftValue) =>

@@ -12,8 +12,14 @@ export interface RouteHeaderConstraintEmission {
   readonly kind: "exact" | "media-type";
 }
 
+export interface RouteQueryConstraintEmission {
+  readonly name: string;
+  readonly value: string;
+}
+
 export interface RouteSelectionEmission {
-  readonly headers: readonly RouteHeaderConstraintEmission[];
+  readonly headers?: readonly RouteHeaderConstraintEmission[];
+  readonly query?: readonly RouteQueryConstraintEmission[];
 }
 
 interface AnalyzedRoute {
@@ -52,8 +58,8 @@ export function reportRouteConflicts(ctx: EmitterCtx, operations: readonly HttpO
   }
 }
 
-/** Route selectors for collision groups that are proven pairwise disjoint. */
-export function getSharedRouteSelections(
+/** Request selectors used to constrain routes and disambiguate collision groups. */
+export function getRouteSelections(
   ctx: EmitterCtx,
   operations: readonly HttpOperation[],
 ): ReadonlyMap<HttpOperation, RouteSelectionEmission> {
@@ -62,15 +68,20 @@ export function getSharedRouteSelections(
 
 function analyzeRoutes(ctx: EmitterCtx, operations: readonly HttpOperation[]): RouteAnalysis {
   const groups = new Map<string, AnalyzedRoute[]>();
+  const selections = new Map<HttpOperation, RouteSelectionEmission>();
   for (const operation of operations) {
+    const lowered = lowerUriTemplate(operation);
+    if (!lowered.ok) continue;
+    if (lowered.value.literalQuery && lowered.value.literalQuery.length > 0) {
+      selections.set(operation, { query: lowered.value.literalQuery });
+    }
+
     // Same-endpoint overloads are a distinct TypeSpec construct. They are
     // intentionally excluded from ordinary duplicate/shared-route analysis.
     if (isSameEndpointOverload(operation)) {
       continue;
     }
 
-    const lowered = lowerUriTemplate(operation);
-    if (!lowered.ok) continue;
     const method = operation.verb.toUpperCase();
     for (const routePattern of lowered.value.routePatterns) {
       const structure = routePatternStructure(routePattern);
@@ -82,18 +93,22 @@ function analyzeRoutes(ctx: EmitterCtx, operations: readonly HttpOperation[]): R
     }
   }
 
-  const selections = new Map<HttpOperation, RouteSelectionEmission>();
   const conflicts: RouteConflict[] = [];
 
   for (const group of groups.values()) {
     if (group.length < 2) continue;
-    if (!group.every(({ operation }) => isSharedRoute(ctx.program, operation.operation))) {
-      forEachPair(group, (first, second) => conflicts.push({ kind: "duplicate", first, second }));
-      continue;
-    }
-
+    const shared = group.every(({ operation }) => isSharedRoute(ctx.program, operation.operation));
     const groupSelections = new Map(
-      group.map(({ operation }) => [operation, routeSelectionForOperation(operation)] as const),
+      group.map(
+        ({ operation }) =>
+          [
+            operation,
+            mergeRouteSelections(
+              selections.get(operation),
+              shared ? headerRouteSelectionForOperation(operation) : undefined,
+            ),
+          ] as const,
+      ),
     );
     let hasConflict = false;
     forEachPair(group, (first, second) => {
@@ -101,19 +116,23 @@ function analyzeRoutes(ctx: EmitterCtx, operations: readonly HttpOperation[]): R
       const right = groupSelections.get(second.operation);
       if (routeSelectionsAreDisjoint(left, right)) return;
       hasConflict = true;
-      conflicts.push({ kind: "ambiguous-shared", first, second });
+      conflicts.push({ kind: shared ? "ambiguous-shared" : "duplicate", first, second });
     });
     if (hasConflict) continue;
 
-    for (const route of group) {
-      selections.set(route.operation, groupSelections.get(route.operation)!);
+    if (shared) {
+      for (const route of group) {
+        selections.set(route.operation, groupSelections.get(route.operation)!);
+      }
     }
   }
 
   return { selections, conflicts };
 }
 
-function routeSelectionForOperation(operation: HttpOperation): RouteSelectionEmission | undefined {
+function headerRouteSelectionForOperation(
+  operation: HttpOperation,
+): RouteSelectionEmission | undefined {
   const constraints = new Map<string, RouteHeaderConstraintEmission>();
   let requiredContentTypes: readonly string[] | undefined;
 
@@ -147,6 +166,20 @@ function routeSelectionForOperation(operation: HttpOperation): RouteSelectionEmi
   if (constraints.size === 0) return undefined;
   return {
     headers: [...constraints.values()].sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
+
+function mergeRouteSelections(
+  first: RouteSelectionEmission | undefined,
+  second: RouteSelectionEmission | undefined,
+): RouteSelectionEmission | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  const headers = [...(first.headers ?? []), ...(second.headers ?? [])];
+  const query = [...(first.query ?? []), ...(second.query ?? [])];
+  return {
+    ...(headers.length > 0 ? { headers } : {}),
+    ...(query.length > 0 ? { query } : {}),
   };
 }
 
@@ -188,8 +221,8 @@ function routeSelectionsAreDisjoint(
   right: RouteSelectionEmission | undefined,
 ): boolean {
   if (!left || !right) return false;
-  for (const leftHeader of left.headers) {
-    const rightHeader = right.headers.find((header) => header.name === leftHeader.name);
+  for (const leftHeader of left.headers ?? []) {
+    const rightHeader = right.headers?.find((header) => header.name === leftHeader.name);
     if (!rightHeader || rightHeader.kind !== leftHeader.kind) continue;
     const overlaps = leftHeader.values.some((leftValue) =>
       rightHeader.values.some((rightValue) =>
@@ -199,6 +232,10 @@ function routeSelectionsAreDisjoint(
       ),
     );
     if (!overlaps) return true;
+  }
+  for (const leftQuery of left.query ?? []) {
+    const rightQuery = right.query?.find((constraint) => constraint.name === leftQuery.name);
+    if (rightQuery && rightQuery.value !== leftQuery.value) return true;
   }
   return false;
 }

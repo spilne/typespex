@@ -270,6 +270,32 @@ namespace UnknownUriVariableApi;
 @get op read(@path value: string): void;
 `;
 
+const queryContinuationSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "QueryContinuationApi" })
+namespace QueryContinuationApi;
+
+@route("/standard/primitive?fixed=true{&param}")
+@get op standardPrimitive(param: string): void;
+
+@route("/standard/array?fixed=true{&param}")
+@get op standardArray(param: string[]): void;
+
+@route("/standard/record?fixed=true{&param}")
+@get op standardRecord(param: Record<int32>): void;
+
+@route("/explode/primitive?fixed=true{&param*}")
+@get op explodedPrimitive(param: string): void;
+
+@route("/explode/array?fixed=true{&param*}")
+@get op explodedArray(param: string[]): void;
+
+@route("/explode/record?fixed=true{&param*}")
+@get op explodedRecord(param: Record<int32>): void;
+`;
+
 describe("URI-template lowering", () => {
   test("emits structured routes and routes embedded variables without losing wire names", async () => {
     const result = compileFixture("uri-template-supported", supportedUriTemplatesSpec);
@@ -1273,6 +1299,137 @@ describe("URI-template lowering", () => {
     expect(result.listFiles("invalid-uri-template-api")).toEqual([]);
   });
 
+  test("routes fixed-query continuations and preserves standard and exploded decoders", async () => {
+    const result = compileFixture("query-continuations", queryContinuationSpec);
+    const operations = result.readFile("query-continuation-api", "server-operations.ts");
+
+    expect(operations).toContain('path: "/standard/primitive"');
+    expect(operations).toContain('routeSelection: { query: [{ name: "fixed", value: "true" }] }');
+    expect(operations).toContain('excludedNames: ["fixed"]');
+    result.typecheck("query-continuation-api");
+
+    const { createQueryContinuationApiServerRouter } = await import(
+      `${result.outputDir}/query-continuation-api/server-router.ts`
+    );
+    const received = new Map<string, unknown>();
+    const router = createQueryContinuationApiServerRouter({
+      standardPrimitive(input: unknown) {
+        received.set("standardPrimitive", input);
+      },
+      standardArray(input: unknown) {
+        received.set("standardArray", input);
+      },
+      standardRecord(input: unknown) {
+        received.set("standardRecord", input);
+      },
+      explodedPrimitive(input: unknown) {
+        received.set("explodedPrimitive", input);
+      },
+      explodedArray(input: unknown) {
+        received.set("explodedArray", input);
+      },
+      explodedRecord(input: unknown) {
+        received.set("explodedRecord", input);
+      },
+    } as any);
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/standard/primitive?param=a&f%69xed=tr%75e&ignored=x"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("standardPrimitive")).toEqual({ param: "a" });
+
+    expect(
+      (await router.handle(new Request("http://localhost/standard/array?fixed=true&param=a,b%2Cc")))
+        .status,
+    ).toBe(204);
+    expect(received.get("standardArray")).toEqual({ param: ["a", "b,c"] });
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/standard/record?fixed=true&param=a,1,b,2"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("standardRecord")).toEqual({ param: { a: 1, b: 2 } });
+
+    expect(
+      (await router.handle(new Request("http://localhost/explode/primitive?fixed=true&param=a")))
+        .status,
+    ).toBe(204);
+    expect(received.get("explodedPrimitive")).toEqual({ param: "a" });
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/explode/array?fixed=true&param=a&param=b"),
+        )
+      ).status,
+    ).toBe(204);
+    expect(received.get("explodedArray")).toEqual({ param: ["a", "b"] });
+
+    expect(
+      (await router.handle(new Request("http://localhost/explode/record?f%69xed=tr%75e&a=1&b=2")))
+        .status,
+    ).toBe(204);
+    expect(received.get("explodedRecord")).toEqual({ param: { a: 1, b: 2 } });
+
+    expect(
+      (await router.handle(new Request("http://localhost/standard/primitive?param=a"))).status,
+    ).toBe(404);
+    expect(
+      (await router.handle(new Request("http://localhost/standard/primitive?fixed=false&param=a")))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/standard/primitive?fixed=true&f%69xed=true&param=a"),
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (await router.handle(new Request("http://localhost/standard/primitive?fixed=true"))).status,
+    ).toBe(400);
+  });
+
+  test("rejects fixed query fields claimed by finite request inputs", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "query-continuation-conflicts",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace QueryContinuationConflictApi;
+
+        @route("/scalar?fixed=true{&fixed}")
+        @get op scalarInput(fixed: string): void;
+
+        model Filter {
+          fixed: string;
+          value: string;
+        }
+
+        @route("/model?fixed=true{&filter*}")
+        @get op modelFilter(filter: Filter): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/unsupported-http-parameter");
+    expect(diagnostics).toContain(
+      'query parameter "fixed" conflicts with fixed literal query field "fixed"',
+    );
+    expect(diagnostics).toContain(
+      'query parameter "filter" conflicts with fixed literal query field "fixed"',
+    );
+    expect(result.listFiles("query-continuation-conflict-api")).toEqual([]);
+  });
+
   test("unknown URI variables fail before emission", () => {
     const result = compileFixtureExpectingDiagnostics(
       "uri-template-unknown-variable",
@@ -2121,6 +2278,63 @@ describe("URI-template lowering", () => {
           },
         ],
       },
+    });
+    expect(
+      lowerUriTemplateText("/query?f%69xed=tr%75e&mode=full+text{&q*}", new Set(), new Set(["q"])),
+    ).toEqual({
+      ok: true,
+      value: {
+        path: "/query",
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "query" }]],
+            trailingSlash: false,
+          },
+        ],
+        literalQuery: [
+          { name: "fixed", value: "true" },
+          { name: "mode", value: "full text" },
+        ],
+      },
+    });
+    expect(lowerUriTemplateText("/query?fixed=true", new Set(), new Set())).toEqual({
+      ok: true,
+      value: {
+        path: "/query",
+        routePatterns: [
+          {
+            segments: [[{ kind: "literal", value: "query" }]],
+            trailingSlash: false,
+          },
+        ],
+        literalQuery: [{ name: "fixed", value: "true" }],
+      },
+    });
+    expect(
+      lowerUriTemplateText("/query?fixed=one&f%69xed=two{&q}", new Set(), new Set(["q"])),
+    ).toEqual({
+      ok: false,
+      reason: 'literal query field "fixed" appears more than once',
+    });
+    expect(lowerUriTemplateText("/query?fixed=%ZZ{&q}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: 'malformed percent escape in literal query field "%ZZ"',
+    });
+    expect(lowerUriTemplateText("/query?fixed=true{?q}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: "literal query fields must be followed by a query continuation expansion",
+    });
+    expect(lowerUriTemplateText("/query?fixed=true#tail{&q}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: "literal fragment syntax is not supported",
+    });
+    expect(lowerUriTemplateText("/query?{&q}", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: "literal query syntax must contain a field",
+    });
+    expect(lowerUriTemplateText("/query{?q}?fixed=true", new Set(), new Set(["q"]))).toEqual({
+      ok: false,
+      reason: "literal query syntax cannot appear after a query expansion",
     });
     expect(lowerUriTemplateText("/same-wire/{id}{?id}", new Set(["id"]), new Set(["id"]))).toEqual({
       ok: true,

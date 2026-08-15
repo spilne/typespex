@@ -144,6 +144,137 @@ describe("shared HTTP routes", () => {
     ]);
   });
 
+  test("dispatches identical paths by disjoint fixed query values", async () => {
+    const result = compileFixture(
+      "fixed-query-routes",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace FixedQueryRouteApi;
+
+        @route("/reports?view=summary")
+        @get op summary(): void;
+
+        @route("/reports?view=detailed")
+        @get op detailed(): void;
+      `,
+    );
+    const operations = result.readFile("fixed-query-route-api", "server-operations.ts");
+
+    expect(operations).toContain('routeSelection: { query: [{ name: "view", value: "summary" }] }');
+    expect(operations).toContain(
+      'routeSelection: { query: [{ name: "view", value: "detailed" }] }',
+    );
+    result.typecheck("fixed-query-route-api");
+
+    const { createFixedQueryRouteApiServerRouter } = await import(
+      `${result.outputDir}/fixed-query-route-api/server-router.ts`
+    );
+    const calls: string[] = [];
+    const router = createFixedQueryRouteApiServerRouter({
+      summary() {
+        calls.push("summary");
+      },
+      detailed() {
+        calls.push("detailed");
+      },
+    });
+
+    expect(
+      (await router.handle(new Request("http://localhost/reports?view=detailed"))).status,
+    ).toBe(204);
+    expect((await router.handle(new Request("http://localhost/reports?view=summary"))).status).toBe(
+      204,
+    );
+    expect((await router.handle(new Request("http://localhost/reports"))).status).toBe(404);
+    expect(calls).toEqual(["detailed", "summary"]);
+  });
+
+  test("combines fixed query and shared header constraints", async () => {
+    const result = compileFixture(
+      "fixed-query-shared-routes",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace FixedQuerySharedRouteApi;
+
+        @sharedRoute
+        @route("/reports?fixed=true")
+        @get op summary(@header("x-view") view: "summary"): void;
+
+        @sharedRoute
+        @route("/reports?fixed=true")
+        @get op detailed(@header("x-view") view: "detailed"): void;
+      `,
+    );
+    const operations = result.readFile("fixed-query-shared-route-api", "server-operations.ts");
+
+    expect(operations).toMatch(
+      /routeSelection:\s*\{\s*headers: \[\{ name: "x-view", values: \["summary"\], kind: "exact" \}\],\s*query: \[\{ name: "fixed", value: "true" \}\],\s*\}/,
+    );
+    result.typecheck("fixed-query-shared-route-api");
+
+    const { createFixedQuerySharedRouteApiServerRouter } = await import(
+      `${result.outputDir}/fixed-query-shared-route-api/server-router.ts`
+    );
+    const calls: string[] = [];
+    const router = createFixedQuerySharedRouteApiServerRouter({
+      summary() {
+        calls.push("summary");
+      },
+      detailed() {
+        calls.push("detailed");
+      },
+    });
+
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/reports?fixed=true", {
+            headers: { "x-view": "detailed" },
+          }),
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await router.handle(
+          new Request("http://localhost/reports", { headers: { "x-view": "summary" } }),
+        )
+      ).status,
+    ).toBe(404);
+    expect((await router.handle(new Request("http://localhost/reports?fixed=true"))).status).toBe(
+      404,
+    );
+    expect(calls).toEqual(["detailed"]);
+  });
+
+  test("rejects fixed query routes that overlap an unconstrained path", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "overlapping-fixed-query-routes",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace OverlappingFixedQueryRouteApi;
+
+        @route("/reports?view=summary")
+        @get op summary(): void;
+
+        @route("/reports")
+        @get op fallback(): void;
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics).toContain("@typespex/emitter/duplicate-route");
+    expect(diagnostics).toContain("OverlappingFixedQueryRouteApi.summary");
+    expect(diagnostics).toContain("OverlappingFixedQueryRouteApi.fallback");
+    expect(result.listFiles("overlapping-fixed-query-route-api")).toEqual([]);
+  });
+
   test("rejects shared routes whose selectors overlap", () => {
     const result = compileFixtureExpectingDiagnostics(
       "ambiguous-shared-routes",

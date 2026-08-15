@@ -167,10 +167,14 @@ function emitEndpoint(
     path: string;
     routePatterns: readonly RoutePattern[];
     routeSelection?: {
-      readonly headers: readonly {
+      readonly headers?: readonly {
         readonly name: string;
         readonly values: readonly string[];
         readonly kind: "exact" | "media-type";
+      }[];
+      readonly query?: readonly {
+        readonly name: string;
+        readonly value: string;
       }[];
     };
     operationHints: ReadonlyArray<{ keyExportName: string; valueExpression: string }>;

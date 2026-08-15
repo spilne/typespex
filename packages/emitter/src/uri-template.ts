@@ -19,11 +19,18 @@ export interface RoutePattern {
   readonly trailingSlash: boolean;
 }
 
+export interface LiteralQueryParameter {
+  readonly name: string;
+  readonly value: string;
+}
+
 export interface LoweredUriTemplate {
   /** Readable path portion of the URI template, without query expansions. */
   readonly path: string;
   /** Concrete matcher routes represented by the path template. */
   readonly routePatterns: readonly RoutePattern[];
+  /** Fixed form-query fields written literally before any query continuations. */
+  readonly literalQuery?: readonly LiteralQueryParameter[];
   /** Path parameters proven to use the RFC 6570 slash operator. */
   readonly slashExpandedPathNames?: readonly string[];
   /** Path parameters proven to use the RFC 6570 label operator. */
@@ -156,6 +163,32 @@ function lowerUriTemplateTextInternal(
   matrixExpandedPathNames?: Set<string>,
   reservedExpandedPathNames?: Set<string>,
 ): UriTemplateLowering {
+  const prepared = prepareLiteralQuery(template);
+  if (!prepared.ok) return prepared;
+  if (prepared.template !== template) {
+    const lowered = lowerUriTemplateTextInternal(
+      prepared.template,
+      pathNames,
+      queryNames,
+      scalarPathNames,
+      optionalPathNames,
+      scalarArrayPathNames,
+      scalarRecordPathNames,
+      slashExpandedPathNames,
+      labelExpandedPathNames,
+      matrixExpandedPathNames,
+      reservedExpandedPathNames,
+    );
+    if (!lowered.ok) return lowered;
+    return {
+      ok: true,
+      value: {
+        ...lowered.value,
+        literalQuery: prepared.literalQuery,
+      },
+    };
+  }
+
   if (!template.startsWith("/")) {
     return failure("the template must begin with '/'");
   }
@@ -539,6 +572,110 @@ function lowerUriTemplateTextInternal(
             ]),
     },
   };
+}
+
+function prepareLiteralQuery(template: string):
+  | {
+      readonly ok: true;
+      readonly template: string;
+      readonly literalQuery?: readonly LiteralQueryParameter[];
+    }
+  | { readonly ok: false; readonly reason: string } {
+  let queryExpressionSeen = false;
+  let queryStart = -1;
+
+  for (let index = 0; index < template.length; index += 1) {
+    const character = template[index]!;
+    if (character === "{") {
+      const closing = template.indexOf("}", index + 1);
+      const nested = template.indexOf("{", index + 1);
+      if (closing === -1 || (nested !== -1 && nested < closing)) {
+        return { ok: true, template };
+      }
+      const expression = template.slice(index + 1, closing);
+      if (expression.startsWith("?") || expression.startsWith("&")) {
+        queryExpressionSeen = true;
+      }
+      index = closing;
+      continue;
+    }
+    if (character === "}") return { ok: true, template };
+    if (character === "#") {
+      return failure("literal fragment syntax is not supported");
+    }
+    if (character !== "?") continue;
+    if (queryExpressionSeen) {
+      return failure("literal query syntax cannot appear after a query expansion");
+    }
+    queryStart = index;
+    break;
+  }
+
+  if (queryStart === -1) return { ok: true, template };
+
+  const continuationStart = template.indexOf("{", queryStart + 1);
+  const literalEnd = continuationStart === -1 ? template.length : continuationStart;
+  const literalQuery = template.slice(queryStart + 1, literalEnd);
+  if (literalQuery.includes("#")) {
+    return failure("literal fragment syntax is not supported");
+  }
+  const parsed = parseLiteralQuery(literalQuery);
+  if (!parsed.ok) return parsed;
+
+  if (continuationStart === -1) {
+    return {
+      ok: true,
+      template: template.slice(0, queryStart),
+      literalQuery: parsed.value,
+    };
+  }
+  if (!template.startsWith("{&", continuationStart)) {
+    return failure("literal query fields must be followed by a query continuation expansion");
+  }
+
+  return {
+    ok: true,
+    template: template.slice(0, queryStart) + "{?" + template.slice(continuationStart + 2),
+    literalQuery: parsed.value,
+  };
+}
+
+function parseLiteralQuery(
+  query: string,
+):
+  | { readonly ok: true; readonly value: readonly LiteralQueryParameter[] }
+  | { readonly ok: false; readonly reason: string } {
+  if (query.length === 0) return failure("literal query syntax must contain a field");
+
+  const result: LiteralQueryParameter[] = [];
+  const names = new Set<string>();
+  for (const field of query.split("&")) {
+    if (field.length === 0) return failure("literal query syntax contains an empty field");
+    const equals = field.indexOf("=");
+    const rawName = equals === -1 ? field : field.slice(0, equals);
+    const rawValue = equals === -1 ? "" : field.slice(equals + 1);
+    const name = decodeLiteralQueryComponent(rawName);
+    if (!name.ok) return name;
+    if (name.value.length === 0) return failure("literal query field names must not be empty");
+    const value = decodeLiteralQueryComponent(rawValue);
+    if (!value.ok) return value;
+    if (names.has(name.value)) {
+      return failure(`literal query field ${JSON.stringify(name.value)} appears more than once`);
+    }
+    names.add(name.value);
+    result.push({ name: name.value, value: value.value });
+  }
+  return { ok: true, value: result };
+}
+
+function decodeLiteralQueryComponent(
+  value: string,
+): { readonly ok: true; readonly value: string } | { readonly ok: false; readonly reason: string } {
+  try {
+    return { ok: true, value: decodeURIComponent(value.replace(/\+/g, " ")) };
+  } catch {
+    return failure(`malformed percent escape in literal query field ${JSON.stringify(value)}`);
+  }
 }
 
 function expandEmptyRecordPatterns(

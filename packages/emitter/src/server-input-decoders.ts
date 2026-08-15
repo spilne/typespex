@@ -52,6 +52,7 @@ import {
   type RequestBodyInputPlan,
 } from "./request-input-plan.js";
 import { typeToTs } from "./type-reference.js";
+import { lowerUriTemplate } from "./uri-template.js";
 import {
   isTsIdentifier,
   tsIdentifier,
@@ -148,6 +149,10 @@ export function emitDecoder(
   const dec = createDecoderEmitContext(inputsRef, opName);
   const pathParams = op.parameters.parameters.filter((p) => p.type === "path");
   const queryParams = op.parameters.parameters.filter((p) => p.type === "query");
+  const loweredUriTemplate = lowerUriTemplate(op);
+  const literalQueryNames = loweredUriTemplate.ok
+    ? (loweredUriTemplate.value.literalQuery?.map(({ name }) => name) ?? [])
+    : [];
   const headerParams = op.parameters.parameters.filter((p) => p.type === "header");
   const cookieParams = op.parameters.parameters.filter((p) => p.type === "cookie");
   const hasBody = op.parameters.body != null;
@@ -216,11 +221,12 @@ export function emitDecoder(
       if (param.explode) {
         optionValues.push("explode: true");
         const excludedNames = [
-          ...new Set(
-            queryParams
+          ...new Set([
+            ...literalQueryNames,
+            ...queryParams
               .filter((candidate) => candidate !== param)
               .flatMap((candidate) => queryParameterClaimedNames(ctx, candidate)),
-          ),
+          ]),
         ].map(tsLiteral);
         if (excludedNames.length > 0) {
           optionValues.push(`excludedNames: [${excludedNames.join(", ")}]`);
