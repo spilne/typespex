@@ -166,11 +166,9 @@ function sseResponseBody<A>(
             ? transformEvent(next.value)
             : (next.value as unknown as SseEvent);
           const encoded = encodeSseEvent(event);
-          if (encoded.terminal) {
-            await closeIterator();
-          }
           controller.enqueue(textEncoder.encode(encoded.frame));
           if (encoded.terminal) {
+            await closeIterator();
             controller.close();
           }
         } catch (error) {

@@ -50,6 +50,48 @@ describe("SSE response encoder", () => {
     expect(closed).toBe(true);
   });
 
+  test("delivers a terminal frame before waiting for source cleanup", async () => {
+    let signalReturnStarted!: () => void;
+    let releaseReturn!: () => void;
+    const returnStarted = new Promise<void>((resolve) => {
+      signalReturnStarted = resolve;
+    });
+    const returnReleased = new Promise<void>((resolve) => {
+      releaseReturn = resolve;
+    });
+    const events: AsyncIterable<SseEvent> = {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            return { done: false as const, value: { data: "[DONE]", terminal: true } };
+          },
+          async return() {
+            signalReturnStarted();
+            await returnReleased;
+            return { done: true as const, value: undefined };
+          },
+        };
+      },
+    };
+
+    const reader = ResponseEncoders.sse().encode(events).body!.getReader();
+    let delivered = false;
+    const firstRead = reader.read().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    await returnStarted;
+    await Promise.resolve();
+    const deliveredBeforeCleanup = delivered;
+    releaseReturn();
+
+    const first = await firstRead;
+    expect(deliveredBeforeCleanup).toBe(true);
+    expect(new TextDecoder().decode(first.value)).toBe("data: [DONE]\n\n");
+    expect((await reader.read()).done).toBe(true);
+  });
+
   test("applies backpressure and closes a canceled source", async () => {
     let nextCalls = 0;
     let returned = false;
