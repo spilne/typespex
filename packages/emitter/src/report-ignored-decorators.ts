@@ -36,6 +36,7 @@ import {
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { isBytesScalar, unsupportedFileContentsReason } from "./wire-types.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
+import { isTypedStream } from "./stream-types.js";
 import { lowerUriTemplate } from "./uri-template.js";
 
 interface ServiceDecoratorReports {
@@ -106,6 +107,16 @@ function checkRequestBody(
   const body = traversal.operation.parameters.body;
   if (!body) return;
   if (!requestBodyContentTypesAreValid(ctx, traversal.operation, body.contentTypes)) return;
+
+  if (body.bodyKind === "single" && isTypedStream(ctx.program, body.property?.model)) {
+    reportUnsupportedBody(
+      ctx,
+      traversal.operation,
+      body.contentTypes.join(", ") || "application/json",
+      "typed streams require a dedicated streaming decoder",
+    );
+    return;
+  }
 
   const overloads = getSameEndpointOverloads(traversal.operation).filter(
     (operation) => operation.parameters.body !== undefined,
