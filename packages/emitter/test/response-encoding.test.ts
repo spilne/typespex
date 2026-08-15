@@ -403,13 +403,12 @@ describe("response encoding", () => {
     expect(r.readFile("multi-error-api", "models.ts")).toMatchSnapshot();
   });
 
-  test("@error models without @statusCode fail instead of collapsing wildcard status", () => {
-    const r = compileFixtureExpectingDiagnostics("implicit-error-status", implicitErrorStatusSpec);
-    const combined = `${r.diagnostics.stdout}\n${r.diagnostics.stderr}`;
+  test("@error models without @statusCode use the implicit server-error status", () => {
+    const r = compileFixture("implicit-error-status", implicitErrorStatusSpec);
+    const operations = r.readFile("implicit-error-api", "server-operations.ts");
 
-    expect(combined).toContain("unsupported-response-status-code");
-    expect(combined).toContain('wildcard status "*"');
-    expect(r.listFiles("implicit-error-api")).toEqual([]);
+    expect(operations).toContain("ResponseEncoders.variant<Oops>({ status: 500");
+    r.typecheck("implicit-error-api");
   });
 
   test("multiple success types generate matchVariant result encoders", () => {
