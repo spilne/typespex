@@ -350,9 +350,6 @@ function lowerUriTemplateTextInternal(
           `label-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
       }
-      if (scalarRecord && exploded) {
-        return failure("exploded label record expansions are not supported");
-      }
       labelExpandedPathNames?.add(name);
       if (scalarRecord) {
         segment.push({ kind: "empty-label-record", name });
@@ -484,7 +481,7 @@ function lowerUriTemplateTextInternal(
     ).length;
     if (hasEmptyLabelRecord && pathVariableCount > 1) {
       return failure(
-        "standard label record expansions must not share a path segment with another path variable",
+        "label record expansions must not share a path segment with another path variable",
       );
     }
   }
