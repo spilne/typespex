@@ -192,13 +192,12 @@ function encodeNumericDuration(
 }
 
 function decodeBase64Url(value: string): Uint8Array {
-  const hasPadding = value.includes("=");
-  const unpadded = value.replace(/=+$/, "");
-  if (
-    !BASE64URL_PATTERN.test(value) ||
-    unpadded.length % 4 === 1 ||
-    (hasPadding && value.length % 4 !== 0)
-  ) {
+  if (!BASE64URL_PATTERN.test(value)) {
+    throw new TypeError("Expected a valid base64url string.");
+  }
+  const paddingLength = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const unpadded = paddingLength === 0 ? value : value.slice(0, -paddingLength);
+  if (unpadded.length % 4 === 1 || (paddingLength > 0 && value.length % 4 !== 0)) {
     throw new TypeError("Expected a valid base64url string.");
   }
   const base64 = unpadded.replace(/-/g, "+").replace(/_/g, "/");

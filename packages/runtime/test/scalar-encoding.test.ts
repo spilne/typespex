@@ -91,6 +91,9 @@ describe("scalar wire encodings", () => {
     expect(Decoders.base64UrlBytes.decode("_w=")).toEqual(
       Either.left([{ path: "", message: "Expected a valid base64url string." }]),
     );
+    expect(Decoders.base64UrlBytes.decode(`${"=".repeat(4_096)}!`)).toEqual(
+      Either.left([{ path: "", message: "Expected a valid base64url string." }]),
+    );
   });
 
   test("serializes handler values to each standard wire format", () => {
