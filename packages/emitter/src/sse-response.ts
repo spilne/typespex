@@ -15,7 +15,7 @@ import {
   unsupportedJsonWireTransformReason,
 } from "./json-wire-transforms.js";
 import { getAdditionalPropertiesValue, isNeverAdditionalProperties } from "./model-indexer.js";
-import { enumMemberLiteralExpression, resolveNumericLiteral } from "./numeric-literals.js";
+import { getEnumMemberNumericLiteral, resolveNumericLiteral } from "./numeric-literals.js";
 import {
   payloadModelProperties,
   payloadPropertyOptional,
@@ -70,6 +70,12 @@ interface EventCondition {
   readonly exactCondition?: string;
   readonly broadCondition: string;
   readonly model?: Model;
+}
+
+interface RuntimeLiteral {
+  readonly category: "string" | "number" | "bigint";
+  readonly key: string;
+  readonly expression: string;
 }
 
 /** Build the handler-value to SSE-frame lowering for one TypeSpec SSE stream. */
@@ -373,15 +379,42 @@ function eventConditionFor(ctx: EmitterCtx, type: Type): EventCondition | undefi
   }
 }
 
-function enumMemberCondition(ctx: EmitterCtx, member: EnumMember): EventCondition {
-  const expression = enumMemberLiteralExpression(ctx.program, member);
-  const category = typeof member.value === "number" ? "number" : "string";
+function enumMemberCondition(ctx: EmitterCtx, member: EnumMember): EventCondition | undefined {
+  const literal = enumMemberRuntimeLiteral(ctx, member);
+  if (!literal) return undefined;
   return {
-    category,
-    exactKey: `${category}:${expression}`,
-    exactCondition: `value === ${expression}`,
-    broadCondition: `typeof value === ${tsLiteral(category)}`,
+    category: literal.category,
+    exactKey: literal.key,
+    exactCondition: `value === ${literal.expression}`,
+    broadCondition: `typeof value === ${tsLiteral(literal.category)}`,
   };
+}
+
+function enumMemberRuntimeLiteral(ctx: EmitterCtx, member: EnumMember): RuntimeLiteral | undefined {
+  if (member.value === undefined || typeof member.value === "string") {
+    const value = member.value ?? member.name;
+    return {
+      category: "string",
+      key: `string:${value}`,
+      expression: tsLiteral(value),
+    };
+  }
+
+  const source = getEnumMemberNumericLiteral(ctx.program, member);
+  if (source) {
+    const resolved = resolveNumericLiteral(source);
+    return resolved.supported
+      ? {
+          category: resolved.kind,
+          key: resolved.key,
+          expression: resolved.expression,
+        }
+      : undefined;
+  }
+
+  if (!Number.isFinite(member.value)) return undefined;
+  const expression = String(member.value);
+  return { category: "number", key: `number:${expression}`, expression };
 }
 
 function buildObjectConditions(
@@ -507,8 +540,8 @@ function literalValue(
     return { key: `boolean:${String(type.value)}`, expression: String(type.value) };
   }
   if (type.kind === "EnumMember" && ctx) {
-    const expression = enumMemberLiteralExpression(ctx.program, type);
-    return { key: `enum:${expression}`, expression };
+    const literal = enumMemberRuntimeLiteral(ctx, type);
+    return literal ? { key: literal.key, expression: literal.expression } : undefined;
   }
   return undefined;
 }

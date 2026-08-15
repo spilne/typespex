@@ -254,6 +254,58 @@ describe("SSE responses", () => {
     expect(result.listFiles("ambiguous-sse-events-api")).toEqual([]);
   });
 
+  test("rejects enum members that overlap equivalent literal event values", () => {
+    const result = compileFixtureExpectingDiagnostics(
+      "enum-literal-sse-overlap",
+      `
+        ${imports}
+
+        @service namespace EnumLiteralSseOverlapApi {
+          enum Values {
+            started: "started",
+            huge: 9223372036854775807,
+          }
+
+          @events
+          union DirectStringEvents {
+            @contentType("text/plain") enumValue: Values.started,
+            @contentType("text/plain") literalValue: "started",
+          }
+
+          @events
+          union DirectNumericEvents {
+            @contentType("text/plain") enumValue: Values.huge,
+            @contentType("text/plain") literalValue: 9223372036854775807,
+          }
+
+          model EnumObject { kind: Values.started; value: string; }
+          model LiteralObject { kind: "started"; value: string; }
+
+          @events
+          union ObjectEvents {
+            @contentType("application/json") enumValue: EnumObject,
+            @contentType("application/json") literalValue: LiteralObject,
+          }
+
+          @route("/string")
+          @get op directString(): SSEStream<DirectStringEvents>;
+
+          @route("/numeric")
+          @get op directNumeric(): SSEStream<DirectNumericEvents>;
+
+          @route("/object")
+          @get op object(): SSEStream<ObjectEvents>;
+        }
+      `,
+    );
+    const diagnostics = `${result.diagnostics.stdout}\n${result.diagnostics.stderr}`;
+
+    expect(diagnostics.match(/unsupported-response-body/g)).toHaveLength(3);
+    expect(diagnostics.match(/duplicate literal handler values/g)).toHaveLength(2);
+    expect(diagnostics).toContain("ambiguous object shapes");
+    expect(result.listFiles("enum-literal-sse-overlap-api")).toEqual([]);
+  });
+
   test("rejects unsupported or missing event payload content types", () => {
     for (const [name, decorator] of [
       ["missing", ""],
