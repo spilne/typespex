@@ -423,7 +423,8 @@ function unsupportedParameterTypeReason(
           parameter.type === "path" &&
           (parameter.style === "simple" ||
             parameter.style === "path" ||
-            parameter.style === "label")
+            parameter.style === "label" ||
+            (parameter.style === "matrix" && !parameter.explode))
         ) {
           return undefined;
         }

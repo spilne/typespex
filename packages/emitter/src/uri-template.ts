@@ -11,7 +11,8 @@ export type RoutePatternToken =
 
 type ParsedRoutePatternToken =
   | RoutePatternToken
-  | { readonly kind: "empty-label-record"; readonly name: string };
+  | { readonly kind: "empty-label-record"; readonly name: string }
+  | { readonly kind: "empty-matrix-record"; readonly name: string };
 
 export interface RoutePattern {
   readonly segments: readonly (readonly RoutePatternToken[])[];
@@ -379,17 +380,25 @@ function lowerUriTemplateTextInternal(
         return failure("percent-encoded matrix variable names are not supported");
       }
       const scalarArray = scalarArrayPathNames.has(name);
+      const scalarRecord = scalarRecordPathNames.has(name);
       if (optionalPathNames.has(name)) {
         return failure(`matrix-expanded path variable ${JSON.stringify(name)} must be required`);
       }
-      if (!scalarPathNames.has(name) && !scalarArray) {
+      if (scalarRecord && exploded) {
+        return failure("exploded matrix record expansions are not supported");
+      }
+      if (!scalarPathNames.has(name) && !scalarArray && !scalarRecord) {
         return failure(
-          `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar or scalar-array wire shape`,
+          `matrix-expanded path variable ${JSON.stringify(name)} must have a scalar, scalar-array, or scalar-record wire shape`,
         );
       }
       matrixExpandedPathNames?.add(name);
-      appendLiteralToken(segment, `;${matrixVariables}=`);
-      segment.push({ kind: "parameter", name });
+      if (scalarRecord) {
+        segment.push({ kind: "empty-matrix-record", name });
+      } else {
+        appendLiteralToken(segment, `;${matrixVariables}=`);
+        segment.push({ kind: "parameter", name });
+      }
       cursor = closing.index + 1;
       continue;
     }
@@ -477,7 +486,10 @@ function lowerUriTemplateTextInternal(
     const hasEmptyLabelRecord = candidate.some((token) => token.kind === "empty-label-record");
     const pathVariableCount = candidate.filter(
       (token) =>
-        token.kind === "parameter" || token.kind === "rest" || token.kind === "empty-label-record",
+        token.kind === "parameter" ||
+        token.kind === "rest" ||
+        token.kind === "empty-label-record" ||
+        token.kind === "empty-matrix-record",
     ).length;
     if (hasEmptyLabelRecord && pathVariableCount > 1) {
       return failure(
@@ -486,7 +498,7 @@ function lowerUriTemplateTextInternal(
     }
   }
 
-  const expanded = expandEmptyLabelRecordPatterns(
+  const expanded = expandEmptyRecordPatterns(
     segments,
     trailingSlash,
     optionalSlashParameter !== undefined,
@@ -532,7 +544,7 @@ function lowerUriTemplateTextInternal(
   };
 }
 
-function expandEmptyLabelRecordPatterns(
+function expandEmptyRecordPatterns(
   parsedSegments: readonly (readonly ParsedRoutePatternToken[])[],
   trailingSlash: boolean,
   followedByOptionalSlash: boolean,
@@ -544,7 +556,7 @@ function expandEmptyLabelRecordPatterns(
   for (const parsedSegment of parsedSegments) {
     let segmentVariants: RoutePatternToken[][] = [[]];
     for (const token of parsedSegment) {
-      if (token.kind !== "empty-label-record") {
+      if (token.kind !== "empty-label-record" && token.kind !== "empty-matrix-record") {
         for (const candidate of segmentVariants) appendRouteToken(candidate, token);
         continue;
       }
@@ -552,9 +564,14 @@ function expandEmptyLabelRecordPatterns(
       const next: RoutePatternToken[][] = [];
       for (const candidate of segmentVariants) {
         const present = [...candidate];
-        appendLiteralToken(present, ".");
+        const empty = [...candidate];
+        if (token.kind === "empty-label-record") {
+          appendLiteralToken(present, ".");
+        } else {
+          appendLiteralToken(present, `;${token.name}=`);
+        }
         present.push({ kind: "parameter", name: token.name });
-        next.push(present, [...candidate]);
+        next.push(present, empty);
       }
       segmentVariants = next;
     }
