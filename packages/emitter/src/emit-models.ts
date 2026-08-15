@@ -16,6 +16,7 @@ import { isHttpFileModel, isHttpPartModel } from "./http-models.js";
 import { isPureRecordModel } from "./model-indexer.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import {
+  isTemplatedScalarReference,
   modelAdditionalPropertiesToTs,
   templateParametersToTs,
   typeToTs,
@@ -99,7 +100,7 @@ function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: Expression): s
   if (expression.kind !== SyntaxKind.TypeReference) return undefined;
 
   const resolved = ctx.program.checker.getTypeForNode(expression);
-  if (shouldUseSemanticTypeReference(resolved)) return undefined;
+  if (shouldUseSemanticTypeReference(ctx, resolved)) return undefined;
   if (isHttpPartModel(ctx.program, resolved) || isHttpFileModel(ctx.program, resolved)) {
     return undefined;
   }
@@ -113,12 +114,15 @@ function typeReferenceExpressionToTs(ctx: EmitterCtx, expression: Expression): s
   return args.length > 0 ? `${target}<${args.join(", ")}>` : target;
 }
 
-function shouldUseSemanticTypeReference(type: Type): boolean {
+function shouldUseSemanticTypeReference(ctx: EmitterCtx, type: Type): boolean {
   if (type.kind === "Intrinsic") return true;
-  return (
-    (type.kind === "Model" || type.kind === "Scalar") &&
-    getNamespaceFullName(type.namespace) === "TypeSpec"
-  );
+  if (type.kind === "Scalar") {
+    return (
+      getNamespaceFullName(type.namespace) === "TypeSpec" ||
+      (!isTemplatedScalarReference(type) && !hasGeneratedTypeNameCollision(ctx, type))
+    );
+  }
+  return type.kind === "Model" && getNamespaceFullName(type.namespace) === "TypeSpec";
 }
 
 function referenceTargetToTs(
