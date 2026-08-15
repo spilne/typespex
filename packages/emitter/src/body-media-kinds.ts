@@ -56,7 +56,6 @@ export function getBodyMediaKinds(contentTypes: readonly string[]): BodyMediaKin
       kinds.add("form");
       kinds.add("binary");
     } else if (mediaType === "text/*") {
-      kinds.add("xml");
       kinds.add("text");
     } else if (isJsonMediaType(mediaType)) {
       kinds.add("json");

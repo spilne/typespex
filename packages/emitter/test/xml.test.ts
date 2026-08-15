@@ -104,8 +104,54 @@ interface Documents {
 `;
 
 describe("XML payloads", () => {
-  test("classifies text wildcards for both plain text and XML dispatch", () => {
-    expect(getBodyMediaKinds(["text/*"])).toEqual(["xml", "text"]);
+  test("keeps text wildcards on raw-text dispatch", () => {
+    expect(getBodyMediaKinds(["text/*"])).toEqual(["text"]);
+    expect(getBodyMediaKinds(["text/xml"])).toEqual(["xml"]);
+  });
+
+  test("decodes text/xml as raw text for text wildcard contracts", async () => {
+    const result = compileFixture(
+      "xml-text-wildcard",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service(#{ title: "TextWildcardApi" })
+        namespace TextWildcardApi;
+
+        @mediaTypeHint("text/*")
+        scalar WildcardText extends string;
+
+        @route("/raw")
+        @put op update(@body body: WildcardText): void;
+      `,
+    );
+    const operations = result.readFile("text-wildcard-api", "server-operations.ts");
+    expect(operations).toContain("text: Decoders.string");
+    expect(operations).not.toContain("XmlCodec");
+    result.typecheck("text-wildcard-api");
+
+    const generated = (await import(
+      `${pathToFileURL(join(result.outputDir, "text-wildcard-api", "server-operations.ts")).href}?xml-wildcard-test=${Date.now()}`
+    )) as {
+      TextWildcardApiOperations: {
+        update: {
+          decodeInput(request: Request, pathParams: Record<string, string>): Promise<unknown>;
+        };
+      };
+    };
+    const decoded = await generated.TextWildcardApiOperations.update.decodeInput(
+      new Request("http://localhost/raw", {
+        method: "PUT",
+        headers: { "content-type": "text/xml" },
+        body: "<unmodeled />",
+      }),
+      {},
+    );
+    expect(decoded).toEqual({
+      _tag: "Right",
+      right: "<unmodeled />",
+    });
   });
 
   test("emits bidirectional XML codecs from TypeSpec XML metadata", async () => {
