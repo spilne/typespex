@@ -24,7 +24,7 @@ import {
   type ScalarEncodingContext,
 } from "./scalar-encoding.js";
 import { isTypeSpecNamespaceModel } from "./type-reference.js";
-import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
+import { tsIdentifier, tsLiteral, tsObjectKey } from "./typescript-names.js";
 
 const JSON_MEDIA_TYPE = "application/json";
 
@@ -442,8 +442,8 @@ function emitObjectSerializer(
       continue;
     }
     const fields = [
-      `property: ${JSON.stringify(property.name)}`,
-      `wireName: ${JSON.stringify(getJsonPropertyWireName(ctx, property))}`,
+      `property: ${tsLiteral(property.name)}`,
+      `wireName: ${tsLiteral(getJsonPropertyWireName(ctx, property))}`,
       `serializer: ${emitRequiredSerializer(ctx, property.type, projection, property, encodingContext)}`,
     ];
     if (payloadPropertyOptional(property, projection)) fields.push("optional: true");
@@ -465,9 +465,7 @@ function emitObjectSerializer(
 }
 
 function emitSyntheticDiscriminatorSerializer(name: string): string {
-  return `{ property: ${JSON.stringify(name)}, wireName: ${JSON.stringify(
-    name,
-  )}, serializer: JsonSerializers.identity() }`;
+  return `{ property: ${tsLiteral(name)}, wireName: ${tsLiteral(name)}, serializer: JsonSerializers.identity() }`;
 }
 
 function emitDiscriminatedUnionSerializerBody(
@@ -489,9 +487,9 @@ function emitDiscriminatedUnionSerializerBody(
     if (discriminated.options.envelope === "object") {
       serializer = `JsonSerializers.object<${variantTs}>([${emitSyntheticDiscriminatorSerializer(
         discriminated.options.discriminatorPropertyName,
-      )}, { property: ${JSON.stringify(
+      )}, { property: ${tsLiteral(
         discriminated.options.envelopePropertyName,
-      )}, wireName: ${JSON.stringify(
+      )}, wireName: ${tsLiteral(
         discriminated.options.envelopePropertyName,
       )}, serializer: ${emitRequiredSerializer(
         ctx,
@@ -519,11 +517,7 @@ function emitDiscriminatedUnionSerializerBody(
   }
 
   const options = defaultVariant ? `, { defaultVariant: ${defaultVariant} }` : "";
-  return `JsonSerializers.discriminated<${payloadTypeToTs(
-    ctx,
-    union,
-    projection,
-  )}>(${JSON.stringify(
+  return `JsonSerializers.discriminated<${payloadTypeToTs(ctx, union, projection)}>(${tsLiteral(
     discriminated.options.discriminatorPropertyName,
   )}, { ${entries.join(", ")} }${options})`;
 }

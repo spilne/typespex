@@ -15,7 +15,7 @@ import {
 } from "@typespec/http";
 import type { EmitterCtx } from "./ctx.js";
 import { getNamespaceFullName } from "./namespace-names.js";
-import { tsIdentifier, tsObjectKey } from "./typescript-names.js";
+import { tsIdentifier, tsLiteral, tsObjectKey } from "./typescript-names.js";
 
 interface HintDefinition {
   readonly id: string;
@@ -88,7 +88,7 @@ export function emitServerHints(ctx: EmitterCtx, httpOperations: HttpOperation[]
   for (const definition of definitions) {
     const exportName = tsIdentifier(definition.exportName, "hint");
     lines.push(
-      `export const ${exportName} = createHintKey<${definition.typeText}>(${JSON.stringify(definition.id)});`,
+      `export const ${exportName} = createHintKey<${definition.typeText}>(${tsLiteral(definition.id)});`,
     );
   }
 
@@ -102,7 +102,7 @@ export function emitHintEntries(ctx: EmitterCtx, target: Type): EmittedHintEntry
   if (doc !== undefined) {
     entries.push({
       keyExportName: "typeSpecDocHint",
-      valueExpression: JSON.stringify(doc),
+      valueExpression: tsLiteral(doc),
     });
   }
 
@@ -110,7 +110,7 @@ export function emitHintEntries(ctx: EmitterCtx, target: Type): EmittedHintEntry
   if (summary !== undefined) {
     entries.push({
       keyExportName: "typeSpecSummaryHint",
-      valueExpression: JSON.stringify(summary),
+      valueExpression: tsLiteral(summary),
     });
   }
 
@@ -118,7 +118,7 @@ export function emitHintEntries(ctx: EmitterCtx, target: Type): EmittedHintEntry
   if (tags.length > 0) {
     entries.push({
       keyExportName: "typeSpecTagsHint",
-      valueExpression: JSON.stringify(tags),
+      valueExpression: tsLiteral(tags),
     });
   }
 
@@ -374,7 +374,7 @@ function marshalJsValue(value: unknown): JsonLike | undefined {
 function valueToTs(value: JsonLike): string {
   if (value === null) return "null";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return JSON.stringify(value);
+    return tsLiteral(value);
   }
   if (Array.isArray(value)) {
     return `[${value.map(valueToTs).join(", ")}]`;
@@ -401,7 +401,7 @@ function valueTypeToTs(value: JsonLike): string {
   }
 
   const fields = Object.entries(value).map(
-    ([key, item]) => `readonly ${JSON.stringify(key)}: ${valueTypeToTs(item)}`,
+    ([key, item]) => `readonly ${tsLiteral(key)}: ${valueTypeToTs(item)}`,
   );
   return `{ ${fields.join("; ")} }`;
 }

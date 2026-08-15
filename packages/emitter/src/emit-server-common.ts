@@ -71,7 +71,12 @@ import {
   isTypeSpecNamespaceModel,
   typeToTs,
 } from "./type-reference.js";
-import { tsIdentifier, tsPropertyAccess, tsPropertyDeclaration } from "./typescript-names.js";
+import {
+  tsIdentifier,
+  tsLiteral,
+  tsPropertyAccess,
+  tsPropertyDeclaration,
+} from "./typescript-names.js";
 import { isBytesScalar, isTextResponseType, unsupportedFileContentsReason } from "./wire-types.js";
 
 export interface OperationGroup {
@@ -683,7 +688,7 @@ function getResponseWireTransform(
 }
 
 function emitResponseBodyTransform(value: string, transform: ResponseBodyTransform): string {
-  const serialized = `${transform.serializer}.serialize(${value} as ${transform.bodyType}, ${JSON.stringify(transform.path)})`;
+  const serialized = `${transform.serializer}.serialize(${value} as ${transform.bodyType}, ${tsLiteral(transform.path)})`;
   return transform.optional ? `${value} === undefined ? undefined : ${serialized}` : serialized;
 }
 
@@ -1090,7 +1095,7 @@ function emitResponseHeaderTransform(
   if (!serializer) return undefined;
   const type = typeToTs(ctx, property.type);
   const path = tsPropertyAccess("$response", property.name);
-  return `(value) => ${serializer}.serialize(value as ${type}, ${JSON.stringify(path)})`;
+  return `(value) => ${serializer}.serialize(value as ${type}, ${tsLiteral(path)})`;
 }
 
 function headerTypeHasScalarEncoding(ctx: EmitterCtx, type: Type, target?: ModelProperty): boolean {
@@ -1120,7 +1125,7 @@ function headerTypeHasScalarEncoding(ctx: EmitterCtx, type: Type, target?: Model
 }
 
 function emitResponseHeaderEntry(header: ResponseHeader): string {
-  const fields = [JSON.stringify(header.property), JSON.stringify(header.header)];
+  const fields = [tsLiteral(header.property), tsLiteral(header.header)];
   if (header.explode || header.transform) fields.push(String(header.explode));
   if (header.transform) fields.push(header.transform);
   return `[${fields.join(", ")}]`;
@@ -1351,7 +1356,7 @@ function emitDynamicStatusCondition(
   status: DynamicResponseStatusPlan,
   excludedProperties: readonly string[] = [],
 ): string {
-  const property = JSON.stringify(status.property.name);
+  const property = tsLiteral(status.property.name);
   const value = `(result as Record<string, unknown>)[${property}]`;
   const allowed = status.allowed
     .map((entry) =>
@@ -1362,7 +1367,7 @@ function emitDynamicStatusCondition(
     .map((condition) => `(${condition})`)
     .join(" || ");
   const excluded = excludedProperties
-    .map((name) => `!Object.prototype.hasOwnProperty.call(result, ${JSON.stringify(name)})`)
+    .map((name) => `!Object.prototype.hasOwnProperty.call(result, ${tsLiteral(name)})`)
     .join(" && ");
   return [
     `typeof result === "object"`,
@@ -1378,7 +1383,7 @@ function emitDynamicStatusCondition(
 
 function emitAbsentStatusPropertiesCondition(properties: readonly string[]): string {
   const absent = properties
-    .map((property) => `!Object.prototype.hasOwnProperty.call(result, ${JSON.stringify(property)})`)
+    .map((property) => `!Object.prototype.hasOwnProperty.call(result, ${tsLiteral(property)})`)
     .join(" && ");
   return `typeof result !== "object" || result === null || (${absent})`;
 }
@@ -1456,7 +1461,7 @@ function emitDirectTypeCondition(
  */
 function subjectExpr(variant: SuccessResponseVariant): string {
   if (variant.bodyProperty === undefined) return "result";
-  return `(result as Record<string, unknown>)[${JSON.stringify(variant.bodyProperty)}]`;
+  return `(result as Record<string, unknown>)[${tsLiteral(variant.bodyProperty)}]`;
 }
 
 /**
@@ -1465,7 +1470,7 @@ function subjectExpr(variant: SuccessResponseVariant): string {
  */
 function wrapSubjectGuard(variant: SuccessResponseVariant, condition: string): string {
   if (variant.bodyProperty === undefined) return condition;
-  return `typeof result === "object" && result !== null && ${JSON.stringify(variant.bodyProperty)} in result && ${condition}`;
+  return `typeof result === "object" && result !== null && ${tsLiteral(variant.bodyProperty)} in result && ${condition}`;
 }
 
 /** Common shape check that the variant's subject is a plain object. */
@@ -1546,7 +1551,7 @@ function emitLiteralFieldBranches(
       prop.type.kind === "Number"
         ? numericLiteralExpression(prop.type)
         : stringLiteralExpression(prop.type);
-    const base = `${JSON.stringify(field)} in ${cast} && ${cast}[${JSON.stringify(field)}] === ${literal}`;
+    const base = `${tsLiteral(field)} in ${cast} && ${cast}[${tsLiteral(field)}] === ${literal}`;
     const guarded =
       response.bodyProperty === undefined
         ? `typeof ${subject} === "object" && ${subject} !== null && ${base}`
@@ -1676,8 +1681,8 @@ function emitExclusivePropertyCondition(
   const cast =
     response.bodyProperty === undefined ? subject : `(${subject} as Record<string, unknown>)`;
   const propertyChecks = [
-    `${JSON.stringify(requiredProperty)} in ${cast}`,
-    ...excludedProperties.map((prop) => `!(${JSON.stringify(prop)} in ${cast})`),
+    `${tsLiteral(requiredProperty)} in ${cast}`,
+    ...excludedProperties.map((prop) => `!(${tsLiteral(prop)} in ${cast})`),
   ];
   if (response.bodyProperty === undefined) {
     return [`typeof ${subject} === "object"`, `${subject} !== null`, ...propertyChecks].join(
@@ -1756,8 +1761,8 @@ function bodyShapeFor(ctx: EmitterCtx, type: Type): BodyShape | undefined {
 }
 
 function emitBodyShapeCondition(bodyProperty: string, shape: BodyShape): string {
-  const body = `(result as Record<string, unknown>)[${JSON.stringify(bodyProperty)}]`;
-  const guard = `typeof result === "object" && result !== null && ${JSON.stringify(bodyProperty)} in result`;
+  const body = `(result as Record<string, unknown>)[${tsLiteral(bodyProperty)}]`;
+  const guard = `typeof result === "object" && result !== null && ${tsLiteral(bodyProperty)} in result`;
   switch (shape) {
     case "array":
       return `${guard} && Array.isArray(${body})`;
@@ -1867,23 +1872,21 @@ function emitResponseVariant(
   bodyTransform?: ResponseBodyTransform,
 ): string {
   const fields = [`status: ${emitResponseStatus(response)}`];
-  if (kind !== "json") fields.push(`kind: ${JSON.stringify(kind)}`);
-  if (response.contentType) fields.push(`contentType: ${JSON.stringify(response.contentType)}`);
+  if (kind !== "json") fields.push(`kind: ${tsLiteral(kind)}`);
+  if (response.contentType) fields.push(`contentType: ${tsLiteral(response.contentType)}`);
   if (response.fileContentTypes.length > 0) {
-    fields.push(`contentTypes: ${JSON.stringify(response.fileContentTypes)}`);
+    fields.push(`contentTypes: ${tsLiteral(response.fileContentTypes)}`);
   }
   if (response.fileContentTypeRequired) fields.push("requireFileContentType: true");
   if (response.fileNameRequired) fields.push("requireFileName: true");
   if (!response.emitFileContentDisposition) fields.push("emitFileContentDisposition: false");
-  if (response.bodyProperty) fields.push(`body: ${JSON.stringify(response.bodyProperty)}`);
+  if (response.bodyProperty) fields.push(`body: ${tsLiteral(response.bodyProperty)}`);
   if (response.headers.length > 0) {
     const headers = response.headers.map(emitResponseHeaderEntry).join(", ");
     fields.push(`headers: [${headers}]`);
   }
   if (response.omitProperties.length > 0) {
-    fields.push(
-      `omit: [${response.omitProperties.map((name) => JSON.stringify(name)).join(", ")}]`,
-    );
+    fields.push(`omit: [${response.omitProperties.map((name) => tsLiteral(name)).join(", ")}]`);
   }
   if (bodyTransform) {
     fields.push(`transformBody: (body) => ${emitResponseBodyTransform("body", bodyTransform)}`);
@@ -1900,7 +1903,7 @@ function emitResponseStatus(response: SuccessResponseVariant): string {
         : `{ start: ${status.start}, end: ${status.end} }`,
     )
     .join(", ");
-  return `{ property: ${JSON.stringify(response.dynamicStatus.property.name)}, allowed: [${allowed}] }`;
+  return `{ property: ${tsLiteral(response.dynamicStatus.property.name)}, allowed: [${allowed}] }`;
 }
 
 type ResponseEncoderKind = "json" | "text" | "bytes" | "file" | "empty" | "unsupported";
@@ -2081,7 +2084,7 @@ function emitUnsupportedEncoder(
 }
 
 function emitUnsupportedEncoderReason(resultType: string, reason: string): string {
-  return `ResponseEncoders.unsupported<${resultType}>(${JSON.stringify(reason)})`;
+  return `ResponseEncoders.unsupported<${resultType}>(${tsLiteral(reason)})`;
 }
 
 interface ResponseHeader {

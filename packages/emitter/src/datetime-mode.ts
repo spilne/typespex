@@ -1,5 +1,6 @@
 import type { Scalar } from "@typespec/compiler";
 import type { EmitterCtx } from "./ctx.js";
+import { tsLiteral } from "./typescript-names.js";
 import type { TypespexEmitterOptions } from "./lib.js";
 
 export type DateTimeMode = NonNullable<TypespexEmitterOptions["datetime-mode"]>;
@@ -124,7 +125,7 @@ export function emitDateTimeSerializer(
 export function addTemporalImport(lines: string[], kind: "type" | "value"): void {
   if (!lines.some((line) => line.includes("Temporal."))) return;
   const prefix = kind === "type" ? "import type" : "import";
-  lines.splice(2, 0, `${prefix} { Temporal } from ${JSON.stringify(TEMPORAL_PACKAGE)};`);
+  lines.splice(2, 0, `${prefix} { Temporal } from ${tsLiteral(TEMPORAL_PACKAGE)};`);
 }
 
 function getDateTimeIntrinsicName(scalar: Scalar): string | undefined {

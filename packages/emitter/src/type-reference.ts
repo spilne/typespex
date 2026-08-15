@@ -32,7 +32,7 @@ import {
 } from "./model-indexer.js";
 import { scalarToTs } from "./scalar-map.js";
 import { isEntityLike } from "./type-guards.js";
-import { tsIdentifier, tsPropertyDeclaration } from "./typescript-names.js";
+import { tsIdentifier, tsLiteral, tsPropertyDeclaration } from "./typescript-names.js";
 import { enumMemberLiteralExpression, numericLiteralExpression } from "./numeric-literals.js";
 import { stringLiteralExpression } from "./string-template-literals.js";
 
@@ -263,7 +263,7 @@ function valueToTs(ctx: EmitterCtx, value: Value): string {
 
   switch (value.valueKind) {
     case "StringValue":
-      return JSON.stringify(value.value);
+      return tsLiteral(value.value);
     case "NumericValue":
       return String(value.value);
     case "BooleanValue":

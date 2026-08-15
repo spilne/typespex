@@ -49,6 +49,7 @@ import { typeToTs } from "./type-reference.js";
 import {
   isTsIdentifier,
   tsIdentifier,
+  tsLiteral,
   tsObjectKey,
   tsPropertyAccess,
   tsPropertyDeclaration,
@@ -179,13 +180,13 @@ export function emitDecoder(
       } else if (param.style === "label" && param.explode) {
         optionValues.push('arraySeparator: "."');
       } else if (param.style === "matrix" && param.explode) {
-        optionValues.push(`arraySeparator: ${JSON.stringify(`;${param.name}=`)}`);
+        optionValues.push(`arraySeparator: ${tsLiteral(`;${param.name}=`)}`);
       }
     }
     const options = optionValues.length > 0 ? `, { ${optionValues.join(", ")} }` : "";
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.path(${JSON.stringify(param.name)}, ${decoder}${options})`,
+      expr: `RequestDecoders.path(${tsLiteral(param.name)}, ${decoder}${options})`,
     });
   }
   for (const param of queryParams) {
@@ -203,7 +204,7 @@ export function emitDecoder(
       : "";
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.query(${JSON.stringify(param.name)}, ${decoder}${options})`,
+      expr: `RequestDecoders.query(${tsLiteral(param.name)}, ${decoder}${options})`,
     });
   }
   for (const param of headerParams) {
@@ -222,7 +223,7 @@ export function emitDecoder(
     const options = optionValues.length > 0 ? `, { ${optionValues.join(", ")} }` : "";
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.header(${JSON.stringify(param.name.toLowerCase())}, ${decoder}${options})`,
+      expr: `RequestDecoders.header(${tsLiteral(param.name.toLowerCase())}, ${decoder}${options})`,
     });
   }
   for (const param of cookieParams) {
@@ -238,7 +239,7 @@ export function emitDecoder(
     const options = isArrayInputType(ctx, param.param.type) ? ", { array: true }" : "";
     requestEntries.push({
       name: param.param.name,
-      expr: `RequestDecoders.cookie(${JSON.stringify(param.name)}, ${decoder}${options})`,
+      expr: `RequestDecoders.cookie(${tsLiteral(param.name)}, ${decoder}${options})`,
     });
   }
 
@@ -305,13 +306,13 @@ export function emitDecoder(
 function emitBodyOptionsArg(emission: BodyEmission): string {
   const options: string[] = [];
   if (emission.contentTypes.length > 0) {
-    const literal = emission.contentTypes.map((ct) => JSON.stringify(ct)).join(", ");
+    const literal = emission.contentTypes.map((ct) => tsLiteral(ct)).join(", ");
     options.push(`contentTypes: [${literal}]`);
   }
   if (emission.allowMissingContentType) options.push("allowMissingContentType: true");
   if (emission.fileNameProperty && emission.fileBodyProperty) {
-    options.push(`fileNameProperty: ${JSON.stringify(emission.fileNameProperty)}`);
-    options.push(`fileBodyProperty: ${JSON.stringify(emission.fileBodyProperty)}`);
+    options.push(`fileNameProperty: ${tsLiteral(emission.fileNameProperty)}`);
+    options.push(`fileBodyProperty: ${tsLiteral(emission.fileBodyProperty)}`);
   }
   if (emission.optional) options.push("optional: true");
   return options.length > 0 ? `, { ${options.join(", ")} }` : "";
@@ -547,7 +548,7 @@ function emitMultipartPartDescriptor(
   if (kinds.length === 1) {
     const [kind] = kinds;
     fields.push(`decoder: ${emitMultipartPartDecoder(ctx, dec, part, kind)}`);
-    fields.push(`kind: ${JSON.stringify(kind)}`);
+    fields.push(`kind: ${tsLiteral(kind)}`);
   } else {
     const decoders = kinds.map(
       (kind) => `${kind}: ${emitMultipartPartDecoder(ctx, dec, part, kind)}`,
@@ -556,7 +557,7 @@ function emitMultipartPartDescriptor(
   }
 
   if (part.body.contentTypes.length > 0) {
-    fields.push(`contentTypes: ${JSON.stringify(part.body.contentTypes)}`);
+    fields.push(`contentTypes: ${tsLiteral(part.body.contentTypes)}`);
   }
   if (part.body.contentTypeProperty?.optional === false) {
     fields.push("requireContentType: true");
@@ -565,10 +566,10 @@ function emitMultipartPartDescriptor(
   if (part.multi) fields.push("multi: true");
 
   if (part.name !== undefined) {
-    fields.push(`name: ${JSON.stringify(part.name)}`);
+    fields.push(`name: ${tsLiteral(part.name)}`);
   }
   if (multipartKind === "model" && part.partKind === "model") {
-    fields.push(`property: ${JSON.stringify(part.property.name)}`);
+    fields.push(`property: ${tsLiteral(part.property.name)}`);
   }
 
   if (part.body.bodyKind === "file") {
@@ -577,7 +578,7 @@ function emitMultipartPartDescriptor(
       ? part.headers.find((header) => propertiesShareSource(header.property, fileName))
       : undefined;
     if (fileNameHeader) {
-      fields.push(`fileNameHeader: ${JSON.stringify(fileNameHeader.options.name)}`);
+      fields.push(`fileNameHeader: ${tsLiteral(fileNameHeader.options.name)}`);
     }
     if (fileName?.optional === false) {
       fields.push("requireFileName: true");
@@ -956,10 +957,7 @@ function emitObjectDecoderBody(
     if (wireNames.length > 0) {
       options.push(
         `wireNames: { ${wireNames
-          .map(
-            ([propertyName, wireName]) =>
-              `${tsObjectKey(propertyName)}: ${JSON.stringify(wireName)}`,
-          )
+          .map(([propertyName, wireName]) => `${tsObjectKey(propertyName)}: ${tsLiteral(wireName)}`)
           .join(", ")} }`,
       );
     }
@@ -995,7 +993,7 @@ function emitObjectDecoderBody(
         mode === "json" ? getJsonPropertyWireName(ctx, property) : property.name,
       );
     if (forbidden.length > 0) {
-      options.push(`forbiddenProperties: ${JSON.stringify(forbidden)}`);
+      options.push(`forbiddenProperties: ${tsLiteral(forbidden)}`);
     }
   }
 
@@ -1005,7 +1003,7 @@ function emitObjectDecoderBody(
 }
 
 function emitSyntheticDiscriminatorDecoder(tag: string | undefined): string {
-  return tag === undefined ? "Decoders.string" : `Decoders.strictLiteral(${JSON.stringify(tag)})`;
+  return tag === undefined ? "Decoders.string" : `Decoders.strictLiteral(${tsLiteral(tag)})`;
 }
 
 function emitUnionDecoder(
@@ -1133,7 +1131,7 @@ function emitDeclaredDiscriminatedUnionDecoder(
     ctx,
     discriminated.type,
     projection,
-  )}>(${JSON.stringify(discriminated.options.discriminatorPropertyName)}, { ${entries.join(
+  )}>(${tsLiteral(discriminated.options.discriminatorPropertyName)}, { ${entries.join(
     ", ",
   )} }${options})`;
 }
@@ -1224,7 +1222,7 @@ function emitStructuralDiscriminatedUnionDecoder(
     );
   }
 
-  return `Decoders.discriminated<${typeToTs(ctx, union)}>(${JSON.stringify(wireField)}, { ${entries.join(", ")} })`;
+  return `Decoders.discriminated<${typeToTs(ctx, union)}>(${tsLiteral(wireField)}, { ${entries.join(", ")} })`;
 }
 
 /** All variants as plain (non-array, non-pure-record) models, or undefined. */

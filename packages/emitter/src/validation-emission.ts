@@ -14,6 +14,7 @@ import {
 import type { EmitterCtx } from "./ctx.js";
 import { getDateTimeMode } from "./datetime-mode.js";
 import { scalarToTs } from "./scalar-map.js";
+import { tsLiteral } from "./typescript-names.js";
 
 export type DecodedTypeKind = "number" | "bigint" | "string" | "bytes" | "array" | "other";
 
@@ -73,7 +74,7 @@ export function emitValidatorsForTarget(
   const pattern = getPatternData(program, target);
   if (pattern) {
     validators.push(
-      `Validators.pattern(${JSON.stringify(pattern.pattern)}${pattern.validationMessage ? `, ${JSON.stringify(pattern.validationMessage)}` : ""})`,
+      `Validators.pattern(${tsLiteral(pattern.pattern)}${pattern.validationMessage ? `, ${tsLiteral(pattern.validationMessage)}` : ""})`,
     );
   }
 
@@ -110,5 +111,5 @@ function emitNumericValue(value: Numeric, preferBigInt: boolean): string {
   }
 
   const numberValue = value.asNumber();
-  return numberValue === null ? `Number(${JSON.stringify(value.toString())})` : String(numberValue);
+  return numberValue === null ? `Number(${tsLiteral(value.toString())})` : String(numberValue);
 }
