@@ -481,11 +481,13 @@ export function reportUnsupportedResponseStatusContracts(
 
       if (statusProperties.length === 0) {
         if (response.statusCodes === "*") {
-          reportUnsupportedStatus(
-            ctx,
-            op,
-            'wildcard status "*" has no @statusCode property that can provide the actual response status',
-          );
+          if (!isErrorResponseModel(ctx, response)) {
+            reportUnsupportedStatus(
+              ctx,
+              op,
+              'wildcard status "*" has no @statusCode property that can provide the actual response status',
+            );
+          }
         } else if (typeof response.statusCodes === "object") {
           reportUnsupportedStatus(
             ctx,
@@ -537,6 +539,10 @@ function unsupportedFetchStatusReason(status: ResponseStatusContract): string | 
 
 function formatStatusContract(status: HttpStatusCodeRange): string {
   return `${status.start}–${status.end}`;
+}
+
+function isErrorResponseModel(ctx: EmitterCtx, response: HttpOperationResponse): boolean {
+  return response.type.kind === "Model" && isErrorModel(ctx.program, response.type);
 }
 
 function reportUnsupportedStatus(
@@ -1185,7 +1191,7 @@ function collectBranches(
     pending.delete(response);
   }
 
-  const statusBranches = resolveDynamicStatusBranches(ctx, [...pending]);
+  const statusBranches = resolveDynamicStatusBranches(ctx, op, [...pending]);
   if (statusBranches === "ambiguous") return [];
   if (statusBranches) {
     branches.push(...statusBranches);
@@ -1275,6 +1281,7 @@ function collectBranches(
 
 function resolveDynamicStatusBranches(
   ctx: EmitterCtx,
+  op: HttpOperation,
   responses: readonly SuccessResponseVariant[],
 ): ResponseBranch[] | "ambiguous" | undefined {
   if (responses.length < 2) return undefined;
@@ -1282,9 +1289,6 @@ function resolveDynamicStatusBranches(
   const dynamicResponses = responses.filter((response) => response.dynamicStatus);
   if (dynamicResponses.length === 0) return undefined;
   const fixedResponses = responses.filter((response) => !response.dynamicStatus);
-  // Status alone cannot distinguish multiple fixed variants. Leave the full
-  // set to the existing body/discriminator dispatch in that case.
-  if (fixedResponses.length > 1) return undefined;
 
   for (let left = 0; left < dynamicResponses.length; left += 1) {
     for (let right = left + 1; right < dynamicResponses.length; right += 1) {
@@ -1328,11 +1332,22 @@ function resolveDynamicStatusBranches(
     ),
   }));
   const [fixedResponse] = fixedResponses;
-  if (fixedResponse) {
+  if (fixedResponses.length === 1 && fixedResponse) {
     branches.push({
       response: fixedResponse,
       condition: emitAbsentStatusPropertiesCondition(statusProperties),
     });
+  } else if (fixedResponses.length > 1) {
+    const fixedBranches = buildResponseBranches(ctx, op, fixedResponses);
+    if (fixedBranches.length !== fixedResponses.length) return undefined;
+
+    const absentStatus = emitAbsentStatusPropertiesCondition(statusProperties);
+    branches.push(
+      ...fixedBranches.map((branch) => ({
+        response: branch.response,
+        condition: `(${absentStatus}) && (${branch.condition})`,
+      })),
+    );
   }
   return branches;
 }
@@ -2106,7 +2121,7 @@ function resolveResponseStatusCode(ctx: EmitterCtx, resp: HttpOperationResponse)
   if (resp.type.kind !== "Model") return 200;
   const declared = resolveStatusCodeFromModel(ctx, resp.type);
   if (declared !== undefined) return declared;
-  return isErrorModel(ctx.program, resp.type) ? 500 : 200;
+  return isErrorResponseModel(ctx, resp) ? 500 : 200;
 }
 
 /** Resolves status code from a @statusCode property on the model. */

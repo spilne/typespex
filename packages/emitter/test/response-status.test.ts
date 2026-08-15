@@ -166,15 +166,53 @@ op optionalDynamicStatus(): OptionalDynamicStatus;
 op mixedFixedDynamic(): FixedOk | LaterSuccess;
 `;
 
-const wildcardStatusSpec = `
+const implicitAndRangedErrorStatusSpec = `
 import "@typespec/http";
 using TypeSpec.Http;
 
 @service(#{ title: "WildcardStatusApi" })
 namespace WildcardStatusApi;
 
+model NoContent {
+  @statusCode _: 204;
+}
+
+@error
+model RangedFailure {
+  @minValue(494)
+  @maxValue(499)
+  @statusCode
+  status: int32;
+
+  code: string;
+  message: string;
+}
+
+@error
+model DefaultFailure {
+  code: string;
+  message: string;
+}
+
+@route("/failure")
+@get
+op fail(): NoContent | RangedFailure | DefaultFailure;
+
+@route("/default")
+@get
+op fallback(): DefaultFailure;
+`;
+
+const explicitWildcardStatusSpec = `
+import "@typespec/http";
+using TypeSpec.Http;
+
+@service(#{ title: "ExplicitWildcardStatusApi" })
+namespace ExplicitWildcardStatusApi;
+
 @error
 model Failure {
+  @statusCode status: "*";
   message: string;
 }
 
@@ -530,15 +568,69 @@ describe("response status lowering", () => {
     expect(await invalidDynamic.text()).toBe("Internal Server Error");
   });
 
-  test("rejects wildcard and Fetch-incompatible status contracts before emission", () => {
+  test("encodes implicit errors alongside ranged statuses", async () => {
+    const result = compileFixture("response-status-wildcard", implicitAndRangedErrorStatusSpec);
+    const operations = result.readFile("wildcard-status-api", "server-operations.ts");
+
+    expect(operations).toContain(
+      'status: { property: "status", allowed: [{ start: 494, end: 499 }] }',
+    );
+    expect(operations).toMatch(/status: 500[, }]/);
+    expect(operations).toContain("fallback: ResponseEncoders.json<DefaultFailure>(500)");
+    result.typecheck("wildcard-status-api");
+
+    let handlerResult:
+      | Record<string, never>
+      | { status: number; code: string; message: string }
+      | { code: string; message: string } = {
+      status: 494,
+      code: "request-header-too-large",
+      message: "Request header too large",
+    };
+    const { createWildcardStatusApiServerRouter } = await import(
+      `${result.outputDir}/wildcard-status-api/server-router.ts`
+    );
+    const router = createWildcardStatusApiServerRouter({
+      fail: () => handlerResult,
+      fallback: () => ({ code: "standalone", message: "Standalone failure" }),
+    } as any);
+
+    const ranged = await router.handle(new Request("http://localhost/failure"));
+    expect(ranged.status).toBe(494);
+    expect(await ranged.json()).toEqual({
+      code: "request-header-too-large",
+      message: "Request header too large",
+    });
+
+    handlerResult = { status: 493, code: "invalid", message: "Outside the declared range" };
+    const invalidRange = await router.handle(new Request("http://localhost/failure"));
+    expect(invalidRange.status).toBe(500);
+    expect(await invalidRange.text()).toBe("Internal Server Error");
+
+    handlerResult = { code: "unexpected", message: "Unexpected failure" };
+    const fallback = await router.handle(new Request("http://localhost/failure"));
+    expect(fallback.status).toBe(500);
+    expect(await fallback.json()).toEqual({
+      code: "unexpected",
+      message: "Unexpected failure",
+    });
+
+    const standalone = await router.handle(new Request("http://localhost/default"));
+    expect(standalone.status).toBe(500);
+    expect(await standalone.json()).toEqual({
+      code: "standalone",
+      message: "Standalone failure",
+    });
+  });
+
+  test("rejects explicit wildcard and Fetch-incompatible status contracts before emission", () => {
     const wildcard = compileFixtureExpectingDiagnostics(
-      "response-status-wildcard",
-      wildcardStatusSpec,
+      "response-status-explicit-wildcard",
+      explicitWildcardStatusSpec,
     );
     const wildcardDiagnostics = `${wildcard.diagnostics.stdout}\n${wildcard.diagnostics.stderr}`;
-    expect(wildcardDiagnostics).toContain("unsupported-response-status-code");
-    expect(wildcardDiagnostics).toContain('wildcard status "*"');
-    expect(wildcard.listFiles("wildcard-status-api")).toEqual([]);
+    expect(wildcardDiagnostics).toContain("status-code-invalid");
+    expect(wildcard.listFiles("explicit-wildcard-status-api")).toEqual([]);
 
     const informational = compileFixtureExpectingDiagnostics(
       "response-status-informational",
