@@ -12,9 +12,9 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { removeScenarioRunnerMetadata } from "./http-conformance-source.ts";
 
-const HTTP_SPECS_VERSION = "0.1.0-alpha.40";
+const HTTP_SPECS_VERSION = "0.1.0-alpha.41";
 const HTTP_SPECS_INTEGRITY =
-  "sha512-TOspHYLAoR0iKFlYEKYRUbjtOaHvhT//m+IrgAtfVmk1FPfA6Qoap7wiI7kk46xT+E/uKsyyTAfNMMbiQsn0+w==";
+  "sha512-/2S4irzCLOz7agQcARQuG5135oS1rV8X2QKXSczI4QewxQ9ZaeFnlQ12uEnNj2dd7wXX3iZz004sDQKXMhxGqA==";
 const HTTP_SPECS_PACKAGE = `@typespec/http-specs@${HTTP_SPECS_VERSION}`;
 const HTTP_SPECS_TARBALL = `typespec-http-specs-${HTTP_SPECS_VERSION}.tgz`;
 const SCENARIOS = [
