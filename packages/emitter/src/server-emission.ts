@@ -18,7 +18,7 @@ import {
   getOperationNamespaces,
   type EmittedHintEntry,
 } from "./emit-server-hints.js";
-import { getSharedRouteSelections, type RouteSelectionEmission } from "./route-selection.js";
+import { getRouteSelections, type RouteSelectionEmission } from "./route-selection.js";
 import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
 
 export interface ServerEmission {
@@ -62,7 +62,7 @@ export function buildServerEmission(
   httpOperations: HttpOperation[],
 ): ServerEmission {
   const operationIds = allocateOperationIds(ctx, httpOperations);
-  const routeSelections = getSharedRouteSelections(ctx, httpOperations);
+  const routeSelections = getRouteSelections(ctx, httpOperations);
   const rawGroups = groupOperations(ctx, httpOperations);
   const interfaceProperties = new Set(
     rawGroups

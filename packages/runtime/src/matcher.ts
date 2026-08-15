@@ -30,10 +30,18 @@ export interface RouteHeaderConstraint {
   readonly kind?: "exact" | "media-type";
 }
 
-/** Explicit request metadata that selects one operation among a shared route. */
+/** One exact, single-valued query field required for route selection. */
+export interface RouteQueryConstraint {
+  readonly name: string;
+  readonly value: string;
+}
+
+/** Explicit request metadata that must match before an operation can be selected. */
 export interface RouteSelection {
   /** All header constraints must match the request. */
-  readonly headers: readonly RouteHeaderConstraint[];
+  readonly headers?: readonly RouteHeaderConstraint[];
+  /** All query constraints must occur exactly once with their declared value. */
+  readonly query?: readonly RouteQueryConstraint[];
 }
 
 /** Route registration accepted by the built-in matchers. */
@@ -43,7 +51,7 @@ export interface RouteMatcherInput<R> {
   readonly path: string;
   /** Structured matcher input. Preferred whenever available. */
   readonly routePattern?: RoutePattern;
-  /** Required request metadata used only to distinguish duplicate route patterns. */
+  /** Required request metadata used to constrain or distinguish route patterns. */
   readonly selection?: RouteSelection;
   /** Optional human-readable identity included in conflict diagnostics. */
   readonly label?: string;
@@ -58,5 +66,10 @@ export interface RouteMatch<R> {
 
 /** Strategy interface for matching HTTP method/path pairs to route values. */
 export interface RouteMatcher<R> {
-  match(method: string, pathname: string, headers?: Headers): RouteMatch<R> | null;
+  match(
+    method: string,
+    pathname: string,
+    headers?: Headers,
+    query?: URLSearchParams,
+  ): RouteMatch<R> | null;
 }

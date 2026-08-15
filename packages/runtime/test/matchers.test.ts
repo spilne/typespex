@@ -625,6 +625,71 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       }
     });
 
+    test("dispatches routes by exact single-valued query constraints", () => {
+      const routes = [
+        {
+          method: "GET",
+          path: "/reports/:reportId",
+          selection: { query: [{ name: "view", value: "detailed" }] },
+          route: "detailed",
+        },
+        {
+          method: "GET",
+          path: "/reports/:id",
+          selection: { query: [{ name: "view", value: "summary" }] },
+          route: "summary",
+        },
+      ];
+
+      for (const ordered of [routes, [...routes].reverse()]) {
+        const selected = create(ordered);
+        expect(
+          selected.match(
+            "GET",
+            "/reports/r-1",
+            undefined,
+            new URLSearchParams("ignored=x&v%69ew=summary"),
+          ),
+        ).toEqual({ route: "summary", pathParams: { id: "r-1" } });
+        expect(
+          selected.match("GET", "/reports/r-2", undefined, new URLSearchParams("view=detailed")),
+        ).toEqual({ route: "detailed", pathParams: { reportId: "r-2" } });
+        expect(selected.match("GET", "/reports/r-3", undefined, new URLSearchParams())).toBeNull();
+        expect(
+          selected.match(
+            "GET",
+            "/reports/r-4",
+            undefined,
+            new URLSearchParams("view=summary&view=summary"),
+          ),
+        ).toBeNull();
+      }
+    });
+
+    test("enforces a query constraint on a single route", () => {
+      const constrained = create([
+        {
+          method: "GET",
+          path: "/status",
+          selection: { query: [{ name: "fixed", value: "true" }] },
+          route: "status",
+        },
+      ]);
+
+      expect(
+        constrained.match(
+          "GET",
+          "/status",
+          undefined,
+          new URLSearchParams("fixed=true&other=value"),
+        )?.route,
+      ).toBe("status");
+      expect(constrained.match("GET", "/status", undefined, new URLSearchParams())).toBeNull();
+      expect(
+        constrained.match("GET", "/status", undefined, new URLSearchParams("fixed=false")),
+      ).toBeNull();
+    });
+
     test("dispatches shared routes using media-type semantics", () => {
       const shared = create([
         {
@@ -693,6 +758,41 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
             selection: { headers: [{}] },
             route: "invalid",
           } as any,
+        ]),
+      ).toThrow("Invalid route selection: GET /reports");
+    });
+
+    test("rejects overlapping and malformed query route selectors", () => {
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/reports",
+            selection: { query: [{ name: "left", value: "one" }] },
+            route: "left",
+          },
+          {
+            method: "GET",
+            path: "/reports",
+            selection: { query: [{ name: "right", value: "two" }] },
+            route: "right",
+          },
+        ]),
+      ).toThrow("Duplicate route: GET /reports");
+
+      expect(() =>
+        create([
+          {
+            method: "GET",
+            path: "/reports",
+            selection: {
+              query: [
+                { name: "view", value: "summary" },
+                { name: "view", value: "detailed" },
+              ],
+            },
+            route: "invalid",
+          },
         ]),
       ).toThrow("Invalid route selection: GET /reports");
     });

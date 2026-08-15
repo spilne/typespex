@@ -110,8 +110,9 @@ function finishMatch<R>(
   stored: StoredRoute<R>,
   captured: readonly string[],
   headers?: Headers,
+  query?: URLSearchParams,
 ): RouteMatch<R> | null {
-  const selected = selectRouteVariant(stored.variants, headers);
+  const selected = selectRouteVariant(stored.variants, headers, query);
   if (!selected) return null;
   if (selected.parameterNames.length === 0) {
     return { route: selected.route, pathParams: EMPTY_PARAMS };
@@ -138,10 +139,11 @@ function search<R>(
   trailingSlash: boolean,
   captured: string[],
   headers?: Headers,
+  query?: URLSearchParams,
 ): RankedMatch<R> | undefined {
   if (segmentIndex === segments.length) {
     const stored = node.routes.get(trailingSlash);
-    return stored ? { match: finishMatch(stored, captured, headers), ranks: [] } : undefined;
+    return stored ? { match: finishMatch(stored, captured, headers, query), ranks: [] } : undefined;
   }
 
   const segment = segments[segmentIndex]!;
@@ -154,6 +156,7 @@ function search<R>(
       trailingSlash,
       captured,
       headers,
+      query,
     );
     if (result) return { match: result.match, ranks: [0, ...result.ranks] };
   }
@@ -168,7 +171,15 @@ function search<R>(
       const [start, end] = range!;
       captured.push(rawSegmentSlice(segment, start, end));
     }
-    const result = search(edge.child, segments, segmentIndex + 1, trailingSlash, captured, headers);
+    const result = search(
+      edge.child,
+      segments,
+      segmentIndex + 1,
+      trailingSlash,
+      captured,
+      headers,
+      query,
+    );
     captured.length = capturedLength;
     if (!result) continue;
     const ranked = { match: result.match, ranks: [1, ...result.ranks] };
@@ -180,7 +191,15 @@ function search<R>(
 
   if (node.param) {
     captured.push(segment.raw);
-    const result = search(node.param, segments, segmentIndex + 1, trailingSlash, captured, headers);
+    const result = search(
+      node.param,
+      segments,
+      segmentIndex + 1,
+      trailingSlash,
+      captured,
+      headers,
+      query,
+    );
     captured.pop();
     if (result) return { match: result.match, ranks: [2, ...result.ranks] };
   }
@@ -191,7 +210,15 @@ function search<R>(
         .map(({ raw }) => raw)
         .join("/"),
     );
-    const result = search(node.rest, segments, segments.length, trailingSlash, captured, headers);
+    const result = search(
+      node.rest,
+      segments,
+      segments.length,
+      trailingSlash,
+      captured,
+      headers,
+      query,
+    );
     captured.pop();
     if (result) return { match: result.match, ranks: [3, ...result.ranks] };
   }
@@ -212,11 +239,13 @@ export function createRadixMatcher<R>(
   }
 
   return {
-    match(method, pathname, headers) {
+    match(method, pathname, headers, query) {
       const root = roots.get(method);
       const parsed = canonicalizePathname(pathname);
       if (!root || !parsed) return null;
-      return search(root, parsed.segments, 0, parsed.trailingSlash, [], headers)?.match ?? null;
+      return (
+        search(root, parsed.segments, 0, parsed.trailingSlash, [], headers, query)?.match ?? null
+      );
     },
   };
 }

@@ -130,6 +130,7 @@ function regexLookup<R>(
   compiled: CompiledMethodRouter<R>,
   pathname: string,
   headers?: Headers,
+  query?: URLSearchParams,
 ): RouteMatch<R> | null {
   const canonical = canonicalizePathname(pathname);
   if (!canonical) return null;
@@ -140,7 +141,7 @@ function regexLookup<R>(
     if (match[index] === undefined) continue;
     const info = compiled.groupToRoute[index];
     if (!info) continue;
-    const selected = selectRouteVariant(info.routes, headers);
+    const selected = selectRouteVariant(info.routes, headers, query);
     if (!selected) return null;
 
     if (selected.parameterNames.length === 0) {
@@ -173,9 +174,9 @@ export function createRegexMatcher<R>(
   }
 
   return {
-    match(method, pathname, headers) {
+    match(method, pathname, headers, query) {
       const router = compiled.get(method);
-      return router ? regexLookup(router, pathname, headers) : null;
+      return router ? regexLookup(router, pathname, headers, query) : null;
     },
   };
 }

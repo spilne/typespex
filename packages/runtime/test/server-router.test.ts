@@ -202,6 +202,48 @@ describe("createHttpRouter", () => {
     );
   });
 
+  test("matches fixed query constraints before decoding or fallthrough", async () => {
+    const operation = makeOperation<{}, { matched: true }>({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "constrained",
+          operationId: "Query.constrained",
+          method: "GET",
+          path: "/query",
+          routeSelection: { query: [{ name: "fixed", value: "true" }] },
+          hints: emptyHints(),
+        },
+      },
+      decodeInput() {
+        return Either.right({});
+      },
+      encodeResult(result) {
+        return Response.json(result, { status: 200 });
+      },
+    });
+    const router = createHttpRouter([
+      bindRoute(operation, async () => ({ matched: true as const })),
+    ]);
+
+    const matched = await router.handle(
+      new Request("http://localhost/query?other=value&f%69xed=tr%75e"),
+    );
+    expect(matched.status).toBe(200);
+    expect(await matched.json()).toEqual({ matched: true });
+    expect((await router.handle(new Request("http://localhost/query"))).status).toBe(404);
+    expect((await router.handle(new Request("http://localhost/query?fixed=false"))).status).toBe(
+      404,
+    );
+    expect(
+      (await router.handle(new Request("http://localhost/query?fixed=true&f%69xed=true"))).status,
+    ).toBe(404);
+    expect(
+      await router.tryHandle(new Request("http://localhost/query?fixed=false")),
+    ).toBeUndefined();
+  });
+
   test("canonicalizes path spelling before route selection while decoding captures once", async () => {
     const parameter = makeOperation({
       endpoint: {

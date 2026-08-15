@@ -369,6 +369,12 @@ function checkHttpParameter(
     return;
   }
 
+  const literalQueryConflict = literalQueryConflictReason(ctx, operation, parameter);
+  if (literalQueryConflict) {
+    reportUnsupportedParameter(ctx, parameter, literalQueryConflict);
+    return;
+  }
+
   const explodedModelProperties = getExplodedQueryModelProperties(ctx, parameter);
   if (explodedModelProperties) {
     const conflict = explodedQueryModelConflictReason(
@@ -410,6 +416,26 @@ function checkHttpParameter(
       "allowReserved path values require one required scalar in a complete terminal path segment",
     );
   }
+}
+
+function literalQueryConflictReason(
+  ctx: EmitterCtx,
+  operation: HttpOperation,
+  parameter: HttpOperationParameter,
+): string | undefined {
+  if (parameter.type !== "query" || isExplodedQueryRecord(ctx, parameter)) return undefined;
+  const lowered = lowerUriTemplate(operation);
+  if (!lowered.ok || !lowered.value.literalQuery) return undefined;
+
+  const literalNames = new Set(lowered.value.literalQuery.map(({ name }) => name));
+  const explodedProperties = getExplodedQueryModelProperties(ctx, parameter);
+  const claimedNames = explodedProperties
+    ? explodedProperties.map(({ name }) => name)
+    : [parameter.name];
+  const conflict = claimedNames.find((name) => literalNames.has(name));
+  return conflict === undefined
+    ? undefined
+    : `query parameter ${JSON.stringify(parameter.param.name)} conflicts with fixed literal query field ${JSON.stringify(conflict)}`;
 }
 
 function explodedQueryModelConflictReason(

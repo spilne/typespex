@@ -42,6 +42,7 @@ const SCENARIOS = [
   "payload/json-merge-patch",
   "payload/media-type",
   "payload/multipart",
+  "routes",
   "serialization/encoded-name/json",
   "type/array",
   "type/dictionary",
