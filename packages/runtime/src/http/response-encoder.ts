@@ -104,6 +104,117 @@ function jsonlResponseBody<A>(
   );
 }
 
+/** One server-sent event after its payload has been serialized for the wire. */
+export interface SseEvent {
+  /** Named SSE event type. Omit this field for the default `message` event. */
+  readonly event?: string;
+  /** Serialized event payload. Each normalized line is emitted as one `data:` field. */
+  readonly data: string;
+  /** Close the stream after emitting this event. */
+  readonly terminal?: boolean;
+}
+
+function sseResponseEncoder<A = SseEvent>(
+  status = 200,
+  transformEvent?: (value: A) => SseEvent,
+): ResponseEncoder<AsyncIterable<A>> {
+  return ResponseEncoder.of((values) => {
+    const response = responseInit(status);
+    return isBodyForbiddenStatus(status)
+      ? new Response(null, response)
+      : new Response(sseResponseBody(values, transformEvent), {
+          ...response,
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        });
+  });
+}
+
+function sseResponseBody<A>(
+  values: AsyncIterable<A>,
+  transformEvent?: (value: A) => SseEvent,
+): ReadableStream<Uint8Array> {
+  if (
+    typeof values !== "object" ||
+    values === null ||
+    typeof values[Symbol.asyncIterator] !== "function"
+  ) {
+    throw new TypeError("SSE responses require an AsyncIterable value.");
+  }
+
+  const iterator = values[Symbol.asyncIterator]();
+  const textEncoder = new TextEncoder();
+  let finished = false;
+
+  const closeIterator = async (): Promise<void> => {
+    if (finished) return;
+    finished = true;
+    await iterator.return?.();
+  };
+
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const next = await iterator.next();
+          if (next.done) {
+            finished = true;
+            controller.close();
+            return;
+          }
+
+          const event = transformEvent
+            ? transformEvent(next.value)
+            : (next.value as unknown as SseEvent);
+          const encoded = encodeSseEvent(event);
+          controller.enqueue(textEncoder.encode(encoded.frame));
+          if (encoded.terminal) {
+            await closeIterator();
+            controller.close();
+          }
+        } catch (error) {
+          try {
+            await closeIterator();
+          } catch {
+            // Preserve the iteration, transformation, framing, or terminal cleanup failure.
+          }
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await closeIterator();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+function encodeSseEvent(value: SseEvent): { readonly frame: string; readonly terminal: boolean } {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("SSE events must be objects.");
+  }
+  const { data, event, terminal } = value;
+  if (typeof data !== "string") {
+    throw new TypeError("SSE event data must be a string.");
+  }
+  if (event !== undefined && typeof event !== "string") {
+    throw new TypeError("SSE event names must be strings when provided.");
+  }
+  if (event !== undefined && /[\0\r\n]/u.test(event)) {
+    throw new TypeError("SSE event names cannot contain null or newline characters.");
+  }
+  if (terminal !== undefined && typeof terminal !== "boolean") {
+    throw new TypeError("SSE terminal markers must be booleans when provided.");
+  }
+
+  const eventField = event === undefined ? "" : `event: ${event}\n`;
+  const dataFields = data
+    .replace(/\r\n?/gu, "\n")
+    .split("\n")
+    .map((line) => `data: ${line}\n`)
+    .join("");
+  return { frame: `${eventField}${dataFields}\n`, terminal: terminal === true };
+}
+
 function emptyResponseEncoder(status = 204, init?: ResponseInit): ResponseEncoder<void> {
   return ResponseEncoder.of(() => new Response(null, responseInit(status, init)));
 }
@@ -571,6 +682,7 @@ function unsupportedResponseEncoder<A>(reason: string): ResponseEncoder<A> {
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
   jsonl: jsonlResponseEncoder,
+  sse: sseResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
   empty: emptyResponseEncoder,
   xml: xmlResponseEncoder,

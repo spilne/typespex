@@ -29,6 +29,13 @@ streamed body-limit failures surface during iteration, so handlers must consume 
 iterable before returning. `ResponseEncoders.jsonl` performs the inverse operation for response
 streams while honoring downstream backpressure.
 
+## Server-sent event streams
+
+`ResponseEncoders.sse` converts an `AsyncIterable` into a `text/event-stream` response. Its event
+transform returns serialized `data`, an optional named `event`, and an optional `terminal` marker.
+The encoder normalizes multiline data into individual `data:` fields, honors downstream
+backpressure, and closes the source iterator after cancellation, failure, or a terminal event.
+
 ## Shared-route matching
 
 The built-in regex and radix matchers accept a `selection` on structurally duplicate route inputs.
