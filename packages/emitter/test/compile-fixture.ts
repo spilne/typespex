@@ -1,7 +1,9 @@
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -368,16 +370,25 @@ function fingerprintBuildInputs(inputs: readonly string[]): string {
 }
 
 function updateFingerprint(hash: ReturnType<typeof createHash>, path: string): void {
-  const entry = statSync(path);
   hash.update(path);
   hash.update("\0");
-  if (!entry.isDirectory()) {
-    hash.update(readFileSync(path));
+
+  let children: string[];
+  try {
+    children = readdirSync(path).sort();
+  } catch (error) {
+    if (!isNotDirectoryError(error)) throw error;
+    const file = openSync(path, "r");
+    try {
+      hash.update(readFileSync(file));
+    } finally {
+      closeSync(file);
+    }
     hash.update("\0");
     return;
   }
 
-  for (const child of readdirSync(path).sort()) {
+  for (const child of children) {
     updateFingerprint(hash, join(path, child));
   }
 }
@@ -454,4 +465,8 @@ function releaseBuildLock(lockDir: string, token: string): void {
 
 function isAlreadyExistsError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function isNotDirectoryError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "ENOTDIR";
 }
