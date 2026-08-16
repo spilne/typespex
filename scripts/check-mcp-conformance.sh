@@ -32,6 +32,7 @@ bun run --filter @typespex/mcp-server build
 bun run --filter @typespex/mcp-http-bridge build
 bun run --filter @typespex/mcp-transport-http build
 bun run --filter @typespex/mcp-transport-stdio build
+bun run --filter @typespex/http-server build
 bun run --filter @typespex/adapter-node build
 bun run --filter @typespex/mcp-emitter build
 

@@ -73,6 +73,10 @@ describe("release package validation", () => {
       dependencies: ["@typespex/codec", "@typespex/http-client"],
       peerDependencies: ["@typespex/mcp-server"],
     });
+    expect(RELEASE_PACKAGE_BOUNDARIES["@typespex/adapter-express"]).toEqual({
+      dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
+      peerDependencies: ["express"],
+    });
   });
 
   test("keeps release preflight aligned with the required quality gates", () => {
