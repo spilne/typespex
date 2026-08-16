@@ -1,0 +1,7 @@
+emit:
+  - "@typespex/mcp"
+options:
+  "@typespex/mcp":
+    emitter-output-dir: "{output-dir}"
+    application-module: "../../mcp-application.js"
+    mode: [native, http-bridge]
