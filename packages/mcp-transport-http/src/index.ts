@@ -56,6 +56,8 @@ export function createTypespexHttpHandler(
   options: McpHttpServerOptions = {},
 ): McpHttpHandler {
   const resolved = resolveMcpHttpServerOptions(options);
+  const allowedHosts = [...resolved.allowedHosts];
+  const allowedOrigins = [...resolved.allowedOrigins];
   const handler = createMcpHandler(factory, {
     legacy: resolved.legacy,
     responseMode: resolved.responseMode,
@@ -70,10 +72,10 @@ export function createTypespexHttpHandler(
       }
 
       const rejected =
-        hostHeaderValidationResponse(request, [...resolved.allowedHosts]) ??
+        hostHeaderValidationResponse(request, allowedHosts) ??
         (resolved.exactOriginValidation
-          ? exactOriginValidationResponse(request, resolved.allowedOrigins)
-          : originValidationResponse(request, [...resolved.allowedOrigins]));
+          ? exactOriginValidationResponse(request, allowedOrigins)
+          : originValidationResponse(request, allowedOrigins));
       if (rejected) return rejected;
 
       let authInfo = requestOptions?.authInfo;
