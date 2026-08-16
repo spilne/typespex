@@ -31,6 +31,7 @@ const emitterOptionsSchema: JSONSchemaType<McpEmitterOptions> = {
     launchers: {
       type: "array",
       items: { type: "string", enum: ["stdio", "node", "bun", "express", "hono"] },
+      uniqueItems: true,
       nullable: true,
     },
     "service-output": {

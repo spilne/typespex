@@ -10,7 +10,7 @@
     "audit:dependencies": "bun audit --audit-level=moderate --ignore=GHSA-w5hq-g745-h8pq",
     "bench:http": "./bench/run-bench.sh",
     "bench:matchers": "bun run build && bun run bench/bench-matchers.ts",
-    "build": "bun run --filter '*' build",
+    "build": "bun run --filter @typespex/codec build && bun run --filter @typespex/mcp-server build && bun run --filter '*' build",
     "clean": "bun run --filter '*' clean",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

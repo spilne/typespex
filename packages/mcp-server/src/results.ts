@@ -1,6 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 const RESULT_TAG = Symbol.for("@typespex/mcp-server/result");
+const TOOL_ERROR_TAG = Symbol.for("@typespex/mcp-server/tool-error");
 
 export type McpContent = CallToolResult["content"];
 
@@ -41,5 +42,18 @@ export class McpToolError extends Error {
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "McpToolError";
+    Object.defineProperty(this, TOOL_ERROR_TAG, { value: true });
   }
+}
+
+/** Recognizes operational errors across duplicate module instances. */
+export function isMcpToolError(value: unknown): value is McpToolError {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<PropertyKey, unknown>;
+  return (
+    candidate[TOOL_ERROR_TAG] === true &&
+    typeof candidate.message === "string" &&
+    typeof candidate.options === "object" &&
+    candidate.options !== null
+  );
 }

@@ -136,8 +136,8 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
     peerDependencies: ["@modelcontextprotocol/server"],
   },
   "@typespex/mcp-http-bridge": {
-    dependencies: ["@typespex/codec", "@typespex/http-client", "@typespex/mcp-server"],
-    peerDependencies: [],
+    dependencies: ["@typespex/codec", "@typespex/http-client"],
+    peerDependencies: ["@typespex/mcp-server"],
   },
   "@typespex/mcp-transport-http": {
     dependencies: ["@typespex/mcp-server"],

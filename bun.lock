@@ -218,12 +218,15 @@
       "dependencies": {
         "@typespex/codec": "workspace:*",
         "@typespex/http-client": "workspace:*",
-        "@typespex/mcp-server": "workspace:*",
       },
       "devDependencies": {
         "@modelcontextprotocol/client": "2.0.0",
         "@modelcontextprotocol/server": "2.0.0",
+        "@typespex/mcp-server": "workspace:*",
         "typescript": "^5.7.0",
+      },
+      "peerDependencies": {
+        "@typespex/mcp-server": "workspace:*",
       },
     },
     "packages/mcp-server": {

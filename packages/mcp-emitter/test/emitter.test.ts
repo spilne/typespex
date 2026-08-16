@@ -376,6 +376,24 @@ describe("@typespex/mcp emitter", () => {
     expect(result.stdout + result.stderr).toContain("both");
   });
 
+  test("rejects duplicate launchers as an emitter option schema error", () => {
+    const result = compileFixtureWithDiagnostics(
+      "duplicate-launchers",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        @mcpServer(#{ version: "1.0.0" }) namespace Values {
+          @tool op read(): string;
+        }
+      `,
+      `    application-module: "./application.js"\n    launchers: [node, node]\n`,
+    );
+    const diagnostics = result.stdout + result.stderr;
+    expect(diagnostics).toContain("launchers");
+    expect(diagnostics).toContain("duplicate");
+    expect(diagnostics).not.toContain("same artifact path");
+  });
+
   test("preserves literal query fields and rejects fragment-only HTTP data", () => {
     const query = compileFixture(
       "bridge-literal-query",

@@ -14,7 +14,13 @@ import type {
   MaybePromise,
   NativeMcpApplication,
 } from "./application.js";
-import { isMcpToolResult, McpToolError, type McpContent, type McpToolResult } from "./results.js";
+import {
+  isMcpToolError,
+  isMcpToolResult,
+  McpToolError,
+  type McpContent,
+  type McpToolResult,
+} from "./results.js";
 import type { TypeSpecSchema } from "./schema.js";
 
 export type McpToolHandler<Input, Success, Error = never> = (
@@ -156,7 +162,7 @@ async function executeTool(
     );
     return normalizeToolResult(tool, value);
   } catch (error) {
-    if (error instanceof McpToolError) return operationalErrorResult(error);
+    if (isMcpToolError(error)) return operationalErrorResult(error);
     try {
       await application.onUnhandledError?.(error, context, tool.name);
     } catch {
@@ -169,7 +175,7 @@ async function executeTool(
   }
 }
 
-const classifiedWireResultTag: unique symbol = Symbol("typespex.classified-wire-result");
+const classifiedWireResultTag = Symbol.for("@typespex/mcp-server/wire-result");
 /** @internal Classified wire result returned by a generated protocol bridge. */
 export interface McpWireToolResult {
   readonly [classifiedWireResultTag]: true;
@@ -196,7 +202,7 @@ function isClassifiedWireResult(value: unknown): value is McpWireToolResult {
     typeof value === "object" &&
     value !== null &&
     classifiedWireResultTag in value &&
-    value[classifiedWireResultTag] === true
+    (value as Record<PropertyKey, unknown>)[classifiedWireResultTag] === true
   );
 }
 
@@ -207,7 +213,7 @@ async function normalizeToolResult(
   if (isClassifiedWireResult(value)) {
     return normalizeClassifiedWireResult(tool, value);
   }
-  if (value instanceof McpToolError) return operationalErrorResult(value);
+  if (isMcpToolError(value)) return operationalErrorResult(value);
   if (isMcpToolResult(value)) {
     return value.kind === "success"
       ? encodeSuccess(tool, value.value, value.content)

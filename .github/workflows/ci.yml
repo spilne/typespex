@@ -166,7 +166,18 @@ jobs:
         run: |
           version="$(node ./scripts/resolve-typespec-version.mjs "${{ matrix.typespec-channel }}")"
           streams_range="$(npm view "@typespec/http@$version" 'peerDependencies.@typespec/streams')"
-          streams_version="$(npm view "@typespec/streams@$streams_range" version)"
+          test -n "$streams_range"
+          streams_version="$(
+            npm view "@typespec/streams@$streams_range" version --json |
+              node -e '
+                const value = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+                const version = Array.isArray(value) ? value.at(-1) : value;
+                if (typeof version !== "string" || version.length === 0) {
+                  throw new Error("No @typespec/streams version satisfies the declared peer range.");
+                }
+                process.stdout.write(version);
+              '
+          )"
           printf 'TYPESPEC_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
           printf 'TYPESPEC_STREAMS_VERSION=%s\n' "$streams_version" >> "$GITHUB_ENV"
           printf 'Testing MCP generation with TypeSpec %s and streams %s\n' "$version" "$streams_version"

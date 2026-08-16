@@ -260,6 +260,91 @@ describe("MCP HTTP bridge", () => {
     ).rejects.toThrow("must use HTTP or HTTPS");
   });
 
+  test("enforces the upstream allowlist on the resolved base URL before fetch", async () => {
+    let fetched = false;
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "allowlisted-base",
+      method: "GET",
+      path: "/value",
+      responses: [{ statuses: [200], kind: "json" }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+    };
+
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        allowedUpstreamOrigins: ["https://allowed.example.test"],
+        fetch: (async () => {
+          fetched = true;
+          return Response.json({});
+        }) as typeof fetch,
+      }),
+    ).rejects.toThrow("Resolved upstream origin https://api.example.test is not allowed");
+    expect(fetched).toBe(false);
+  });
+
+  test("wires cross-origin redirect policy and strips query credentials", async () => {
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "redirected",
+      method: "GET",
+      path: "/start",
+      responses: [{ statuses: [200], kind: "json" }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+      auth: [
+        {
+          schemes: [{ id: "query", type: "apiKey", location: "query", name: "api_key" }],
+        },
+      ],
+    };
+    const requests: Request[] = [];
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return requests.length === 1
+        ? new Response(null, {
+            status: 302,
+            headers: {
+              Location: "https://redirect.example.test/value?api_key=redirected&keep=yes",
+            },
+          })
+        : Response.json({ ok: true });
+    }) as typeof fetch;
+    const authProvider = staticHttpAuthProvider({ query: "secret" });
+
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        allowedUpstreamOrigins: ["https://api.example.test"],
+        authProvider,
+        fetch: fetchMock,
+      }),
+    ).rejects.toThrow("Rejected cross-origin redirect to https://redirect.example.test");
+    expect(requests).toHaveLength(1);
+
+    requests.length = 0;
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        allowedUpstreamOrigins: ["https://api.example.test", "https://redirect.example.test"],
+        authProvider,
+        fetch: fetchMock,
+      }),
+    ).resolves.toMatchObject({ kind: "success", value: { ok: true } });
+    expect(requests).toHaveLength(2);
+    expect(new URL(requests[0]!.url).searchParams.get("api_key")).toBe("secret");
+    expect(new URL(requests[1]!.url).searchParams.has("api_key")).toBe(false);
+    expect(new URL(requests[1]!.url).searchParams.get("keep")).toBe("yes");
+
+    requests.length = 0;
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        authProvider,
+        fetch: fetchMock,
+        maxRedirects: 0,
+      }),
+    ).rejects.toThrow("Upstream redirect limit exceeded");
+    expect(requests).toHaveLength(1);
+  });
+
   test("normalizes invalid upstream servers and numeric limits as operational errors", async () => {
     const operation: HttpBridgeOperation = {
       version: 1,

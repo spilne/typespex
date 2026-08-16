@@ -5,6 +5,7 @@ import {
   createGeneratedMcpServer,
   createTypeSpecSchema,
   defineMcpApplication,
+  isMcpToolError,
   McpToolError,
   mcpError,
   mcpSuccess,
@@ -22,6 +23,24 @@ afterEach(async () => {
 });
 
 describe("generated MCP server", () => {
+  test("uses registry symbols for cross-instance bridge results and operational errors", () => {
+    const wireResult = mcpWireSuccess({ value: "wire" });
+    expect(Object.getOwnPropertySymbols(wireResult)).toContain(
+      Symbol.for("@typespex/mcp-server/wire-result"),
+    );
+
+    const operationalError = new McpToolError("Unavailable.");
+    expect(Object.getOwnPropertySymbols(operationalError)).toContain(
+      Symbol.for("@typespex/mcp-server/tool-error"),
+    );
+    const foreignError = Object.assign(new Error("Foreign package instance."), { options: {} });
+    Object.defineProperty(foreignError, Symbol.for("@typespex/mcp-server/tool-error"), {
+      value: true,
+    });
+    expect(isMcpToolError(foreignError)).toBe(true);
+    expect(isMcpToolError({ message: "spoofed", options: {} })).toBe(false);
+  });
+
   test("preserves typed application definitions without wrapping them", () => {
     const application = { handlers: {} };
     expect(defineMcpApplication(application)).toBe(application);

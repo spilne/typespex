@@ -69,6 +69,10 @@ describe("release package validation", () => {
         RELEASE_PACKAGES.find((pkg) => pkg.name === "@typespex/adapter-hono")!,
       ),
     ).toThrow("@typespex/adapter-hono dependencies");
+    expect(RELEASE_PACKAGE_BOUNDARIES["@typespex/mcp-http-bridge"]).toEqual({
+      dependencies: ["@typespex/codec", "@typespex/http-client"],
+      peerDependencies: ["@typespex/mcp-server"],
+    });
   });
 
   test("keeps release preflight aligned with the required quality gates", () => {
