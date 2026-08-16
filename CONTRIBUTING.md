@@ -1,7 +1,7 @@
 # Contributing to TypeSpex
 
 Thank you for improving TypeSpex. Contributions should preserve the TypeSpec contract at every
-generated and runtime boundary rather than adding framework-specific behavior to application code.
+generated and execution boundary rather than adding framework-specific behavior to application code.
 
 ## Before opening an issue
 
@@ -23,7 +23,7 @@ bun run build
 bun run test
 ```
 
-The packages form one workspace. Emitter changes commonly require corresponding runtime behavior,
+The packages form one workspace. Emitter changes commonly require corresponding server behavior,
 generated-output assertions, and an end-to-end route test.
 
 ## Pull requests
@@ -36,7 +36,7 @@ generated-output assertions, and an end-to-end route test.
 - Do not create tags, publish packages, or modify release automation as part of an ordinary change.
 
 Run the relevant focused tests while developing. Before requesting merge, run the complete local
-quality gates when the change can affect generated or runtime behavior:
+quality gates when the change can affect generated or server behavior:
 
 ```sh
 bun run format:check

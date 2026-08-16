@@ -87,8 +87,9 @@ const SCENARIOS = [
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
-const emitterDir = resolve(repoRoot, "packages/emitter");
-const typeScriptCli = resolve(repoRoot, "packages/shim-node/node_modules/typescript/bin/tsc");
+process.env.TYPESPEC_SKIP_COMPILER_RESOLVE = "1";
+const emitterDir = resolve(repoRoot, "packages/http-emitter");
+const typeScriptCli = resolve(repoRoot, "packages/adapter-node/node_modules/typescript/bin/tsc");
 // Keep transformed inputs under the example workspace so TypeSpec resolves the
 // same compiler and HTTP library versions used by the repository.
 const workDir = mkdtempSync(join(repoRoot, "example/tmp-typespex-http-conformance-"));
@@ -96,7 +97,10 @@ const workDir = mkdtempSync(join(repoRoot, "example/tmp-typespex-http-conformanc
 try {
   assertFileExists(compilerCli, "TypeSpec compiler");
   assertFileExists(resolve(emitterDir, "dist/index.js"), "built emitter");
-  assertFileExists(resolve(repoRoot, "packages/runtime/dist/server.d.ts"), "runtime declarations");
+  assertFileExists(
+    resolve(repoRoot, "packages/http-server/dist/index.d.ts"),
+    "server declarations",
+  );
   assertFileExists(typeScriptCli, "TypeScript compiler");
 
   run(
@@ -170,8 +174,7 @@ try {
           lib: ["ES2022", "DOM"],
           baseUrl: repoRoot,
           paths: {
-            "@typespex/runtime": ["packages/runtime/dist/index.d.ts"],
-            "@typespex/runtime/server": ["packages/runtime/dist/server.d.ts"],
+            "@typespex/http-server": ["packages/http-server/dist/index.d.ts"],
           },
         },
         files: generatedFiles,

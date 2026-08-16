@@ -116,14 +116,17 @@ jobs:
 
       - name: Install aligned TypeSpec dependencies
         run: |
-          bun add --cwd packages/emitter --dev --exact \
+          bun add --cwd packages/http-emitter --dev --exact \
+            "@typespec/compiler@$TYPESPEC_VERSION" \
+            "@typespec/http@$TYPESPEC_VERSION"
+          bun add --cwd packages/compiler-core --dev --exact \
             "@typespec/compiler@$TYPESPEC_VERSION" \
             "@typespec/http@$TYPESPEC_VERSION"
           bun add --cwd example --exact \
             "@typespec/compiler@$TYPESPEC_VERSION" \
             "@typespec/http@$TYPESPEC_VERSION"
 
-          for directory in packages/emitter example; do
+          for directory in packages/http-emitter packages/compiler-core example; do
             for dependency in compiler http; do
               actual="$(node -p "require('./$directory/node_modules/@typespec/$dependency/package.json').version")"
               test "$actual" = "$TYPESPEC_VERSION"
@@ -155,10 +158,10 @@ jobs:
 
       - name: Install minimum Node type declarations
         run: |
-          bun add --cwd packages/shim-node --dev --exact --no-save \
+          bun add --cwd packages/adapter-node --dev --exact --no-save \
             "@types/node@$NODE_TYPES_VERSION"
 
-          actual="$(bun -p 'require("./packages/shim-node/node_modules/@types/node/package.json").version')"
+          actual="$(bun -p 'require("./packages/adapter-node/node_modules/@types/node/package.json").version')"
           test "$actual" = "$NODE_TYPES_VERSION"
 
       - name: Build against minimum Node type declarations
@@ -189,12 +192,12 @@ jobs:
 
       - name: Import package exports with Node
         run: |
-          for package in runtime emitter shim-bun shim-hono shim-node shim-express; do
+          for package in codec http-client compiler-core http-server http-emitter adapter-bun adapter-hono adapter-node adapter-express; do
             (cd "packages/$package" && node --input-type=module -e "await import('@typespex/$package')")
           done
-          (cd packages/runtime && node --input-type=module -e "await import('@typespex/runtime/server')")
+          (cd packages/compiler-core && node --input-type=module -e "await import('@typespex/compiler-core/unstable')")
 
-      - name: Exercise runtime and Node HTTP adapters
+      - name: Exercise Node HTTP adapters
         run: |
-          node ./packages/shim-node/test/node-smoke.mjs
-          node ./packages/shim-express/test/express-smoke.mjs
+          node ./packages/adapter-node/test/node-smoke.mjs
+          node ./packages/adapter-express/test/express-smoke.mjs

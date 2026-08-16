@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 
-const MINIMUM_TYPESPEC_VERSION = "1.0.0";
+const MINIMUM_TYPESPEC_VERSION = "1.14.0";
 const TYPESPEC_PACKAGES = ["@typespec/compiler", "@typespec/http"];
 
 function readPublishedVersions(packageName) {

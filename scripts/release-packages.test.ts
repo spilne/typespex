@@ -4,16 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   RELEASE_PACKAGES,
+  RELEASE_PACKAGE_BOUNDARIES,
   RELEASE_PREFLIGHT_COMMANDS,
   assertTagMatches,
   parseArguments,
   validatePackedManifest,
+  validatePackageBoundary,
   validateSourceMapDocument,
   validateSourceMaps,
   validateTarEntryTypes,
 } from "./release-packages";
 
-const runtime = RELEASE_PACKAGES[0]!;
+const codec = RELEASE_PACKAGES[0]!;
+const compilerCore = RELEASE_PACKAGES.find((pkg) => pkg.name === "@typespex/compiler-core")!;
 const internalVersions = new Map(RELEASE_PACKAGES.map((pkg) => [pkg.name, "0.1.1"]));
 
 describe("release package validation", () => {
@@ -32,13 +35,34 @@ describe("release package validation", () => {
 
   test("keeps dependency order explicit", () => {
     expect(RELEASE_PACKAGES.map((pkg) => pkg.name)).toEqual([
-      "@typespex/runtime",
-      "@typespex/emitter",
-      "@typespex/shim-bun",
-      "@typespex/shim-hono",
-      "@typespex/shim-node",
-      "@typespex/shim-express",
+      "@typespex/codec",
+      "@typespex/http-client",
+      "@typespex/compiler-core",
+      "@typespex/http-server",
+      "@typespex/http-emitter",
+      "@typespex/adapter-bun",
+      "@typespex/adapter-hono",
+      "@typespex/adapter-node",
+      "@typespex/adapter-express",
     ]);
+  });
+
+  test("keeps every public package dependency boundary explicit", () => {
+    expect(Object.keys(RELEASE_PACKAGE_BOUNDARIES).sort()).toEqual(
+      RELEASE_PACKAGES.map((pkg) => pkg.name).sort(),
+    );
+    expect(() =>
+      validatePackageBoundary(
+        {
+          dependencies: {
+            "@typespex/http-server": "workspace:*",
+            express: "^5.0.0",
+          },
+          peerDependencies: { hono: "^4.0.0" },
+        },
+        RELEASE_PACKAGES.find((pkg) => pkg.name === "@typespex/adapter-hono")!,
+      ),
+    ).toThrow("@typespex/adapter-hono dependencies");
   });
 
   test("keeps release preflight aligned with the required quality gates", () => {
@@ -52,8 +76,8 @@ describe("release package validation", () => {
       { command: "bun", args: ["run", "check:conformance"] },
       { command: "bun", args: ["run", "test"] },
       { command: "bun", args: ["run", "test:coverage"] },
-      { command: "node", args: ["./packages/shim-node/test/node-smoke.mjs"] },
-      { command: "node", args: ["./packages/shim-express/test/express-smoke.mjs"] },
+      { command: "node", args: ["./packages/adapter-node/test/node-smoke.mjs"] },
+      { command: "node", args: ["./packages/adapter-express/test/express-smoke.mjs"] },
     ]);
   });
 
@@ -61,13 +85,14 @@ describe("release package validation", () => {
     expect(() =>
       validatePackedManifest(
         {
-          name: runtime.name,
+          name: compilerCore.name,
           version: "0.1.1",
           license: "MIT",
           files: ["dist", "src", "README.md", "LICENSE"],
-          dependencies: { "@typespex/runtime": "workspace:*" },
+          dependencies: { "@typespex/codec": "workspace:*", oxfmt: "0.62.0" },
+          peerDependencies: { "@typespec/compiler": ">=1.14.0 <2.0.0" },
         },
-        runtime,
+        compilerCore,
         internalVersions,
       ),
     ).toThrow("workspace:");
@@ -98,13 +123,13 @@ describe("release package validation", () => {
   test("reports missing or non-directory dist paths as release errors", () => {
     const root = mkdtempSync(join(tmpdir(), "typespex-release-test-"));
     try {
-      expect(() => validateSourceMaps(join(root, "missing"), runtime.name, root)).toThrow(
+      expect(() => validateSourceMaps(join(root, "missing"), codec.name, root)).toThrow(
         "dist directory is missing or inaccessible",
       );
 
       const file = join(root, "dist");
       writeFileSync(file, "not a directory");
-      expect(() => validateSourceMaps(file, runtime.name, root)).toThrow(
+      expect(() => validateSourceMaps(file, codec.name, root)).toThrow(
         "dist path is not a directory",
       );
     } finally {
@@ -119,7 +144,7 @@ describe("release package validation", () => {
         version: index === RELEASE_PACKAGES.length - 1 ? "0.1.2" : "0.1.1",
       },
     }));
-    expect(() => assertTagMatches("v0.1.1", packages)).toThrow("@typespex/shim-express");
+    expect(() => assertTagMatches("v0.1.1", packages)).toThrow("@typespex/adapter-express");
   });
 
   test("rejects links before extracting release tarballs", () => {
@@ -127,7 +152,7 @@ describe("release package validation", () => {
       validateTarEntryTypes(
         ["package/dist/index.js"],
         ["lrwxr-xr-x 0/0 0 Jan 1 00:00 package/dist/index.js -> ../../../outside"],
-        runtime.name,
+        codec.name,
       ),
     ).toThrow("link or special entry");
 
@@ -138,7 +163,7 @@ describe("release package validation", () => {
           "drwxr-xr-x 0/0 0 Jan 1 00:00 package/dist/",
           "-rw-r--r-- 0/0 1 Jan 1 00:00 package/dist/index.js",
         ],
-        runtime.name,
+        codec.name,
       ),
     ).not.toThrow();
   });

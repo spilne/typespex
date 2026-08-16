@@ -9,7 +9,7 @@ coveragePathIgnorePatterns = [
   "**/dist/**",
   "bench/**",
   "example/**",
-  "packages/emitter/**",
+  "packages/http-emitter/**",
   "scripts/**",
 ]
 

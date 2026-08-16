@@ -10,7 +10,7 @@
     "rootDir": ".",
     "sourceMap": false,
     "types": ["node"],
-    "typeRoots": ["../packages/shim-node/node_modules/@types"]
+    "typeRoots": ["../packages/adapter-node/node_modules/@types"]
   },
   "include": ["release-packages.ts", "check-coverage.ts", "http-conformance-source.ts"]
 }

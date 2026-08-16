@@ -1,4 +1,4 @@
-import type { MatchedRequestContext, Middleware } from "@typespex/runtime/server";
+import type { MatchedRequestContext, Middleware } from "@typespex/http-server";
 import {
   typeSpecAuthHint,
   type TypeSpecAuthentication,

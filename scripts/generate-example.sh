@@ -19,8 +19,8 @@ restore_generated() {
 }
 trap restore_generated EXIT
 
-bun run --filter @typespex/emitter build
-node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/main.tsp \
+bun run --filter @typespex/http-emitter build
+TYPESPEC_SKIP_COMPILER_RESOLVE=1 node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/main.tsp \
   --config example/tspconfig.yaml \
   --output-dir "$output_dir"
 

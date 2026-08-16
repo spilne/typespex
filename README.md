@@ -16,23 +16,37 @@ The project is server-side only. It does not generate clients.
 
 ```text
 TypeSpec service
-    -> @typespex/emitter
+    -> @typespex/http-emitter
     -> generated TypeScript contracts and operations
     -> application handlers
-    -> @typespex/runtime router
+    -> @typespex/http-server router
     -> Bun, Node.js, Express, or Hono adapter
 ```
 
 Request decoding and response encoding are generated from the TypeSpec HTTP contract. The
-runtime matches routes, validates input, invokes middleware and handlers, and encodes the modeled
+server library matches routes, validates input, invokes middleware and handlers, and encodes the modeled
 result as an HTTP response.
+
+## Packages
+
+| Package                     | Purpose                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `@typespex/compiler-core`   | Unstable, protocol-neutral planning utilities for TypeSpex emitter authors.                          |
+| `@typespex/codec`           | Protocol-neutral conversion between validated wire values and semantic TypeScript values.            |
+| `@typespex/http-emitter`    | Compiles TypeSpec HTTP services into typed TypeScript server bindings.                               |
+| `@typespex/http-server`     | Runs generated HTTP operations through routing, decoding, middleware, and response encoding.         |
+| `@typespex/http-client`     | Supplies plan-driven Fetch policy and bounded response primitives for generated clients and bridges. |
+| `@typespex/adapter-node`    | Connects an HTTP server router to Node's built-in HTTP server.                                       |
+| `@typespex/adapter-bun`     | Connects an HTTP server router to `Bun.serve`.                                                       |
+| `@typespex/adapter-express` | Mounts an HTTP server router in Express.                                                             |
+| `@typespex/adapter-hono`    | Mounts an HTTP server router in Hono.                                                                |
 
 ## Prerequisites
 
 | Component                              | Supported version                    |
 | -------------------------------------- | ------------------------------------ |
 | Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`          |
-| TypeSpec compiler and `@typespec/http` | `>=1.0.0 <2.0.0`                     |
+| TypeSpec compiler and `@typespec/http` | `>=1.14.0 <2.0.0`                    |
 | TypeScript                             | `>=5.7 <6`                           |
 | Bun                                    | 1.3.14 is the repository CI baseline |
 | Express                                | 5.x                                  |
@@ -46,7 +60,7 @@ Generated services use the standard Web APIs, including `Request`, `Response`, `
 ### Compatibility policy
 
 The TypeSpec compatibility job tests `@typespec/compiler` and `@typespec/http` as an aligned pair.
-It covers the declared minimum, 1.0.0, and resolves the newest stable 1.x version published by both
+It covers the declared minimum, 1.14.0, and resolves the newest stable 1.x version published by both
 packages on every run. Each pair must build the emitter, compile the representative service in
 `example/`, and typecheck its generated TypeScript. CI also compiles an integrity-pinned slice of
 the upstream `@typespec/http-specs` scenarios with warnings treated as errors, then typechecks every
@@ -92,17 +106,17 @@ available. The installation commands are shown for API review and do not work be
 
 ### Planned installation
 
-Install the compiler, emitter, runtime, and one hosting adapter:
+Install the TypeSpec compiler, HTTP emitter, HTTP server library, and one hosting adapter:
 
 ```sh
-npm install @typespex/runtime
-npm install --save-dev @typespec/compiler @typespec/http @typespex/emitter typescript
+npm install @typespex/http-server
+npm install --save-dev @typespec/compiler @typespec/http @typespex/http-emitter typescript
 
 # Choose the adapter used by the service.
-npm install @typespex/shim-bun
-# npm install @typespex/shim-node
-# npm install express@^5 @typespex/shim-express
-# npm install hono@^4 @typespex/shim-hono
+npm install @typespex/adapter-bun
+# npm install @typespex/adapter-node
+# npm install express@^5 @typespex/adapter-express
+# npm install hono@^4 @typespex/adapter-hono
 ```
 
 ### 1. Define the service
@@ -152,9 +166,9 @@ Create `tspconfig.yaml`:
 
 ```yaml
 emit:
-  - "@typespex/emitter"
+  - "@typespex/http-emitter"
 options:
-  "@typespex/emitter":
+  "@typespex/http-emitter":
     emitter-output-dir: "{output-dir}"
 ```
 
@@ -223,7 +237,7 @@ All adapters accept an optional structured `logger` with `error`, `warn`, and `i
 ### Bun
 
 ```ts
-import { toBunHandler } from "@typespex/shim-bun";
+import { toBunHandler } from "@typespex/adapter-bun";
 import { router } from "./app.js";
 
 const server = Bun.serve({
@@ -238,7 +252,7 @@ console.log(`Listening on http://localhost:${server.port}`);
 
 ```ts
 import { createServer } from "node:http";
-import { toNodeHandler } from "@typespex/shim-node";
+import { toNodeHandler } from "@typespex/adapter-node";
 import { router } from "./app.js";
 
 createServer(toNodeHandler(router)).listen(3000);
@@ -254,7 +268,7 @@ Mount the generated router where it should own the Express request path:
 
 ```ts
 import express from "express";
-import { toExpressHandler } from "@typespex/shim-express";
+import { toExpressHandler } from "@typespex/adapter-express";
 import { router } from "./app.js";
 
 const app = express();
@@ -274,7 +288,7 @@ generated router matches the request, so the example serves a generated `/todos`
 For a TypeSpex-only Hono application:
 
 ```ts
-import { toHonoApp } from "@typespex/shim-hono";
+import { toHonoApp } from "@typespex/adapter-hono";
 import { router } from "./app.js";
 
 export default toHonoApp(router);
@@ -285,7 +299,7 @@ routes that should handle unmatched requests:
 
 ```ts
 import { Hono } from "hono";
-import { toHonoMiddleware } from "@typespex/shim-hono";
+import { toHonoMiddleware } from "@typespex/adapter-hono";
 import { router } from "./app.js";
 
 const app = new Hono();
@@ -356,7 +370,7 @@ only the named types reachable from the service's operation inputs and responses
 
 ```yaml
 options:
-  "@typespex/emitter":
+  "@typespex/http-emitter":
     omit-unreachable-types: true
 ```
 
@@ -395,9 +409,9 @@ bun add @js-temporal/polyfill
 
 ```yaml
 emit:
-  - "@typespex/emitter"
+  - "@typespex/http-emitter"
 options:
-  "@typespex/emitter":
+  "@typespex/http-emitter":
     datetime-mode: temporal
 ```
 
@@ -529,7 +543,7 @@ The runtime does not enforce a policy itself. Applications can import the genera
 their own middleware:
 
 ```ts
-import type { MatchedRequestContext, Middleware } from "@typespex/runtime/server";
+import type { MatchedRequestContext, Middleware } from "@typespex/http-server";
 import { typeSpecAuthHint } from "./generated/pet-store/server-hints.js";
 
 export const authMiddleware: Middleware<MatchedRequestContext> = (next) => async (ctx) => {
