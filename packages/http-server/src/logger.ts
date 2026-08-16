@@ -7,7 +7,7 @@ export interface LogContext {
 }
 
 /**
- * Logger interface shared by TypeSpex server and adapter packages.
+ * Logger interface exposed by the TypeSpex HTTP server.
  * Implement this interface to plug in any logging backend (pino, winston, OpenTelemetry, etc).
  */
 export interface Logger {

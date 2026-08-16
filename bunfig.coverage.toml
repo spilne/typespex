@@ -10,6 +10,8 @@ coveragePathIgnorePatterns = [
   "bench/**",
   "example/**",
   "packages/http-emitter/**",
+  "packages/mcp-emitter/**",
+  "packages/mcp/**",
   "scripts/**",
 ]
 

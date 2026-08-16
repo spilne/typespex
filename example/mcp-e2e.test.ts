@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { McpToolContext } from "@typespex/mcp-runtime";
-import { executeHttpBridgeTool } from "@typespex/mcp-runtime/http-bridge";
+import type { McpToolContext } from "@typespex/mcp-server";
+import { executeHttpBridgeTool } from "@typespex/mcp-http-bridge";
 import type { PetStoreServer } from "./generated/pet-store/server.js";
 import { createPetStoreServerRouter } from "./generated/pet-store/server-router.js";
 import { mcpHttpBridgeOperations } from "./generated-mcp/pet-assistant/mcp-http-client.js";

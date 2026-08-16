@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 readonly conformance_version="0.2.0-alpha.11"
 readonly protocol_version="2026-07-28"
-readonly fixture="packages/mcp/test/conformance"
+readonly fixture="packages/mcp-emitter/test/conformance"
 readonly port="${TYPESPEX_MCP_CONFORMANCE_PORT:-3300}"
 readonly results=".context/mcp-conformance-results"
 
@@ -24,17 +24,22 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-bun run --filter @typespex/runtime build
-bun run --filter @typespex/codegen build
-bun run --filter @typespex/mcp-runtime build
+bun run --filter @typespex/codec build
+bun run --filter @typespex/http-client build
+bun run --filter @typespex/compiler-core build
 bun run --filter @typespex/mcp build
+bun run --filter @typespex/mcp-server build
+bun run --filter @typespex/mcp-http-bridge build
+bun run --filter @typespex/mcp-transport-http build
+bun run --filter @typespex/mcp-transport-stdio build
+bun run --filter @typespex/mcp-emitter build
 
-node node_modules/@typespec/compiler/cmd/tsp.js compile "$fixture/main.tsp" \
+TYPESPEC_SKIP_COMPILER_RESOLVE=1 node node_modules/@typespec/compiler/cmd/tsp.js compile "$fixture/main.tsp" \
   --config "$fixture/tspconfig.yaml" \
   --output-dir "$output_dir"
 cp "$fixture/application.ts" "$output_dir/conformance-tools/application.ts"
 cp "$fixture/tsconfig.json" "$output_dir/conformance-tools/tsconfig.json"
-node packages/mcp/node_modules/typescript/bin/tsc \
+node packages/mcp-emitter/node_modules/typescript/bin/tsc \
   --project "$output_dir/conformance-tools/tsconfig.json"
 
 rm -rf "$results"

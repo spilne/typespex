@@ -1,6 +1,6 @@
-import { bytesToBase64 } from "./base64.js";
+import { bytesToBase64 } from "@typespex/codec";
 
-export { bytesToBase64 } from "./base64.js";
+export { bytesToBase64 } from "@typespex/codec";
 
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
 export function stringifyJson(value: unknown): string {

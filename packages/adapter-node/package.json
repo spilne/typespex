@@ -1,7 +1,7 @@
 {
   "name": "@typespex/adapter-node",
   "version": "0.1.1",
-  "description": "Node.js http adapter for @typespex/http-server HTTP router",
+  "description": "Node.js adapter for Fetch Request/Response routers",
   "keywords": [
     "adapter",
     "http",
@@ -44,11 +44,9 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@typespex/http-server": "workspace:*"
-  },
   "devDependencies": {
     "@types/node": "^22.20.1",
+    "@typespex/http-server": "workspace:*",
     "typescript": "^5.7.0"
   },
   "engines": {

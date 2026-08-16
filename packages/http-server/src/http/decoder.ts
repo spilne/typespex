@@ -15,7 +15,7 @@ import {
   parseMultipartRequest,
   validateFileName,
 } from "./multipart.js";
-import { ScalarEncodings, type DurationNumericUnit } from "./scalar-encoding.js";
+import { ScalarEncodings, type DurationNumericUnit } from "@typespex/codec";
 import {
   type ValidationIssue,
   type Validator,

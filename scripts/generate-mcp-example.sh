@@ -19,9 +19,16 @@ restore_generated() {
 }
 trap restore_generated EXIT
 
-bun run --filter @typespex/codegen build
+bun run --filter @typespex/codec build
+bun run --filter @typespex/http-client build
+bun run --filter @typespex/compiler-core build
 bun run --filter @typespex/mcp build
-node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/mcp-main.tsp \
+bun run --filter @typespex/mcp-server build
+bun run --filter @typespex/mcp-http-bridge build
+bun run --filter @typespex/mcp-transport-http build
+bun run --filter @typespex/mcp-transport-stdio build
+bun run --filter @typespex/mcp-emitter build
+TYPESPEC_SKIP_COMPILER_RESOLVE=1 node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/mcp-main.tsp \
   --config example/tspconfig.mcp.yaml \
   --output-dir "$output_dir"
 

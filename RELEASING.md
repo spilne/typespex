@@ -17,7 +17,8 @@ declaration sources), and install and import the complete package set in a clean
 npm consumer.
 
 All packages are packed before the first registry write. Publication order follows the explicit
-public dependency graph: codec, HTTP client, compiler core, HTTP server, HTTP emitter, Bun adapter,
+public dependency graph: codec, HTTP client, compiler core, HTTP server, MCP vocabulary, MCP server,
+MCP HTTP bridge, MCP HTTP transport, MCP stdio transport, HTTP emitter, MCP emitter, Bun adapter,
 Hono adapter, Node adapter, then Express adapter.
 
 ## Local preflight

@@ -1,21 +1,39 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type HttpRouter, type Logger, consoleLogger } from "@typespex/http-server";
+
+export interface FetchRouter {
+  handle(request: Request): Promise<Response>;
+}
+
+export interface AdapterLogContext {
+  readonly [key: string]: unknown;
+}
+
+export interface AdapterLogger {
+  error(message: string, context?: AdapterLogContext): void;
+}
+
+const consoleLogger: AdapterLogger = {
+  error(message, context) {
+    if (context) console.error(message, context);
+    else console.error(message);
+  },
+};
 
 export interface NodeHandlerOptions {
-  readonly logger?: Logger;
+  readonly logger?: AdapterLogger;
   /** Trust the first X-Forwarded-Proto value when running behind a trusted proxy. */
   readonly trustProxy?: boolean;
 }
 
 /**
- * Creates a Node.js http.createServer-compatible handler from an HttpRouter.
+ * Creates a Node.js http.createServer-compatible handler from a Fetch router.
  *
  * @example
  * import http from "node:http";
  * http.createServer(toNodeHandler(router)).listen(3000);
  */
 export function toNodeHandler(
-  router: HttpRouter,
+  router: FetchRouter,
   options?: NodeHandlerOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const logger = options?.logger ?? consoleLogger;

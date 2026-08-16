@@ -1,11 +1,9 @@
 # TypeSpex
 
-TypeSpex turns TypeSpec HTTP services into type-safe TypeScript server contracts. The emitter
-generates model types, request decoders, response encoders, handler interfaces, and a
-framework-neutral router. Application code implements the generated interfaces and can run on
-Bun, Node.js, Express, or Hono without handling HTTP parsing in each operation.
-
-The project is server-side only. It does not generate clients.
+TypeSpex turns TypeSpec contracts into type-safe TypeScript HTTP and Model Context Protocol
+servers. HTTP services compile to handlers and a framework-neutral router. MCP server roots compile
+to validated tools that can run natively or bridge existing TypeSpec HTTP operations. Hosting stays
+separate, so applications install only the transports and framework adapters they use.
 
 > [!IMPORTANT]
 > TypeSpex is under active pre-release development. The `@typespex/*` packages are not published
@@ -27,19 +25,35 @@ Request decoding and response encoding are generated from the TypeSpec HTTP cont
 server library matches routes, validates input, invokes middleware and handlers, and encodes the modeled
 result as an HTTP response.
 
+```text
+TypeSpec MCP root
+    -> @typespex/mcp vocabulary + @typespex/mcp-emitter
+    -> generated models, schemas, tool metadata, and application contract
+    -> @typespex/mcp-server
+    -> native handlers or @typespex/mcp-http-bridge
+    -> selected stdio or Streamable HTTP transport
+    -> optional Node, Bun, Express, or Hono adapter
+```
+
 ## Packages
 
-| Package                     | Purpose                                                                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `@typespex/compiler-core`   | Unstable, protocol-neutral planning utilities for TypeSpex emitter authors.                          |
-| `@typespex/codec`           | Protocol-neutral conversion between validated wire values and semantic TypeScript values.            |
-| `@typespex/http-emitter`    | Compiles TypeSpec HTTP services into typed TypeScript server bindings.                               |
-| `@typespex/http-server`     | Runs generated HTTP operations through routing, decoding, middleware, and response encoding.         |
-| `@typespex/http-client`     | Supplies plan-driven Fetch policy and bounded response primitives for generated clients and bridges. |
-| `@typespex/adapter-node`    | Connects an HTTP server router to Node's built-in HTTP server.                                       |
-| `@typespex/adapter-bun`     | Connects an HTTP server router to `Bun.serve`.                                                       |
-| `@typespex/adapter-express` | Mounts an HTTP server router in Express.                                                             |
-| `@typespex/adapter-hono`    | Mounts an HTTP server router in Hono.                                                                |
+| Package                         | Purpose                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `@typespex/compiler-core`       | Unstable, protocol-neutral planning, naming, schema, layout, and artifact utilities for emitter authors.    |
+| `@typespex/codec`               | Converts validated protocol wire values to semantic TypeScript values and back.                             |
+| `@typespex/http-emitter`        | Compiles TypeSpec HTTP services into typed server bindings.                                                 |
+| `@typespex/http-server`         | Runs generated HTTP routes, request decoding, middleware, handlers, and response encoding.                  |
+| `@typespex/http-client`         | Defines HTTP operation plans and bounded Fetch, redirect, and body-reading policy for clients and bridges.  |
+| `@typespex/mcp`                 | Provides the TypeSpec `@mcpServer` and opt-in `@tool` vocabulary.                                           |
+| `@typespex/mcp-emitter`         | Compiles MCP roots into typed models, schemas, application contracts, and selected launchers.               |
+| `@typespex/mcp-server`          | Registers validated generated tools and supplies typed contexts, middleware, results, and server factories. |
+| `@typespex/mcp-http-bridge`     | Executes generated HTTP operation plans behind MCP tools, including auth, redirects, limits, and JSONL.     |
+| `@typespex/mcp-transport-http`  | Provides secure, Fetch-native MCP Streamable HTTP handling; it contains no framework adapter.               |
+| `@typespex/mcp-transport-stdio` | Provides protocol-clean MCP stdio serving with diagnostics kept off stdout.                                 |
+| `@typespex/adapter-node`        | Connects any Fetch `Request`/`Response` router to Node's built-in HTTP server.                              |
+| `@typespex/adapter-bun`         | Connects any Fetch router to `Bun.serve`.                                                                   |
+| `@typespex/adapter-express`     | Mounts any Fetch router in Express without installing Hono or an HTTP server implementation.                |
+| `@typespex/adapter-hono`        | Mounts any Fetch router in Hono without installing Express or an HTTP server implementation.                |
 
 ## Prerequisites
 
@@ -73,6 +87,12 @@ protocol features remain outside this gate. A separate package-consumer job pack
 their contents, installs the tarballs into a temporary npm project, and imports every public entry
 point outside the workspace.
 
+The MCP compatibility matrix independently tests TypeSpec 1.14 and the newest aligned stable 1.x
+release. The official MCP conformance package is pinned in CI and runs the 2026-07-28 server suite
+against a generated Streamable HTTP server; its exact expected-failure baseline is checked for both
+unexpected failures and stale entries, and the machine-readable evidence is retained as a CI
+artifact.
+
 Node.js support follows maintained LTS lines. CI exercises the runtime and Node adapter on the
 oldest supported version, 22.12.0, and the current supported 24.x line. A future Node major is
 added to `engines` only after it reaches LTS and has equivalent CI coverage. A separate build uses
@@ -92,12 +112,58 @@ cd typespex
 bun install --frozen-lockfile
 bun run build
 bun run generate:example
+bun run generate:mcp-example
 bun run --filter typespex-example typecheck
-bun test example/e2e.test.ts
+bun test example/e2e.test.ts example/mcp-e2e.test.ts
 ```
 
-Generated contracts are written to `example/generated/pet-store/`; the example application and
-end-to-end test consume those files directly.
+HTTP contracts are written to `example/generated/pet-store/`. MCP contracts and the explicitly
+selected stdio, Node, Bun, Express, and Hono launchers are written to
+`example/generated-mcp/pet-assistant/`.
+
+## MCP Compiler Preview
+
+Install the vocabulary and emitter for generation, then select only the server, bridge, transport,
+and framework packages used by the generated application.
+
+```typespec
+import "@typespex/mcp";
+
+using TypeSpex.Mcp;
+
+@mcpServer(#{ version: "1.0.0", instructions: "Manage the pet store" })
+namespace PetStore {
+  @tool(#{ title: "Get pet", annotations: #{ readOnlyHint: true } })
+  op getPet(id: string): Pet | NotFoundError;
+}
+```
+
+```yaml
+emit:
+  - "@typespex/mcp-emitter"
+options:
+  "@typespex/mcp-emitter":
+    mode: [native, http-bridge]
+    application-module: "../../application.js"
+    launchers: [stdio, node]
+```
+
+`mode` is a non-empty unique array; there is no special `both` value. Native-only roots may be
+standalone namespaces. A selection containing `http-bridge` requires TypeSpec services and an HTTP
+binding for every exposed tool. Launchers default to an empty array, so library generation does not
+silently add transports or frameworks.
+
+The configured application module default-exports the generated typed definition. The emitter
+never creates or overwrites handler stubs. Identity contracts use the semantic model directly;
+separate wire aliases and codecs are emitted only when TypeSpec encoded names, scalar encodings,
+lossless values, or other protocol transforms make the JSON shape different.
+
+Native handlers receive semantic input and `McpToolContext`. Ordinary success and modeled-error
+values are validated and classified, while overlapping result shapes require an explicit tagged
+`McpToolResult`. The HTTP bridge owns upstream URL resolution, auth alternatives, bounded
+same-origin redirects, response limits, and JSONL collection. Streamable HTTP defaults to
+`127.0.0.1:3000/mcp`; non-loopback exposure requires explicit Host and Origin allowlists plus an
+inbound auth verifier.
 
 ## Package API Preview
 
@@ -232,7 +298,7 @@ a `Response`.
 
 ## Hosting Adapters
 
-All adapters accept an optional structured `logger` with `error`, `warn`, and `info` methods.
+All adapters accept an optional structured `logger` with at least an `error` method.
 
 ### Bun
 

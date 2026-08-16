@@ -11,7 +11,7 @@ fi
 output_dir=$(mktemp -d "${TMPDIR:-/tmp}/typespex-generated-mcp.XXXXXX")
 trap 'rm -rf "$output_dir"' EXIT
 
-node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/mcp-main.tsp \
+TYPESPEC_SKIP_COMPILER_RESOLVE=1 node example/node_modules/@typespec/compiler/cmd/tsp.js compile example/mcp-main.tsp \
   --config example/tspconfig.mcp.yaml \
   --output-dir "$output_dir" \
   >/dev/null

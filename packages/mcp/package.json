@@ -1,9 +1,8 @@
 {
   "name": "@typespex/mcp",
   "version": "0.1.1",
-  "description": "TypeSpec library and emitter for strongly typed Model Context Protocol servers",
+  "description": "TypeSpec vocabulary for strongly typed Model Context Protocol servers",
   "keywords": [
-    "codegen",
     "mcp",
     "model-context-protocol",
     "typescript",
@@ -47,31 +46,12 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test --timeout 30000"
   },
-  "dependencies": {
-    "@typespex/codegen": "workspace:*"
-  },
   "devDependencies": {
     "@typespec/compiler": "^1.15.0",
-    "@typespec/http": "^1.15.0",
-    "@typespec/streams": "^0.85.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@js-temporal/polyfill": "^0.5.1",
-    "@typespec/compiler": ">=1.14.0 <2.0.0",
-    "@typespec/http": ">=1.14.0 <2.0.0",
-    "@typespec/streams": ">=0.84.0 <1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@js-temporal/polyfill": {
-      "optional": true
-    },
-    "@typespec/http": {
-      "optional": true
-    },
-    "@typespec/streams": {
-      "optional": true
-    }
+    "@typespec/compiler": ">=1.14.0 <2.0.0"
   },
   "engines": {
     "node": "^22.12.0 || ^24.0.0"
