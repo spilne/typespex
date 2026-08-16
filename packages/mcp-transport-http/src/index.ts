@@ -155,8 +155,19 @@ export function isLoopbackHost(host: string): boolean {
 }
 
 function normalizeHost(host: string): string {
+  for (const character of host) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) {
+      throw new TypeError(`Invalid MCP HTTP host: ${host}.`);
+    }
+  }
   const trimmed = host.trim();
-  if (!trimmed || /[/?#@]/.test(trimmed)) throw new TypeError(`Invalid MCP HTTP host: ${host}.`);
+  for (const character of trimmed) {
+    if (character.trim() === "" || "/?#@\\".includes(character)) {
+      throw new TypeError(`Invalid MCP HTTP host: ${host}.`);
+    }
+  }
+  if (!trimmed) throw new TypeError(`Invalid MCP HTTP host: ${host}.`);
   return trimmed;
 }
 

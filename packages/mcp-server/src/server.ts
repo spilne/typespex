@@ -333,7 +333,12 @@ function validatedToolResult(value: unknown): CallToolResult {
 }
 
 function jsonTextContent(value: unknown): McpContent {
-  const text = JSON.stringify(value);
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch (cause) {
+    throw new McpToolError("Tool result could not be serialized as JSON.", { cause });
+  }
   return text === undefined ? [] : [{ type: "text", text }];
 }
 

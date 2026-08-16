@@ -321,6 +321,31 @@ describe("generated MCP server", () => {
     expect(result.structuredContent).toEqual({ id: "p1", owner: { name: "Roman" } });
   });
 
+  test("reports JSON serialization failures as operational tool errors", async () => {
+    const input = createTypeSpecSchema<Record<string, never>>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    });
+    const success = createTypeSpecSchema<bigint>({
+      schema: { $schema: "https://json-schema.org/draft/2020-12/schema" },
+    });
+    const server = createGeneratedMcpServer(
+      { implementation: { name: "json-result", version: "1.0.0" } },
+      [{ name: "serialize", handler: "serialize", input, success }],
+      { handlers: { serialize: () => 1n } },
+    );
+    const client = await connect(server, "legacy");
+
+    const result = await client.callTool({ name: "serialize", arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("could not be serialized as JSON");
+    expect(JSON.stringify(result)).not.toContain("Internal tool error");
+  });
+
   for (const negotiation of ["legacy", "auto"] as const) {
     test(`lists and calls typed tools over ${negotiation} protocol negotiation`, async () => {
       const input = createTypeSpecSchema<{ id: string }>({

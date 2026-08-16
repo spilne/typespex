@@ -138,7 +138,15 @@ describe("MCP Streamable HTTP transport", () => {
     for (const port of [-1, 1.5, 65_536]) {
       expect(() => resolveMcpHttpServerOptions({ port })).toThrow("Invalid MCP HTTP port");
     }
-    for (const host of ["", "example.test/path", "user@example.test"]) {
+    for (const host of [
+      "",
+      "example.test/path",
+      "user@example.test",
+      "example.test\\name",
+      "example test",
+      "example.test\n",
+      "example.test\0",
+    ]) {
       expect(() => resolveMcpHttpServerOptions({ host })).toThrow("Invalid MCP HTTP host");
     }
     for (const path of ["mcp", "/mcp?debug", "/mcp#fragment"]) {
