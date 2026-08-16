@@ -391,7 +391,8 @@ describe("@typespex/mcp emitter", () => {
     const diagnostics = result.stdout + result.stderr;
     expect(diagnostics).toContain("launchers");
     expect(diagnostics).toContain("duplicate");
-    expect(diagnostics).not.toContain("same artifact path");
+    expect(diagnostics).toContain("Schema violation");
+    expect(diagnostics).not.toContain("duplicate-output-path");
   });
 
   test("preserves literal query fields and rejects fragment-only HTTP data", () => {

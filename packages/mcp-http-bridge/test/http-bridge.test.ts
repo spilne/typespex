@@ -283,7 +283,7 @@ describe("MCP HTTP bridge", () => {
     expect(fetched).toBe(false);
   });
 
-  test("wires cross-origin redirect policy and strips query credentials", async () => {
+  test("wires cross-origin redirect policy and strips query and header credentials", async () => {
     const operation: HttpBridgeOperation = {
       version: 1,
       id: "redirected",
@@ -293,7 +293,10 @@ describe("MCP HTTP bridge", () => {
       servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
       auth: [
         {
-          schemes: [{ id: "query", type: "apiKey", location: "query", name: "api_key" }],
+          schemes: [
+            { id: "query", type: "apiKey", location: "query", name: "api_key" },
+            { id: "header", type: "apiKey", location: "header", name: "x-api-key" },
+          ],
         },
       ],
     };
@@ -310,7 +313,7 @@ describe("MCP HTTP bridge", () => {
           })
         : Response.json({ ok: true });
     }) as typeof fetch;
-    const authProvider = staticHttpAuthProvider({ query: "secret" });
+    const authProvider = staticHttpAuthProvider({ query: "secret", header: "header-secret" });
 
     await expect(
       executeHttpBridgeTool(operation, {}, context, {
@@ -331,7 +334,9 @@ describe("MCP HTTP bridge", () => {
     ).resolves.toMatchObject({ kind: "success", value: { ok: true } });
     expect(requests).toHaveLength(2);
     expect(new URL(requests[0]!.url).searchParams.get("api_key")).toBe("secret");
+    expect(requests[0]!.headers.get("x-api-key")).toBe("header-secret");
     expect(new URL(requests[1]!.url).searchParams.has("api_key")).toBe(false);
+    expect(requests[1]!.headers.has("x-api-key")).toBe(false);
     expect(new URL(requests[1]!.url).searchParams.get("keep")).toBe("yes");
 
     requests.length = 0;

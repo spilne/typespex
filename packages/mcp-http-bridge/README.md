@@ -14,7 +14,8 @@ adapter code.
 ## Runtime requirements
 
 The package is ESM, targets ES2022, and requires Fetch, URL, Web Streams, Blob, and File APIs.
-Node.js `>=22.12 <23` or `>=24 <25` is supported.
+Node.js `>=22.12 <23` or `>=24 <25` is supported. Applications must install the matching
+`@typespex/mcp-server` peer alongside this package.
 
 ## License
 

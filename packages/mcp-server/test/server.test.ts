@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe("generated MCP server", () => {
-  test("uses registry symbols for cross-instance bridge results and operational errors", () => {
+  test("uses registry symbols for cross-instance bridge results and operational errors", async () => {
     const wireResult = mcpWireSuccess({ value: "wire" });
     expect(Object.getOwnPropertySymbols(wireResult)).toContain(
       Symbol.for("@typespex/mcp-server/wire-result"),
@@ -33,12 +33,67 @@ describe("generated MCP server", () => {
     expect(Object.getOwnPropertySymbols(operationalError)).toContain(
       Symbol.for("@typespex/mcp-server/tool-error"),
     );
-    const foreignError = Object.assign(new Error("Foreign package instance."), { options: {} });
-    Object.defineProperty(foreignError, Symbol.for("@typespex/mcp-server/tool-error"), {
-      value: true,
-    });
+    const createForeignError = () => {
+      const error = Object.assign(new Error("Foreign package instance."), { options: {} });
+      Object.defineProperty(error, Symbol.for("@typespex/mcp-server/tool-error"), {
+        value: true,
+      });
+      return error;
+    };
+    const foreignError = createForeignError();
     expect(isMcpToolError(foreignError)).toBe(true);
     expect(isMcpToolError({ message: "spoofed", options: {} })).toBe(false);
+
+    const input = createTypeSpecSchema<Record<string, never>>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    });
+    const success = createTypeSpecSchema<{ value: string }>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+    });
+    const foreignWireResult = { kind: "success", value: { value: "foreign wire" } };
+    Object.defineProperty(foreignWireResult, Symbol.for("@typespex/mcp-server/wire-result"), {
+      value: true,
+    });
+    const server = createGeneratedMcpServer(
+      { implementation: { name: "cross-instance", version: "1.0.0" } },
+      [
+        { name: "throwForeign", handler: "throwForeign", input, voidResult: true },
+        { name: "returnForeign", handler: "returnForeign", input, voidResult: true },
+        { name: "foreignWire", handler: "foreignWire", input, success },
+      ],
+      // Simulate values created by a separately installed copy of @typespex/mcp-server.
+      {
+        handlers: {
+          throwForeign() {
+            throw createForeignError();
+          },
+          returnForeign: () => createForeignError(),
+          foreignWire: () => foreignWireResult,
+        },
+      } as any,
+    );
+    const client = await connect(server, "legacy");
+
+    for (const name of ["throwForeign", "returnForeign"]) {
+      const result = await client.callTool({ name, arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("Foreign package instance.");
+      expect(JSON.stringify(result)).not.toContain("Internal tool error");
+    }
+    const classified = await client.callTool({ name: "foreignWire", arguments: {} });
+    expect(classified.isError).not.toBe(true);
+    expect(classified.structuredContent).toEqual({ value: "foreign wire" });
   });
 
   test("preserves typed application definitions without wrapping them", () => {

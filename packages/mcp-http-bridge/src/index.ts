@@ -279,9 +279,12 @@ export async function executeHttpBridgeTool(
 
   const auth = await resolveCredentials(operation, input, context, options.authProvider);
   const credentialQueryNames = new Set<string>();
+  const credentialHeaderNames = new Set<string>();
   if (auth) {
-    for (const [name, value] of Object.entries(auth.headers ?? {}))
+    for (const [name, value] of Object.entries(auth.headers ?? {})) {
       setSafeHeader(headers, name, value);
+      credentialHeaderNames.add(name);
+    }
     for (const [name, value] of Object.entries(auth.query ?? {})) {
       url.searchParams.set(name, value);
       credentialQueryNames.add(name);
@@ -320,6 +323,7 @@ export async function executeHttpBridgeTool(
     maxRedirects,
     allowedOrigins,
     credentialQueryNames,
+    credentialHeaderNames,
   );
 
   const descriptor = selectResponse(
@@ -872,6 +876,7 @@ async function fetchWithRedirectPolicy(
   maxRedirects: number,
   allowedOrigins: ReadonlySet<string>,
   credentialQueryNames: ReadonlySet<string>,
+  credentialHeaderNames: ReadonlySet<string>,
 ): Promise<Response> {
   try {
     return await executeHttpRequest(
@@ -884,6 +889,12 @@ async function fetchWithRedirectPolicy(
         maxRedirects,
         allowedRedirectOrigins: [...allowedOrigins],
         sensitiveQueryParameters: [...credentialQueryNames],
+        sensitiveHeaders: [
+          "Authorization",
+          "Proxy-Authorization",
+          "Cookie",
+          ...credentialHeaderNames,
+        ],
       },
     );
   } catch (error) {
