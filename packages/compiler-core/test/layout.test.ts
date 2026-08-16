@@ -103,6 +103,19 @@ describe("compiler service layouts", () => {
     expect(typescriptIdentifier("two words")).toBe("two_words");
     expect(typescriptIdentifier("1value")).toBe("_1value");
     expect(typescriptIdentifier("class")).toBe("class_");
+    for (const reserved of [
+      "global",
+      "intrinsic",
+      "is",
+      "out",
+      "override",
+      "require",
+      "satisfies",
+      "unique",
+    ]) {
+      expect(typescriptIdentifier(reserved)).toBe(`${reserved}_`);
+      expect(typescriptProperty(reserved)).toBe(JSON.stringify(reserved));
+    }
     expect(typescriptIdentifier("---", "fallback")).toBe("___");
     expect(typescriptProperty("valid")).toBe("valid");
     expect(typescriptProperty("default")).toBe('"default"');
