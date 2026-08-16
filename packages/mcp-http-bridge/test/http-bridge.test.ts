@@ -534,7 +534,7 @@ describe("MCP HTTP bridge", () => {
     expect(requestUrl).toBe("https://api.example.test/v1/files/a%2Fb/c%20d?fixed=full+text");
   });
 
-  test("selects request media types from encoded input", async () => {
+  test("selects request media types and defaults an omitted optional selector", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
       version: 1,
@@ -561,6 +561,16 @@ describe("MCP HTTP bridge", () => {
     });
     expect(request?.headers.get("content-type")).toBe("text/plain");
     expect(await request?.text()).toBe("hello");
+
+    request = undefined;
+    await executeHttpBridgeTool(operation, { value: { message: "default" } }, context, {
+      fetch: (async (input, init) => {
+        request = new Request(input, init);
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+    });
+    expect(request?.headers.get("content-type")).toBe("application/json");
+    expect(await request?.json()).toEqual({ message: "default" });
   });
 
   test("rejects unsafe generated and file Content-Type values as operational errors", async () => {

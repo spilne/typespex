@@ -740,7 +740,7 @@ function resolveRequestMediaType(
   const requested = body.contentTypeSource
     ? getSourceValue(input, body.contentTypeSource)
     : undefined;
-  if (body.contentTypeSource && typeof requested !== "string") {
+  if (requested !== undefined && typeof requested !== "string") {
     throw new McpToolError("The HTTP request body requires a string Content-Type selector.");
   }
   const mediaTypes =

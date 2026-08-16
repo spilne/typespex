@@ -5,7 +5,8 @@ Generated HTTP and MCP servers both satisfy the structural contract.
 
 ## Entry points
 
-- `@typespex/adapter-express` exports `toExpressHandler`.
+- `@typespex/adapter-express` exports `toExpressHandler`, `ExpressRequestHandler`, and
+  `ExpressHandlerOptions`.
 
 Mount the returned terminal handler where the generated service should own the
 request path:
