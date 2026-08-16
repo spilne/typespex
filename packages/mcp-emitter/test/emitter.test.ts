@@ -712,6 +712,9 @@ describe("@typespex/mcp emitter", () => {
     expect(result.read("xml-bytes-api", "mcp-operations.ts")).toContain(
       'contentEncoding: "base64"',
     );
+    expect(result.read("xml-bytes-api", "mcp-operations.ts")).toContain(
+      'required: ["contentType", "body"]',
+    );
   });
 
   test("classifies error models nested in named unions as modeled errors", () => {

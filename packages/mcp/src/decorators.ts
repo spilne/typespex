@@ -33,14 +33,3 @@ export function listMcpServers(program: Program): McpServerMetadata[] {
 export function listMcpTools(program: Program): McpToolMetadata[] {
   return [...program.stateMap(toolState).values()] as McpToolMetadata[];
 }
-
-export function getMcpServer(
-  program: Program,
-  namespace: Namespace,
-): McpServerMetadata | undefined {
-  return program.stateMap(serverState).get(namespace) as McpServerMetadata | undefined;
-}
-
-export function getMcpTool(program: Program, operation: Operation): McpToolMetadata | undefined {
-  return program.stateMap(toolState).get(operation) as McpToolMetadata | undefined;
-}

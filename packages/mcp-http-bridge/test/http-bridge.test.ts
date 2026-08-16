@@ -571,6 +571,22 @@ describe("MCP HTTP bridge", () => {
     });
     expect(request?.headers.get("content-type")).toBe("application/json");
     expect(await request?.json()).toEqual({ message: "default" });
+
+    for (const [contentType, message] of [
+      [42, "requires a string Content-Type selector"],
+      ["application/xml", "Unsupported HTTP request Content-Type"],
+    ] as const) {
+      let fetched = false;
+      await expect(
+        executeHttpBridgeTool(operation, { contentType, value: "invalid" }, context, {
+          fetch: (async () => {
+            fetched = true;
+            return new Response(null, { status: 204 });
+          }) as typeof fetch,
+        }),
+      ).rejects.toThrow(message);
+      expect(fetched).toBe(false);
+    }
   });
 
   test("rejects unsafe generated and file Content-Type values as operational errors", async () => {

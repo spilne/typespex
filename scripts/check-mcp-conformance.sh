@@ -51,8 +51,10 @@ TYPESPEX_MCP_CONFORMANCE_PORT="$port" \
   2>"$results/server-stderr.log" &
 server_pid=$!
 
+server_ready=false
 for _ in {1..50}; do
   if curl --silent --output /dev/null --request POST "http://127.0.0.1:$port/mcp"; then
+    server_ready=true
     break
   fi
   if ! kill -0 "$server_pid" 2>/dev/null; then
@@ -61,6 +63,10 @@ for _ in {1..50}; do
   fi
   sleep 0.1
 done
+if [[ "$server_ready" != "true" ]]; then
+  printf 'Timed out waiting for the generated MCP conformance server.\n' >&2
+  exit 1
+fi
 
 npx -y "@modelcontextprotocol/conformance@$conformance_version" server \
   --url "http://127.0.0.1:$port/mcp" \
