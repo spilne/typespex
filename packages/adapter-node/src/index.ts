@@ -38,7 +38,13 @@ export function toNodeHandler(
         if (!res.destroyed) res.destroy(toError(error));
         return;
       }
-      if (options?.errorMode === "throw") throw error;
+      if (options?.errorMode === "throw") {
+        if (res.headersSent || res.writableEnded || res.destroyed) {
+          if (!res.destroyed) res.destroy(toError(error));
+          return;
+        }
+        throw error;
+      }
       logger.error("Unhandled error in request handler", {
         error,
         method: req.method,
