@@ -1,7 +1,7 @@
 {
   "name": "@typespex/adapter-bun",
   "version": "0.1.1",
-  "description": "Bun adapter for @typespex/http-server HTTP router",
+  "description": "Bun adapter for Fetch Request/Response routers",
   "keywords": [
     "adapter",
     "bun",
@@ -44,10 +44,8 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@typespex/http-server": "workspace:*"
-  },
   "devDependencies": {
+    "@typespex/http-server": "workspace:*",
     "typescript": "^5.7.0"
   },
   "engines": {

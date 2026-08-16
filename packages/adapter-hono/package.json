@@ -1,7 +1,7 @@
 {
   "name": "@typespex/adapter-hono",
   "version": "0.1.1",
-  "description": "Hono adapter for @typespex/http-server HTTP router",
+  "description": "Hono adapter for Fetch Request/Response routers",
   "keywords": [
     "adapter",
     "hono",
@@ -44,10 +44,8 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@typespex/http-server": "workspace:*"
-  },
   "devDependencies": {
+    "@typespex/http-server": "workspace:*",
     "hono": "^4.13.1",
     "typescript": "^5.7.0"
   },

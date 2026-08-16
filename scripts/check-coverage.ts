@@ -9,6 +9,10 @@ const COVERAGE_ROOTS = [
   "packages/http-client/src",
   "packages/compiler-core/src",
   "packages/http-server/src",
+  "packages/mcp-server/src",
+  "packages/mcp-http-bridge/src",
+  "packages/mcp-transport-http/src",
+  "packages/mcp-transport-stdio/src",
   "packages/adapter-bun/src",
   "packages/adapter-express/src",
   "packages/adapter-hono/src",
@@ -37,6 +41,11 @@ interface CoverageRecord {
 export const AGGREGATE_COVERAGE_THRESHOLDS: CoverageThresholds = {
   functions: 0.94,
   lines: 0.95,
+};
+
+export const PER_FILE_COVERAGE_THRESHOLDS: CoverageThresholds = {
+  functions: 0.7,
+  lines: 0.8,
 };
 
 export function parseLcov(content: string): ReadonlyMap<string, CoverageRecord> {
@@ -71,8 +80,10 @@ export function validateCoverage(
   content: string,
   requiredSources: readonly string[],
   thresholds: CoverageThresholds = AGGREGATE_COVERAGE_THRESHOLDS,
+  perFileThresholds: CoverageThresholds = PER_FILE_COVERAGE_THRESHOLDS,
 ): CoverageSummary {
   validateThresholds(thresholds);
+  validateThresholds(perFileThresholds);
   const records = parseLcov(content);
   const normalizedSources = requiredSources.map(normalizeSource);
   const missing = normalizedSources.filter((source) => !records.has(source));
@@ -88,6 +99,22 @@ export function validateCoverage(
   let linesHit = 0;
   for (const source of normalizedSources) {
     const record = records.get(source)!;
+    if (record.linesFound > 0) {
+      assertFileThreshold(
+        source,
+        "line",
+        coverageRatio(record.linesHit, record.linesFound),
+        perFileThresholds.lines,
+      );
+    }
+    if (record.functionsFound > 0) {
+      assertFileThreshold(
+        source,
+        "function",
+        coverageRatio(record.functionsHit, record.functionsFound),
+        perFileThresholds.functions,
+      );
+    }
     functionsFound += record.functionsFound;
     functionsHit += record.functionsHit;
     linesFound += record.linesFound;
@@ -110,6 +137,19 @@ export function validateCoverage(
   assertThreshold("Line", summary.lines.ratio, thresholds.lines);
   assertThreshold("Function", summary.functions.ratio, thresholds.functions);
   return summary;
+}
+
+function assertFileThreshold(
+  source: string,
+  metric: "line" | "function",
+  actual: number,
+  required: number,
+): void {
+  if (actual + Number.EPSILON < required) {
+    throw new Error(
+      `${source} ${metric} coverage ${formatPercentage(actual)} is below ${formatPercentage(required)}.`,
+    );
+  }
 }
 
 function readMetric(lines: readonly string[], name: string, source: string): number {

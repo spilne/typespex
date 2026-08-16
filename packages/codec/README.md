@@ -6,7 +6,8 @@ The package owns encoded names, defaults, dates, bytes, files, and lossless nume
 
 ## Entry points
 
-- `@typespex/codec` exports codec plan types and `createValueCodec`.
+- `@typespex/codec` exports codec plan types, `createValueCodec`, `bytesToBase64`, and the
+  `ScalarEncodings` helpers and scalar wire-encoding types.
 
 ## Runtime requirements
 

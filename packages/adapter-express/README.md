@@ -1,10 +1,12 @@
 # `@typespex/adapter-express`
 
-An adapter from an `@typespex/http-server` HTTP router to an Express request handler.
+An adapter from any Fetch `Request`/`Response` router to an Express request handler.
+Generated HTTP and MCP servers both satisfy the structural contract.
 
 ## Entry points
 
-- `@typespex/adapter-express` exports `toExpressHandler`.
+- `@typespex/adapter-express` exports `toExpressHandler`, `ExpressRequestHandler`, and
+  `ExpressHandlerOptions`.
 
 Mount the returned terminal handler where the generated service should own the
 request path:
@@ -31,8 +33,8 @@ consumes that stream.
 ## Runtime requirements
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` and
-Express `5.x` are required. `@typespex/http-server` and `@typespex/adapter-node` are
-installed as regular dependencies; Express is a peer dependency. TypeScript
+Express `5.x` are required. `@typespex/adapter-node` is installed as a regular
+dependency; Express is a peer dependency. TypeScript
 projects should install `@types/express` `5.x` as a development dependency.
 
 ## License

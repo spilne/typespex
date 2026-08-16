@@ -1,7 +1,7 @@
 {
   "name": "@typespex/adapter-express",
   "version": "0.1.1",
-  "description": "Express adapter for @typespex/http-server HTTP router",
+  "description": "Express adapter for Fetch Request/Response routers",
   "keywords": [
     "adapter",
     "express",
@@ -45,11 +45,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@typespex/adapter-node": "workspace:*",
-    "@typespex/http-server": "workspace:*"
+    "@typespex/adapter-node": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@typespex/http-server": "workspace:*",
     "express": "^5.2.1",
     "typescript": "^5.7.0"
   },

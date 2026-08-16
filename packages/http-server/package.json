@@ -45,6 +45,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@typespex/codec": "workspace:*",
     "lossless-json": "^4.3.1",
     "saxes": "^6.0.0"
   },

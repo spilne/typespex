@@ -2,7 +2,7 @@ import {
   ScalarEncodings,
   type DurationNumericUnit,
   type NumericWireEncoding,
-} from "./scalar-encoding.js";
+} from "@typespex/codec";
 import type { Validator } from "./validation.js";
 
 /** Error raised when a handler result cannot be converted to its declared JSON wire shape. */

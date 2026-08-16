@@ -52,6 +52,17 @@ describe("coverage validation", () => {
     );
   });
 
+  test("fails per-file regressions without penalizing type-only records", () => {
+    const report = [
+      record("src/weak.ts", 10, 7, 10, 10),
+      record("src/strong.ts", 1000, 1000, 1000, 1000),
+      record("src/types.ts", 0, 0, 0, 0),
+    ].join("\n");
+    expect(() =>
+      validateCoverage(report, ["src/weak.ts", "src/strong.ts", "src/types.ts"]),
+    ).toThrow("src/weak.ts line coverage 70.00% is below 80.00%.");
+  });
+
   test("rejects malformed or duplicate LCOV records", () => {
     expect(() => parseLcov("TN:\nSF:src/one.ts\nLF:1\nLH:1\nend_of_record")).toThrow(
       "Invalid or missing FNF metric",

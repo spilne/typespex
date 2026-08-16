@@ -1,3 +1,10 @@
+export { bytesToBase64 } from "./base64.js";
+export {
+  ScalarEncodings,
+  type DurationNumericUnit,
+  type NumericWireEncoding,
+} from "./scalar-encoding.js";
+
 /** A path-aware issue produced while converting between wire and semantic values. */
 export interface CodecIssue {
   readonly message: string;

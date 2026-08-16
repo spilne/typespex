@@ -1,0 +1,8 @@
+emit:
+  - "@typespex/mcp-emitter"
+options:
+  "@typespex/mcp-emitter":
+    emitter-output-dir: "{output-dir}"
+    application-module: "./application.js"
+    launchers:
+      - node

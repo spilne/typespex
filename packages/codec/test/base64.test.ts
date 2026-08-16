@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { encodeBytesToBase64 } from "../src/http/base64.js";
+import { bytesToBase64, encodeBytesToBase64 } from "../src/base64.js";
 
 describe("base64 runtime capabilities", () => {
+  test("encodes bytes through the ambient runtime", () => {
+    expect(bytesToBase64(new Uint8Array([0, 127, 128, 255]))).toBe("AH+A/w==");
+  });
+
   test("uses Buffer with the exact Uint8Array view when available", () => {
     const backing = new Uint8Array(0x8000 * 3 + 9);
     for (let index = 0; index < backing.length; index += 1) {

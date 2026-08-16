@@ -1,11 +1,12 @@
 import type { RequestHandler } from "express";
-import type { HttpRouter } from "@typespex/http-server";
-import { toNodeHandler, type NodeHandlerOptions } from "@typespex/adapter-node";
+import { toNodeHandler, type FetchRouter, type NodeHandlerOptions } from "@typespex/adapter-node";
+
+export type ExpressRequestHandler = RequestHandler;
 
 export interface ExpressHandlerOptions extends NodeHandlerOptions {}
 
 /**
- * Creates a terminal Express handler from an HttpRouter.
+ * Creates a terminal Express handler from a Fetch router.
  *
  * The generated router owns the mounted path, including its not-found
  * response. Errors escaping the router boundary use the Node adapter's logged
@@ -17,7 +18,7 @@ export interface ExpressHandlerOptions extends NodeHandlerOptions {}
  * app.use("/api", toExpressHandler(router));
  */
 export function toExpressHandler(
-  router: HttpRouter,
+  router: FetchRouter,
   options?: ExpressHandlerOptions,
 ): RequestHandler {
   const nodeHandler = toNodeHandler(router, options);

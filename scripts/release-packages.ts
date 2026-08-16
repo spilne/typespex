@@ -51,9 +51,39 @@ export const RELEASE_PACKAGES: readonly ReleasePackage[] = [
     imports: ["@typespex/http-server"],
   },
   {
+    directory: "mcp",
+    name: "@typespex/mcp",
+    imports: ["@typespex/mcp"],
+  },
+  {
+    directory: "mcp-server",
+    name: "@typespex/mcp-server",
+    imports: ["@typespex/mcp-server"],
+  },
+  {
+    directory: "mcp-http-bridge",
+    name: "@typespex/mcp-http-bridge",
+    imports: ["@typespex/mcp-http-bridge"],
+  },
+  {
+    directory: "mcp-transport-http",
+    name: "@typespex/mcp-transport-http",
+    imports: ["@typespex/mcp-transport-http"],
+  },
+  {
+    directory: "mcp-transport-stdio",
+    name: "@typespex/mcp-transport-stdio",
+    imports: ["@typespex/mcp-transport-stdio"],
+  },
+  {
     directory: "http-emitter",
     name: "@typespex/http-emitter",
     imports: ["@typespex/http-emitter"],
+  },
+  {
+    directory: "mcp-emitter",
+    name: "@typespex/mcp-emitter",
+    imports: ["@typespex/mcp-emitter"],
   },
   {
     directory: "adapter-bun",
@@ -94,8 +124,28 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
     peerDependencies: ["@typespec/compiler"],
   },
   "@typespex/http-server": {
-    dependencies: ["lossless-json", "saxes"],
+    dependencies: ["@typespex/codec", "lossless-json", "saxes"],
     peerDependencies: [],
+  },
+  "@typespex/mcp": {
+    dependencies: [],
+    peerDependencies: ["@typespec/compiler"],
+  },
+  "@typespex/mcp-server": {
+    dependencies: ["@typespex/codec"],
+    peerDependencies: ["@modelcontextprotocol/server"],
+  },
+  "@typespex/mcp-http-bridge": {
+    dependencies: ["@typespex/codec", "@typespex/http-client"],
+    peerDependencies: ["@typespex/mcp-server"],
+  },
+  "@typespex/mcp-transport-http": {
+    dependencies: ["@typespex/mcp-server"],
+    peerDependencies: ["@modelcontextprotocol/server"],
+  },
+  "@typespex/mcp-transport-stdio": {
+    dependencies: [],
+    peerDependencies: ["@modelcontextprotocol/server"],
   },
   "@typespex/http-emitter": {
     dependencies: ["oxfmt"],
@@ -106,20 +156,29 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
       "@typespex/http-server",
     ],
   },
+  "@typespex/mcp-emitter": {
+    dependencies: ["@typespex/compiler-core", "@typespex/http-client", "@typespex/mcp"],
+    peerDependencies: [
+      "@js-temporal/polyfill",
+      "@typespec/compiler",
+      "@typespec/http",
+      "@typespec/streams",
+    ],
+  },
   "@typespex/adapter-bun": {
-    dependencies: ["@typespex/http-server"],
+    dependencies: [],
     peerDependencies: [],
   },
   "@typespex/adapter-hono": {
-    dependencies: ["@typespex/http-server"],
+    dependencies: [],
     peerDependencies: ["hono"],
   },
   "@typespex/adapter-node": {
-    dependencies: ["@typespex/http-server"],
+    dependencies: [],
     peerDependencies: [],
   },
   "@typespex/adapter-express": {
-    dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
+    dependencies: ["@typespex/adapter-node"],
     peerDependencies: ["express"],
   },
 } as const;
@@ -168,6 +227,7 @@ export const RELEASE_PREFLIGHT_COMMANDS: readonly ReleaseCommand[] = [
   { command: "bun", args: ["run", "typecheck"] },
   { command: "bun", args: ["run", "check:generated"] },
   { command: "bun", args: ["run", "check:conformance"] },
+  { command: "bun", args: ["run", "check:mcp-conformance"] },
   { command: "bun", args: ["run", "test"] },
   { command: "bun", args: ["run", "test:coverage"] },
   { command: "node", args: ["./packages/adapter-node/test/node-smoke.mjs"] },
@@ -675,6 +735,8 @@ function validateTarEntries(entries: readonly string[], packageName: string): vo
         !normalized.startsWith("package/dist/") &&
         normalized !== "package/src" &&
         !normalized.startsWith("package/src/") &&
+        normalized !== "package/lib" &&
+        !normalized.startsWith("package/lib/") &&
         !required.has(normalized))
     ) {
       throw new ReleaseError(`${packageName} tarball contains unexpected entry ${entry}.`);
@@ -709,8 +771,8 @@ function validateExportTargets(
   }
 
   for (const target of targets) {
-    if (!target.startsWith("./dist/")) {
-      throw new ReleaseError(`${packageName} export target is outside dist: ${target}.`);
+    if (!target.startsWith("./dist/") && !target.startsWith("./lib/")) {
+      throw new ReleaseError(`${packageName} export target is outside dist or lib: ${target}.`);
     }
     if (!existsSync(join(packageRoot, target))) {
       throw new ReleaseError(

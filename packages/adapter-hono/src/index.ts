@@ -1,17 +1,34 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import {
-  type ComposableHttpRouter,
-  type HttpRouter,
-  type Logger,
-  consoleLogger,
-} from "@typespex/http-server";
+
+export interface FetchRouter {
+  handle(request: Request): Promise<Response>;
+}
+
+export interface ComposableFetchRouter extends FetchRouter {
+  tryHandle(request: Request): Promise<Response | undefined>;
+}
+
+export interface AdapterLogContext {
+  readonly [key: string]: unknown;
+}
+
+export interface AdapterLogger {
+  error(message: string, context?: AdapterLogContext): void;
+}
+
+const consoleLogger: AdapterLogger = {
+  error(message, context) {
+    if (context) console.error(message, context);
+    else console.error(message);
+  },
+};
 
 export interface HonoAppOptions {
-  readonly logger?: Logger;
+  readonly logger?: AdapterLogger;
 }
 
 /**
- * Creates Hono middleware that delegates matched requests to an HttpRouter and
+ * Creates Hono middleware that delegates matched requests to a composable Fetch router and
  * falls through to subsequent Hono handlers when no TypeSpec route matches.
  *
  * Register it before routes that should handle unmatched requests:
@@ -22,7 +39,7 @@ export interface HonoAppOptions {
  * app.get("/health", (c) => c.text("ok"));
  */
 export function toHonoMiddleware(
-  router: ComposableHttpRouter,
+  router: ComposableFetchRouter,
   options?: HonoAppOptions,
 ): MiddlewareHandler {
   const logger = options?.logger ?? consoleLogger;
@@ -50,13 +67,13 @@ export function toHonoMiddleware(
 }
 
 /**
- * Creates a Hono app from an HttpRouter.
+ * Creates a Hono app from a Fetch router.
  *
  * @example
  * const app = toHonoApp(router);
  * export default app;
  */
-export function toHonoApp(router: HttpRouter, options?: HonoAppOptions): Hono {
+export function toHonoApp(router: FetchRouter, options?: HonoAppOptions): Hono {
   const logger = options?.logger ?? consoleLogger;
   const app = new Hono();
 

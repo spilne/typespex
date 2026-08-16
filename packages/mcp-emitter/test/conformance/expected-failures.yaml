@@ -1,0 +1,39 @@
+# Capabilities intentionally excluded from the TypeSpex MCP 0.x tool release.
+# Stale entries fail the suite, so adding a capability removes its baseline here.
+server:
+  # Stateless capability probes require sampling, elicitation, and contextual
+  # header tools that are outside the tool-only release.
+  - server-stateless
+  - completion-complete
+  # The diagnostic fixture includes the TypeSpex-emitted 2020-12 schema. The
+  # suite additionally requires raw conditional and anchor keywords that have
+  # no TypeSpec language representation.
+  - json-schema-2020-12
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  # These tool-only runs satisfy every MUST but retain suite warnings for
+  # optional resource error details and SEP-2322 re-request behavior.
+  - sep-2164-resource-not-found
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  # The tools portion passes; failures are for excluded resource/prompt lists.
+  - caching
+  # SEP-2243 custom protocol headers are not part of the current MCP authoring contract.
+  - http-custom-header-server-validation
+  - input-required-result-basic-elicitation
+  - input-required-result-basic-sampling
+  - input-required-result-basic-list-roots
+  - input-required-result-request-state
+  - input-required-result-multiple-input-requests
+  - input-required-result-multi-round
+  - input-required-result-missing-input-response
+  - input-required-result-non-tool-request
+  - input-required-result-result-type
+  - input-required-result-tampered-state
+  - input-required-result-capability-check
+  - input-required-result-ignore-extra-params
