@@ -1,13 +1,19 @@
 import {
-  createTypeSpecSchema,
+  createMcpServer,
+  createSchema,
   mcpError,
   mcpSuccess,
-  type GeneratedMcpTool,
+  type McpToolDefinition,
   type McpApplication,
   type McpHandlersFor,
+  type McpToolContext,
+  // @ts-expect-error bridge wire markers are intentionally absent from the public root
+  mcpWireSuccess,
 } from "../src/index.js";
 
-const input = createTypeSpecSchema<{ wire_id: string }, { id: string }>({
+void mcpWireSuccess;
+
+const input = createSchema<{ wire_id: string }, { id: string }>({
   schema: true,
   codec: {
     root: {
@@ -18,12 +24,12 @@ const input = createTypeSpecSchema<{ wire_id: string }, { id: string }>({
     },
   },
 });
-const success = createTypeSpecSchema<{ wire_name: string }, { name: string }>({ schema: true });
-const error = createTypeSpecSchema<{ code: "missing" }, { code: "missing" }>({ schema: true });
+const success = createSchema<{ wire_name: string }, { name: string }>({ schema: true });
+const error = createSchema<{ code: "missing" }, { code: "missing" }>({ schema: true });
 
 const tools = [
-  { name: "read", handler: "read", input, success, errors: error },
-] as const satisfies readonly GeneratedMcpTool[];
+  { name: "read", input, success, errors: error },
+] as const satisfies readonly McpToolDefinition[];
 type Handlers = McpHandlersFor<typeof tools>;
 type ReadInput = Parameters<Handlers["read"]>[0];
 
@@ -45,6 +51,24 @@ void missingHandler;
 const native: McpApplication<Handlers> = { kind: "native", handlers };
 void native;
 
+interface ApplicationContext extends McpToolContext {
+  readonly prefix: string;
+}
+
+type ContextualHandlers = McpHandlersFor<typeof tools, ApplicationContext>;
+const contextual: McpApplication<ContextualHandlers, ApplicationContext> = {
+  createContext: (context) => ({ ...context, prefix: "pet:" }),
+  handlers: {
+    read: ({ id }, context) => ({ name: `${context.prefix}${id}` }),
+  },
+};
+const contextualServer = createMcpServer(
+  { implementation: { name: "contextual", version: "1.0.0" } },
+  tools,
+  contextual,
+);
+void contextualServer;
+
 // @ts-expect-error native applications cannot omit the generated handler map
 const invalidNative: McpApplication<Handlers> = { kind: "native" };
 void invalidNative;
@@ -52,13 +76,12 @@ void invalidNative;
 const taggedTools = [
   {
     name: "ambiguous",
-    handler: "ambiguous",
     input,
     success,
     errors: error,
     requiresTaggedResult: true,
   },
-] as const satisfies readonly GeneratedMcpTool[];
+] as const satisfies readonly McpToolDefinition[];
 type TaggedHandlers = McpHandlersFor<typeof taggedTools>;
 
 const taggedSuccess: TaggedHandlers = {

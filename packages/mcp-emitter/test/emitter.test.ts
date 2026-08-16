@@ -45,7 +45,7 @@ describe("@typespex/mcp emitter", () => {
     const server = result.read("pets", "mcp-server.ts");
     expect(server).toContain('instructions: "Manage pets"');
     expect(operations).toContain("export type PingInput = Record<string, never>");
-    expect(operations).toContain("createTypeSpecSchema<GetPetSuccess>");
+    expect(operations).toContain("createSchema<GetPetSuccess>");
     expect(operations).not.toContain("codec:");
   });
 
@@ -119,7 +119,7 @@ describe("@typespex/mcp emitter", () => {
     expect(operations).toContain("openWorldHint: true");
     expect(operations).toContain("destructiveHint: false");
     const server = result.read("pet-api", "mcp-server.ts");
-    expect(server).toContain("HttpBridgeMcpApplication");
+    expect(server).toContain("McpHttpBridgeApplication");
     expect(server).not.toContain("NativeMcpApplication");
   });
 
@@ -195,7 +195,7 @@ describe("@typespex/mcp emitter", () => {
     expect(result.read("multi-mode-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
     const server = result.read("multi-mode-api", "mcp-server.ts");
     expect(server).toContain("NativeMcpApplication<MultiModeApiMcpHandlers>");
-    expect(server).toContain("| HttpBridgeMcpApplication");
+    expect(server).toContain("| McpHttpBridgeApplication");
     expect(server).not.toContain("HybridMcpApplication");
     expect(result.read("multi-mode-api", "mcp-operations.ts")).toContain("readonly Item[]");
   });
@@ -638,7 +638,7 @@ describe("@typespex/mcp emitter", () => {
     );
     const operations = result.read("pets", "mcp-operations.ts");
     expect(operations.match(/const petSchemaDefinition/g)).toHaveLength(1);
-    expect(operations).toContain("createTypeSpecSchema<GetPetSuccess>");
+    expect(operations).toContain("createSchema<GetPetSuccess>");
     expect(operations).not.toContain("codec:");
     expect(operations).not.toContain("...{ $schema:");
     expect(result.read("pets", "models.ts")).not.toContain("PetWire");
@@ -663,7 +663,7 @@ describe("@typespex/mcp emitter", () => {
     expect(operations).not.toMatch(/import type \{[^\n]*(?:Address|Owner)/);
     const server = result.read("pets", "mcp-server.ts");
     expect(server).toContain("type NativeMcpApplication");
-    expect(server).not.toContain("type HttpBridgeMcpApplication");
+    expect(server).not.toContain("type McpHttpBridgeApplication");
   });
 
   test("rejects structured media types without a bridge serializer", () => {

@@ -21,10 +21,9 @@ app.listen(3000);
 ```
 
 The handler delegates unmatched requests to the generated router's configured
-not-found behavior. Errors handled inside the router use its configured error
-behavior; anything that escapes the router boundary is logged and converted to
-the Node adapter's standard 500 response. The handler ends the Express request
-cycle and does not call `next()`.
+not-found behavior. Expected HTTP errors remain responses; unexpected failures
+are passed to Express error middleware with `next(error)`. The handler calls
+`next()` only for failures, not for unmatched routes.
 
 TypeSpex decodes and validates bodies from the raw request stream. Register the
 handler before `express.json()`, `express.urlencoded()`, or other middleware that
@@ -33,8 +32,8 @@ consumes that stream.
 ## Runtime requirements
 
 The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` and
-Express `5.x` are required. `@typespex/adapter-node` is installed as a regular
-dependency; Express is a peer dependency. TypeScript
+Express `5.x` are required. `@typespex/adapter-node` and `@typespex/http-server`
+are installed as regular dependencies; Express is a peer dependency. TypeScript
 projects should install `@types/express` `5.x` as a development dependency.
 
 ## License

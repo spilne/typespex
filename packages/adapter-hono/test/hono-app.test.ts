@@ -48,15 +48,22 @@ describe("toHonoApp", () => {
     expect(response.status).toBe(404);
   });
 
-  test("returns 500 on unhandled router error", async () => {
+  test("delegates unhandled router errors to Hono", async () => {
+    const failure = new Error("boom");
+    let observed: unknown;
     const router = mockRouter(async () => {
-      throw new Error("boom");
+      throw failure;
     });
     const app = toHonoApp(router);
+    app.onError((error, c) => {
+      observed = error;
+      return c.text("hono error boundary", 598);
+    });
 
     const response = await app.fetch(new Request("http://localhost/test"));
-    expect(response.status).toBe(500);
-    expect(await response.text()).toBe("Internal Server Error");
+    expect(response.status).toBe(598);
+    expect(await response.text()).toBe("hono error boundary");
+    expect(observed).toBe(failure);
   });
 });
 
@@ -107,5 +114,28 @@ describe("toHonoMiddleware", () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ source: "typespex" });
+  });
+
+  test("delegates unhandled router errors to Hono", async () => {
+    const failure = new Error("boom");
+    let observed: unknown;
+    const router = mockRouter(
+      async () => new Response("unused"),
+      async () => {
+        throw failure;
+      },
+    );
+    const app = new Hono();
+    app.use("*", toHonoMiddleware(router));
+    app.onError((error, c) => {
+      observed = error;
+      return c.text("hono middleware error boundary", 598);
+    });
+
+    const response = await app.fetch(new Request("http://localhost/pets"));
+
+    expect(response.status).toBe(598);
+    expect(await response.text()).toBe("hono middleware error boundary");
+    expect(observed).toBe(failure);
   });
 });

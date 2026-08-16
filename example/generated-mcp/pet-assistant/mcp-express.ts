@@ -4,9 +4,9 @@ import { createPetAssistantMcpServer, type PetAssistantMcpApplication } from "./
 
 const application: PetAssistantMcpApplication = applicationDefinition;
 import { toExpressHandler, type ExpressRequestHandler } from "@typespex/adapter-express";
-import { createTypespexHttpHandler } from "@typespex/mcp-transport-http";
+import { createMcpHttpHandler } from "@typespex/mcp-transport-http";
 
-const mcpHandler = createTypespexHttpHandler(
+const mcpHandler = createMcpHttpHandler(
   () => createPetAssistantMcpServer(application),
   application.http,
 );

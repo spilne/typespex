@@ -21,37 +21,43 @@ import {
   type McpContent,
   type McpToolResult,
 } from "./results.js";
-import type { TypeSpecSchema } from "./schema.js";
+import type { Schema } from "./schema.js";
 
-export type McpToolHandler<Input, Success, Error = never> = (
+export type McpToolHandler<
+  Input,
+  Success,
+  Error = never,
+  Context extends McpToolContext = McpToolContext,
+> = (
   input: Input,
-  context: McpToolContext,
+  context: Context,
 ) => MaybePromise<Success | Error | McpToolResult<Success, Error> | McpToolError>;
 
 /** Handler form emitted when success and error wire contracts overlap. */
-export type McpTaggedToolHandler<Input, Success, Error> = (
-  input: Input,
-  context: McpToolContext,
-) => MaybePromise<McpToolResult<Success, Error> | McpToolError>;
+export type McpTaggedToolHandler<
+  Input,
+  Success,
+  Error,
+  Context extends McpToolContext = McpToolContext,
+> = (input: Input, context: Context) => MaybePromise<McpToolResult<Success, Error> | McpToolError>;
 
-export interface GeneratedMcpTool<
+export interface McpToolDefinition<
   Name extends string = string,
-  InputWire = any,
-  Input = any,
-  SuccessWire = any,
-  Success = any,
-  ErrorWire = any,
-  Error = any,
+  InputWire = unknown,
+  Input = unknown,
+  SuccessWire = unknown,
+  Success = unknown,
+  ErrorWire = unknown,
+  Error = unknown,
 > {
   readonly name: Name;
-  readonly handler: Name;
   readonly title?: string;
   readonly description?: string;
   readonly icons?: readonly Icon[];
   readonly annotations?: ToolAnnotations;
-  readonly input: TypeSpecSchema<InputWire, Input>;
-  readonly success?: TypeSpecSchema<SuccessWire, Success>;
-  readonly errors?: TypeSpecSchema<ErrorWire, Error>;
+  readonly input: Schema<InputWire, Input>;
+  readonly success?: Schema<SuccessWire, Success>;
+  readonly errors?: Schema<ErrorWire, Error>;
   readonly voidResult?: boolean;
   readonly requiresTaggedResult?: true;
 }
@@ -59,47 +65,55 @@ export interface GeneratedMcpTool<
 /** @internal Execution seam used by protocol bridges without coupling them to the server core. */
 export interface McpToolExecutor {
   readonly input: "semantic" | "wire";
-  execute(tool: GeneratedMcpTool, input: unknown, context: McpToolContext): MaybePromise<unknown>;
+  execute(tool: McpToolDefinition, input: unknown, context: McpToolContext): MaybePromise<unknown>;
 }
 
 /** @internal Server application produced by a protocol bridge. */
-export interface ExecutableMcpApplication extends McpApplicationBase {
+export interface ExecutableMcpApplication<
+  Context extends McpToolContext = McpToolContext,
+> extends McpApplicationBase<Context> {
   readonly kind: "executor";
   readonly executor: McpToolExecutor;
 }
 
-export type McpServerApplication<Handlers> =
-  | NativeMcpApplication<Handlers>
-  | ExecutableMcpApplication;
+export type McpServerApplication<Handlers, Context extends McpToolContext = McpToolContext> =
+  | NativeMcpApplication<Handlers, Context>
+  | ExecutableMcpApplication<Context>;
 
-type SchemaSemantic<Schema> = Schema extends TypeSpecSchema<any, infer Semantic> ? Semantic : never;
-type ToolSuccess<Tool extends GeneratedMcpTool> =
+type SchemaSemantic<SchemaType> = SchemaType extends Schema<any, infer Semantic> ? Semantic : never;
+type ToolSuccess<Tool extends McpToolDefinition> =
   | (Tool extends { readonly success: infer Schema } ? SchemaSemantic<Schema> : never)
   | (Tool extends { readonly voidResult: true } ? void : never);
-type ToolError<Tool extends GeneratedMcpTool> = Tool extends { readonly errors: infer Schema }
-  ? SchemaSemantic<Schema>
+type ToolError<Tool extends McpToolDefinition> = Tool extends {
+  readonly errors: infer SchemaType;
+}
+  ? SchemaSemantic<SchemaType>
   : never;
-type HandlerFor<Tool extends GeneratedMcpTool> = Tool extends {
+type HandlerFor<Tool extends McpToolDefinition, Context extends McpToolContext> = Tool extends {
   readonly requiresTaggedResult: true;
 }
-  ? McpTaggedToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>>
-  : McpToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>>;
+  ? McpTaggedToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>, Context>
+  : McpToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>, Context>;
 
-export type McpHandlersFor<Tools extends readonly GeneratedMcpTool[]> = {
-  readonly [Tool in Tools[number] as Tool["handler"]]: HandlerFor<Tool>;
+export type McpHandlersFor<
+  Tools extends readonly McpToolDefinition[],
+  Context extends McpToolContext = McpToolContext,
+> = {
+  readonly [Tool in Tools[number] as Tool["name"]]: HandlerFor<Tool, Context>;
 };
 
-export interface GeneratedMcpServerDefinition {
+export interface McpServerDefinition {
   readonly implementation: Implementation;
   readonly instructions?: string;
-  /** @internal Registration seam reserved for generated resources and prompts. */
-  readonly registerCapabilities?: readonly ((server: McpServer) => void)[];
 }
 
-export function createGeneratedMcpServer<const Tools extends readonly GeneratedMcpTool[]>(
-  definition: GeneratedMcpServerDefinition,
+export function createMcpServer<
+  const Tools extends readonly McpToolDefinition[],
+  Context extends McpToolContext = McpToolContext,
+>(
+  definition: McpServerDefinition,
   tools: Tools,
-  application: McpServerApplication<McpHandlersFor<Tools>>,
+  application: McpServerApplication<McpHandlersFor<Tools, Context>, Context>,
 ): McpServer {
   const server = new McpServer(definition.implementation, {
     instructions: definition.instructions,
@@ -123,16 +137,14 @@ export function createGeneratedMcpServer<const Tools extends readonly GeneratedM
       async (input, rawContext) => executeTool(tool, input, rawContext, application),
     );
   }
-  for (const register of definition.registerCapabilities ?? []) register(server);
-
   return server;
 }
 
 async function executeTool(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   input: unknown,
   rawContext: ServerContext,
-  application: McpServerApplication<Record<string, McpToolHandler<any, any, any>>>,
+  application: McpServerApplication<Record<string, McpToolHandler<any, any, any, any>>, any>,
 ): Promise<CallToolResult> {
   let context = createToolContext(rawContext);
   try {
@@ -142,9 +154,7 @@ async function executeTool(
         return application.executor.execute(tool, input, context);
       }
       const handlers = application.handlers as Record<string, unknown>;
-      const nativeHandler = Object.hasOwn(handlers, tool.handler)
-        ? handlers[tool.handler]
-        : undefined;
+      const nativeHandler = Object.hasOwn(handlers, tool.name) ? handlers[tool.name] : undefined;
       if (typeof nativeHandler !== "function") {
         throw new McpToolError(`No handler is configured for tool ${tool.name}.`);
       }
@@ -207,7 +217,7 @@ function isClassifiedWireResult(value: unknown): value is McpWireToolResult {
 }
 
 async function normalizeToolResult(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   value: unknown,
 ): Promise<CallToolResult> {
   if (isClassifiedWireResult(value)) {
@@ -248,7 +258,7 @@ async function normalizeToolResult(
 }
 
 async function normalizeClassifiedWireResult(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   result: McpWireToolResult,
 ): Promise<CallToolResult> {
   if (result.kind === "success") {
@@ -274,7 +284,7 @@ async function normalizeClassifiedWireResult(
 }
 
 async function encodeSuccess(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   value: unknown,
   content?: McpContent,
 ): Promise<CallToolResult> {
@@ -293,7 +303,7 @@ async function encodeSuccess(
 }
 
 async function encodeError(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   value: unknown,
   content?: McpContent,
 ): Promise<CallToolResult> {
@@ -346,7 +356,7 @@ async function runMiddleware(
   tool: string,
   input: unknown,
   context: McpToolContext,
-  middleware: readonly McpToolMiddleware[],
+  middleware: readonly McpToolMiddleware<any>[],
   invoke: () => Promise<unknown>,
 ): Promise<unknown> {
   let index = -1;

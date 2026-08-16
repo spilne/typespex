@@ -8,8 +8,12 @@ not include transports, framework adapters, or HTTP bridge execution.
 
 ## Entry points
 
-- `@typespex/mcp-server` exports typed applications, contexts, results, Standard Schema adapters,
-  and generated-server primitives.
+- `@typespex/mcp-server` exports `McpToolDefinition`, `McpServerDefinition`, `Schema`,
+  `createSchema`, `createMcpServer`, typed applications and contexts, middleware, and result
+  helpers.
+
+The `@typespex/mcp-server/internal` subpath contains the execution seam used by protocol bridges.
+Application code should not import it.
 
 ## Runtime requirements
 

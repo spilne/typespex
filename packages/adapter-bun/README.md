@@ -5,10 +5,11 @@ handler. Generated HTTP and MCP servers both satisfy the structural contract.
 
 ## Entry points
 
-- `@typespex/adapter-bun` exports `toBunHandler` and its small structural router,
-  logger, and option types.
+- `@typespex/adapter-bun` exports `toBunHandler` and `BunHandlerOptions`.
 
-Pass the returned `fetch` handler to `Bun.serve`.
+Pass the returned `fetch` handler to `Bun.serve`. It accepts the shared
+`HttpRouter` and `Logger` contracts from `@typespex/http-server` and converts
+unexpected failures to a logged 500 response.
 
 ## Runtime requirements
 

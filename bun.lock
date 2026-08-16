@@ -61,8 +61,10 @@
     "packages/adapter-bun": {
       "name": "@typespex/adapter-bun",
       "version": "0.1.1",
-      "devDependencies": {
+      "dependencies": {
         "@typespex/http-server": "workspace:*",
+      },
+      "devDependencies": {
         "typescript": "^5.7.0",
       },
     },
@@ -71,10 +73,10 @@
       "version": "0.1.1",
       "dependencies": {
         "@typespex/adapter-node": "workspace:*",
+        "@typespex/http-server": "workspace:*",
       },
       "devDependencies": {
         "@types/express": "^5.0.6",
-        "@typespex/http-server": "workspace:*",
         "express": "^5.2.1",
         "typescript": "^5.7.0",
       },
@@ -85,8 +87,10 @@
     "packages/adapter-hono": {
       "name": "@typespex/adapter-hono",
       "version": "0.1.1",
-      "devDependencies": {
+      "dependencies": {
         "@typespex/http-server": "workspace:*",
+      },
+      "devDependencies": {
         "hono": "^4.13.1",
         "typescript": "^5.7.0",
       },
@@ -97,9 +101,11 @@
     "packages/adapter-node": {
       "name": "@typespex/adapter-node",
       "version": "0.1.1",
+      "dependencies": {
+        "@typespex/http-server": "workspace:*",
+      },
       "devDependencies": {
         "@types/node": "^22.20.1",
-        "@typespex/http-server": "workspace:*",
         "typescript": "^5.7.0",
       },
     },

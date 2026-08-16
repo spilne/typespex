@@ -2,7 +2,7 @@
 
 import type {
   ComposableHttpRouter,
-  HttpInterpreterOptions,
+  HttpRouterOptions,
   MatchedRequestContext,
 } from "@typespex/http-server";
 import { bindRoute, createHttpRouter } from "@typespex/http-server";
@@ -11,7 +11,7 @@ import { PetsOperations } from "./server-operations.js";
 
 export function createPetStoreServerRouter<Ctx extends MatchedRequestContext>(
   implementation: PetStoreServer<Ctx>,
-  options?: HttpInterpreterOptions<Ctx>,
+  options?: HttpRouterOptions<Ctx>,
 ): ComposableHttpRouter {
   return createHttpRouter(
     [

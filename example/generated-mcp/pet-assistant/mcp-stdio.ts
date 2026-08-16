@@ -3,9 +3,9 @@ import applicationDefinition from "../../mcp-application.js";
 import { createPetAssistantMcpServer, type PetAssistantMcpApplication } from "./mcp-server.js";
 
 const application: PetAssistantMcpApplication = applicationDefinition;
-import { serveTypespexStdio } from "@typespex/mcp-transport-stdio";
+import { serveMcpStdio } from "@typespex/mcp-transport-stdio";
 
-export const petAssistantMcpStdioServer = serveTypespexStdio(
+export const petAssistantMcpStdioServer = serveMcpStdio(
   () => createPetAssistantMcpServer(application),
   application.stdio,
 );

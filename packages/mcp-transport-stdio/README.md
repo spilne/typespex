@@ -7,7 +7,7 @@ contains MCP frames only.
 
 ## Entry points
 
-- `@typespex/mcp-transport-stdio` exports the stdio launcher and its options.
+- `@typespex/mcp-transport-stdio` exports `serveMcpStdio` and its options.
 
 ## Runtime requirements
 

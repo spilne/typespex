@@ -740,4 +740,34 @@ describe("createHttpRouter", () => {
       path: "/boom",
     });
   });
+
+  test("lets unexpected failures reach the host error boundary by default", async () => {
+    const failure = new Error("something broke");
+    const operation = makeOperation({
+      endpoint: {
+        service: { name: "TestService", hints: emptyHints() },
+        namespaces: [],
+        operation: {
+          name: "boom",
+          operationId: "Test.boom",
+          method: "GET",
+          path: "/boom",
+          hints: emptyHints(),
+        },
+      },
+      decodeInput() {
+        return Either.right({});
+      },
+      encodeResult() {
+        return Response.json({}, { status: 200 });
+      },
+    });
+    const router = createHttpRouter([
+      bindRoute(operation, async () => {
+        throw failure;
+      }),
+    ]);
+
+    await expect(router.handle(new Request("http://localhost/boom"))).rejects.toBe(failure);
+  });
 });

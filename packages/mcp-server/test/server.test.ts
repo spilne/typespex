@@ -2,17 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
-  createGeneratedMcpServer,
-  createTypeSpecSchema,
+  createMcpServer,
+  createSchema,
   defineMcpApplication,
   isMcpToolError,
   McpToolError,
   mcpError,
   mcpSuccess,
-  mcpWireError,
-  mcpWireSuccess,
-  type GeneratedMcpTool,
+  type McpToolDefinition,
 } from "../src/index.js";
+import { mcpWireError, mcpWireSuccess } from "../src/internal.js";
 
 const open: { client: Client; server: McpServer }[] = [];
 
@@ -44,7 +43,7 @@ describe("generated MCP server", () => {
     expect(isMcpToolError(foreignError)).toBe(true);
     expect(isMcpToolError({ message: "spoofed", options: {} })).toBe(false);
 
-    const input = createTypeSpecSchema<Record<string, never>>({
+    const input = createSchema<Record<string, never>>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -52,7 +51,7 @@ describe("generated MCP server", () => {
         additionalProperties: false,
       },
     });
-    const success = createTypeSpecSchema<{ value: string }>({
+    const success = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -65,12 +64,12 @@ describe("generated MCP server", () => {
     Object.defineProperty(foreignWireResult, Symbol.for("@typespex/mcp-server/wire-result"), {
       value: true,
     });
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "cross-instance", version: "1.0.0" } },
       [
-        { name: "throwForeign", handler: "throwForeign", input, voidResult: true },
-        { name: "returnForeign", handler: "returnForeign", input, voidResult: true },
-        { name: "foreignWire", handler: "foreignWire", input, success },
+        { name: "throwForeign", input, voidResult: true },
+        { name: "returnForeign", input, voidResult: true },
+        { name: "foreignWire", input, success },
       ],
       // Simulate values created by a separately installed copy of @typespex/mcp-server.
       {
@@ -102,9 +101,9 @@ describe("generated MCP server", () => {
   });
 
   test("defers validator compilation and avoids codecs for identity contracts", async () => {
-    let invalidPatternSchema: ReturnType<typeof createTypeSpecSchema> | undefined;
+    let invalidPatternSchema: ReturnType<typeof createSchema> | undefined;
     expect(() => {
-      invalidPatternSchema = createTypeSpecSchema({
+      invalidPatternSchema = createSchema({
         schema: {
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "string",
@@ -114,7 +113,7 @@ describe("generated MCP server", () => {
     }).not.toThrow();
     expect(invalidPatternSchema).toBeDefined();
 
-    const identity = createTypeSpecSchema<{ value: string }>({
+    const identity = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -128,7 +127,7 @@ describe("generated MCP server", () => {
     expect(decoded).toEqual({ value });
     if ("value" in decoded) expect(decoded.value).toBe(value);
 
-    const projected = createTypeSpecSchema({
+    const projected = createSchema({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -202,7 +201,7 @@ describe("generated MCP server", () => {
       },
     });
 
-    const recursive = createTypeSpecSchema({
+    const recursive = createSchema({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         $ref: "#/$defs/Node",
@@ -229,7 +228,7 @@ describe("generated MCP server", () => {
       );
     }
 
-    const recursiveUnion = createTypeSpecSchema({
+    const recursiveUnion = createSchema({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         $ref: "#/$defs/Value",
@@ -270,7 +269,7 @@ describe("generated MCP server", () => {
   });
 
   test("projects wider handler objects through codec-less generated output schemas", async () => {
-    const input = createTypeSpecSchema<Record<string, never>>({
+    const input = createSchema<Record<string, never>>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -278,7 +277,7 @@ describe("generated MCP server", () => {
         additionalProperties: false,
       },
     });
-    const success = createTypeSpecSchema<{ id: string; owner: { name: string } }>({
+    const success = createSchema<{ id: string; owner: { name: string } }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         $ref: "#/$defs/PetAlias",
@@ -299,9 +298,9 @@ describe("generated MCP server", () => {
         },
       },
     });
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "identity-output", version: "1.0.0" } },
-      [{ name: "read", handler: "read", input, success }],
+      [{ name: "read", input, success }],
       {
         handlers: {
           read: () => ({
@@ -322,7 +321,7 @@ describe("generated MCP server", () => {
   });
 
   test("reports JSON serialization failures as operational tool errors", async () => {
-    const input = createTypeSpecSchema<Record<string, never>>({
+    const input = createSchema<Record<string, never>>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -330,12 +329,12 @@ describe("generated MCP server", () => {
         additionalProperties: false,
       },
     });
-    const success = createTypeSpecSchema<bigint>({
+    const success = createSchema<bigint>({
       schema: { $schema: "https://json-schema.org/draft/2020-12/schema" },
     });
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "json-result", version: "1.0.0" } },
-      [{ name: "serialize", handler: "serialize", input, success }],
+      [{ name: "serialize", input, success }],
       { handlers: { serialize: () => 1n } },
     );
     const client = await connect(server, "legacy");
@@ -348,7 +347,7 @@ describe("generated MCP server", () => {
 
   for (const negotiation of ["legacy", "auto"] as const) {
     test(`lists and calls typed tools over ${negotiation} protocol negotiation`, async () => {
-      const input = createTypeSpecSchema<{ id: string }>({
+      const input = createSchema<{ id: string }>({
         schema: {
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "object",
@@ -363,7 +362,7 @@ describe("generated MCP server", () => {
           },
         },
       });
-      const success = createTypeSpecSchema<{ id: string; name: string }>({
+      const success = createSchema<{ id: string; name: string }>({
         schema: {
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "object",
@@ -381,7 +380,7 @@ describe("generated MCP server", () => {
           },
         },
       });
-      const errors = createTypeSpecSchema<{ code: "not-found"; message: string }>({
+      const errors = createSchema<{ code: "not-found"; message: string }>({
         schema: {
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "object",
@@ -403,10 +402,9 @@ describe("generated MCP server", () => {
         },
       });
       let requestId: string | number | undefined;
-      const tools: GeneratedMcpTool[] = [
+      const tools: McpToolDefinition[] = [
         {
           name: "getPet",
-          handler: "getPet",
           title: "Get pet",
           input,
           success,
@@ -414,18 +412,16 @@ describe("generated MCP server", () => {
         },
         {
           name: "explode",
-          handler: "explode",
           input,
           success,
         },
         {
           name: "operational",
-          handler: "operational",
           input,
           success,
         },
       ];
-      const server = createGeneratedMcpServer(
+      const server = createMcpServer(
         { implementation: { name: "test", version: "1.0.0" } },
         tools,
         {
@@ -480,7 +476,7 @@ describe("generated MCP server", () => {
   }
 
   test("rejects runtime ambiguity instead of guessing a result class", async () => {
-    const schema = createTypeSpecSchema<{ value: string }>({
+    const schema = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -495,12 +491,11 @@ describe("generated MCP server", () => {
         },
       },
     });
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "ambiguous", version: "1.0.0" } },
       [
         {
           name: "ambiguous",
-          handler: "ambiguous",
           input: schema,
           success: schema,
           errors: schema,
@@ -517,7 +512,7 @@ describe("generated MCP server", () => {
   });
 
   test("does not resolve native handlers through the prototype chain", async () => {
-    const input = createTypeSpecSchema<Record<string, never>>({
+    const input = createSchema<Record<string, never>>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -532,20 +527,20 @@ describe("generated MCP server", () => {
         inheritedCalls += 1;
       },
     }) as Record<string, never>;
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "own-handlers", version: "1.0.0" } },
-      [{ name: "safe-tool", handler: "inherited", input, voidResult: true }],
+      [{ name: "inherited", input, voidResult: true }],
       { handlers },
     );
     const client = await connect(server, "legacy");
-    const result = await client.callTool({ name: "safe-tool", arguments: {} });
+    const result = await client.callTool({ name: "inherited", arguments: {} });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toContain("No handler is configured");
     expect(inheritedCalls).toBe(0);
   });
 
   test("validates every native result form and middleware contract", async () => {
-    const schema = createTypeSpecSchema<{ value: string }>({
+    const schema = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -560,19 +555,15 @@ describe("generated MCP server", () => {
         },
       },
     });
-    const tool = (name: string, extras: Partial<GeneratedMcpTool> = {}): GeneratedMcpTool => ({
+    const tool = (name: string, extras: Partial<McpToolDefinition> = {}): McpToolDefinition => ({
       name,
-      handler: name,
       input: schema,
       ...extras,
     });
     const unhandled: string[] = [];
     const middlewareCalls: string[] = [];
-    const server = createGeneratedMcpServer(
-      {
-        implementation: { name: "results", version: "1.0.0" },
-        registerCapabilities: [(registered) => expect(registered).toBeDefined()],
-      },
+    const server = createMcpServer(
+      { implementation: { name: "results", version: "1.0.0" } },
       [
         tool("void", { voidResult: true }),
         tool("optionalVoid", { success: schema, voidResult: true }),
@@ -640,7 +631,7 @@ describe("generated MCP server", () => {
   });
 
   test("validates classified bridge wire results at the server boundary", async () => {
-    const schema = createTypeSpecSchema<{ value: string }>({
+    const schema = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -650,10 +641,10 @@ describe("generated MCP server", () => {
       },
     });
     const tools = [
-      { name: "success", handler: "success", input: schema, success: schema },
-      { name: "error", handler: "error", input: schema, errors: schema },
-    ] as const satisfies readonly GeneratedMcpTool[];
-    const server = createGeneratedMcpServer(
+      { name: "success", input: schema, success: schema },
+      { name: "error", input: schema, errors: schema },
+    ] as const satisfies readonly McpToolDefinition[];
+    const server = createMcpServer(
       { implementation: { name: "wire-results", version: "1.0.0" } },
       tools,
       {
@@ -679,7 +670,7 @@ describe("generated MCP server", () => {
   });
 
   test("sanitizes context and error-observer failures", async () => {
-    const input = createTypeSpecSchema<Record<string, never>>({
+    const input = createSchema<Record<string, never>>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -687,9 +678,9 @@ describe("generated MCP server", () => {
         additionalProperties: false,
       },
     });
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "context-errors", version: "1.0.0" } },
-      [{ name: "run", handler: "run", input, voidResult: true }],
+      [{ name: "run", input, voidResult: true }],
       {
         handlers: { run: () => undefined },
         createContext() {

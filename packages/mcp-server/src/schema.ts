@@ -6,12 +6,14 @@ import {
 } from "@modelcontextprotocol/server";
 import { createValueCodec, type CodecIssue, type ValueCodecDocument } from "@typespex/codec";
 
-export interface TypeSpecSchemaPlan {
+/** Serializable schema and codec definition consumed by the MCP runtime. */
+export interface SchemaDefinition {
   readonly schema: boolean | Readonly<Record<string, unknown>>;
   readonly codec?: ValueCodecDocument;
 }
 
-export interface TypeSpecSchema<Wire = unknown, Semantic = Wire> {
+/** Runtime schema for validating wire values and converting semantic values. */
+export interface Schema<Wire = unknown, Semantic = Wire> {
   /** Schema used for MCP input: validates wire JSON and decodes semantic values. */
   readonly input: StandardSchemaWithJSON<Wire, Semantic>;
   /** Schema used for MCP output/error validation without applying input transforms. */
@@ -30,12 +32,12 @@ export type SchemaResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly issues: readonly StandardSchemaV1.Issue[] };
 
-export function createTypeSpecSchema<Wire = unknown, Semantic = Wire>(
-  plan: TypeSpecSchemaPlan,
-): TypeSpecSchema<Wire, Semantic> {
-  const schema = normalizeJsonSchema(plan.schema);
+export function createSchema<Wire = unknown, Semantic = Wire>(
+  definition: SchemaDefinition,
+): Schema<Wire, Semantic> {
+  const schema = normalizeJsonSchema(definition.schema);
   const wire = lazyJsonSchema<Wire>(schema);
-  const codec = plan.codec ? createValueCodec<Semantic>(plan.codec) : undefined;
+  const codec = definition.codec ? createValueCodec<Semantic>(definition.codec) : undefined;
   const projectWireValue = codec ? undefined : createWireProjector(schema);
   const input: StandardSchemaWithJSON<Wire, Semantic> = {
     "~standard": {

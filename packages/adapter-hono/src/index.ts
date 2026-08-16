@@ -1,31 +1,5 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
-
-export interface FetchRouter {
-  handle(request: Request): Promise<Response>;
-}
-
-export interface ComposableFetchRouter extends FetchRouter {
-  tryHandle(request: Request): Promise<Response | undefined>;
-}
-
-export interface AdapterLogContext {
-  readonly [key: string]: unknown;
-}
-
-export interface AdapterLogger {
-  error(message: string, context?: AdapterLogContext): void;
-}
-
-const consoleLogger: AdapterLogger = {
-  error(message, context) {
-    if (context) console.error(message, context);
-    else console.error(message);
-  },
-};
-
-export interface HonoAppOptions {
-  readonly logger?: AdapterLogger;
-}
+import { Hono, type MiddlewareHandler } from "hono";
+import type { ComposableHttpRouter, HttpRouter } from "@typespex/http-server";
 
 /**
  * Creates Hono middleware that delegates matched requests to a composable Fetch router and
@@ -38,24 +12,9 @@ export interface HonoAppOptions {
  * app.use("*", toHonoMiddleware(router));
  * app.get("/health", (c) => c.text("ok"));
  */
-export function toHonoMiddleware(
-  router: ComposableFetchRouter,
-  options?: HonoAppOptions,
-): MiddlewareHandler {
-  const logger = options?.logger ?? consoleLogger;
-
+export function toHonoMiddleware(router: ComposableHttpRouter): MiddlewareHandler {
   return async (c, next) => {
-    let response: Response | undefined;
-    try {
-      response = await router.tryHandle(c.req.raw);
-    } catch (error) {
-      logger.error("Unhandled error in request handler", {
-        error,
-        method: c.req.method,
-        url: c.req.url,
-      });
-      return c.text("Internal Server Error", 500);
-    }
+    const response = await router.tryHandle(c.req.raw);
 
     if (response === undefined) {
       await next();
@@ -73,22 +32,10 @@ export function toHonoMiddleware(
  * const app = toHonoApp(router);
  * export default app;
  */
-export function toHonoApp(router: FetchRouter, options?: HonoAppOptions): Hono {
-  const logger = options?.logger ?? consoleLogger;
+export function toHonoApp(router: HttpRouter): Hono {
   const app = new Hono();
 
-  app.all("*", async (c: Context) => {
-    try {
-      return await router.handle(c.req.raw);
-    } catch (error) {
-      logger.error("Unhandled error in request handler", {
-        error,
-        method: c.req.method,
-        url: c.req.url,
-      });
-      return c.text("Internal Server Error", 500);
-    }
-  });
+  app.all("*", (c) => router.handle(c.req.raw));
 
   return app;
 }

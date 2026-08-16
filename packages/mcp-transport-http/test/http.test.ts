@@ -6,17 +6,13 @@ import { toExpressHandler } from "@typespex/adapter-express";
 import { toHonoApp } from "@typespex/adapter-hono";
 import { toNodeHandler } from "@typespex/adapter-node";
 import {
-  createGeneratedMcpServer,
-  createTypeSpecSchema,
-  type GeneratedMcpTool,
+  createMcpServer,
+  createSchema,
+  type McpToolDefinition,
   type NativeMcpApplication,
 } from "@typespex/mcp-server";
 import express from "express";
-import {
-  createTypespexHttpHandler,
-  isLoopbackHost,
-  resolveMcpHttpServerOptions,
-} from "../src/index.js";
+import { createMcpHttpHandler, isLoopbackHost, resolveMcpHttpServerOptions } from "../src/index.js";
 
 interface BunServerHandle {
   readonly port: number;
@@ -199,7 +195,7 @@ describe("MCP Streamable HTTP transport", () => {
   });
 
   test("enforces exact Origin allowlists", async () => {
-    const handler = createTypespexHttpHandler(factory, {
+    const handler = createMcpHttpHandler(factory, {
       allowedOrigins: ["http://127.0.0.1:3000"],
     });
     handlers.push(handler);
@@ -229,7 +225,7 @@ describe("MCP Streamable HTTP transport", () => {
       scopes: ["tools:call"],
       extra: { tenant: "one" },
     };
-    const handler = createTypespexHttpHandler(factory, {
+    const handler = createMcpHttpHandler(factory, {
       host: "0.0.0.0",
       allowedHosts: ["api.example.test"],
       allowedOrigins: ["https://client.example.test"],
@@ -244,7 +240,7 @@ describe("MCP Streamable HTTP transport", () => {
   });
 
   test("supports verifier responses and sanitizes verifier failures", async () => {
-    const denied = createTypespexHttpHandler(factory, {
+    const denied = createMcpHttpHandler(factory, {
       host: "0.0.0.0",
       allowedHosts: ["api.example.test"],
       allowedOrigins: ["https://client.example.test"],
@@ -255,7 +251,7 @@ describe("MCP Streamable HTTP transport", () => {
     expect(await denied.fetch(protocolRequest(requestOptions))).toMatchObject({ status: 403 });
 
     const errors: Error[] = [];
-    const failed = createTypespexHttpHandler(factory, {
+    const failed = createMcpHttpHandler(factory, {
       host: "0.0.0.0",
       allowedHosts: ["api.example.test"],
       allowedOrigins: ["https://client.example.test"],
@@ -270,7 +266,7 @@ describe("MCP Streamable HTTP transport", () => {
     expect(response.headers.get("www-authenticate")).toBe("Bearer");
     expect(errors.map((error) => error.message)).toEqual(["credential backend unavailable"]);
 
-    const missing = createTypespexHttpHandler(factory, {
+    const missing = createMcpHttpHandler(factory, {
       host: "0.0.0.0",
       allowedHosts: ["api.example.test"],
       allowedOrigins: ["https://client.example.test"],
@@ -281,7 +277,7 @@ describe("MCP Streamable HTTP transport", () => {
   });
 });
 
-const schema = createTypeSpecSchema<{ value: string }>({
+const schema = createSchema<{ value: string }>({
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -291,21 +287,19 @@ const schema = createTypeSpecSchema<{ value: string }>({
   },
 });
 
-const tools: GeneratedMcpTool[] = [
-  { name: "echo", handler: "echo", input: schema, success: schema },
-];
+const tools: McpToolDefinition[] = [{ name: "echo", input: schema, success: schema }];
 const application: NativeMcpApplication<{ echo(input: { value: string }): { value: string } }> = {
   handlers: { echo: (input) => input },
 };
 const factory = () =>
-  createGeneratedMcpServer(
+  createMcpServer(
     { implementation: { name: "transport-test", version: "1.0.0" } },
     tools,
     application,
   );
 
 function trackedHandler() {
-  const handler = createTypespexHttpHandler(factory);
+  const handler = createMcpHttpHandler(factory);
   handlers.push(handler);
   return handler;
 }

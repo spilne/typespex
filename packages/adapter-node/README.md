@@ -6,8 +6,12 @@ the structural router contract.
 
 ## Entry points
 
-- `@typespex/adapter-node` exports `toNodeHandler` and its small structural
-  router, logger, and option types.
+- `@typespex/adapter-node` exports `toNodeHandler` and `NodeHandlerOptions`.
+
+The handler accepts the shared `HttpRouter` and `Logger` contracts from
+`@typespex/http-server`. Unexpected failures become a logged 500 response by
+default. Set `errorMode: "throw"` when embedding it in a host framework with
+its own error boundary.
 
 The adapter bridges Node request and response streams to the standard Fetch API
 types used by the runtime.

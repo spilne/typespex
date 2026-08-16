@@ -51,7 +51,7 @@ export interface ResolvedMcpHttpServerOptions {
  * Creates a fetch-native, security-gated MCP handler. It can be mounted in Bun,
  * Hono, Workers, or adapted to Node with `toNodeHandler` from `@typespex/adapter-node`.
  */
-export function createTypespexHttpHandler(
+export function createMcpHttpHandler(
   factory: McpServerFactory,
   options: McpHttpServerOptions = {},
 ): McpHttpHandler {

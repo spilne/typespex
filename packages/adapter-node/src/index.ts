@@ -1,28 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-
-export interface FetchRouter {
-  handle(request: Request): Promise<Response>;
-}
-
-export interface AdapterLogContext {
-  readonly [key: string]: unknown;
-}
-
-export interface AdapterLogger {
-  error(message: string, context?: AdapterLogContext): void;
-}
-
-const consoleLogger: AdapterLogger = {
-  error(message, context) {
-    if (context) console.error(message, context);
-    else console.error(message);
-  },
-};
+import { consoleLogger, type HttpRouter, type Logger } from "@typespex/http-server";
 
 export interface NodeHandlerOptions {
-  readonly logger?: AdapterLogger;
+  readonly logger?: Logger;
   /** Trust the first X-Forwarded-Proto value when running behind a trusted proxy. */
   readonly trustProxy?: boolean;
+  /**
+   * Whether unexpected router failures become a standalone 500 response or
+   * escape to a host framework. Defaults to `respond`.
+   */
+  readonly errorMode?: "respond" | "throw";
 }
 
 /**
@@ -33,7 +20,7 @@ export interface NodeHandlerOptions {
  * http.createServer(toNodeHandler(router)).listen(3000);
  */
 export function toNodeHandler(
-  router: FetchRouter,
+  router: HttpRouter,
   options?: NodeHandlerOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const logger = options?.logger ?? consoleLogger;
@@ -51,6 +38,7 @@ export function toNodeHandler(
         if (!res.destroyed) res.destroy(toError(error));
         return;
       }
+      if (options?.errorMode === "throw") throw error;
       logger.error("Unhandled error in request handler", {
         error,
         method: req.method,

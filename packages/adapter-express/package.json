@@ -45,11 +45,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@typespex/adapter-node": "workspace:*"
+    "@typespex/adapter-node": "workspace:*",
+    "@typespex/http-server": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@typespex/http-server": "workspace:*",
     "express": "^5.2.1",
     "typescript": "^5.7.0"
   },

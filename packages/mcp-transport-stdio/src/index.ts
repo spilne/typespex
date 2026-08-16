@@ -7,7 +7,7 @@ export interface McpStdioOptions {
 }
 
 /** Starts an MCP server without writing diagnostics to stdout. */
-export function serveTypespexStdio(
+export function serveMcpStdio(
   factory: McpServerFactory,
   options: McpStdioOptions = {},
 ): StdioServerHandle {
