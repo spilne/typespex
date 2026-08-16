@@ -512,9 +512,23 @@ function interpolatePath(
     }
     output = output.replaceAll(`{${parameter.name}}`, encoded);
   }
-  if (/\{[^}]+\}/.test(output))
+  if (hasUnresolvedRouteParameter(output))
     throw new McpToolError(`Unresolved HTTP route parameter in ${output}.`);
   return output;
+}
+
+function hasUnresolvedRouteParameter(path: string): boolean {
+  let opening = -1;
+  for (let index = 0; index < path.length; index++) {
+    const character = path[index];
+    if (character === "{" && opening === -1) {
+      opening = index;
+    } else if (character === "}" && opening !== -1) {
+      if (index > opening + 1) return true;
+      opening = -1;
+    }
+  }
+  return false;
 }
 
 function containsDotPathSegment(value: string): boolean {
@@ -533,11 +547,17 @@ function containsDotPathSegment(value: string): boolean {
 
 function createOperationUrl(baseUrl: URL, operationPath: string): URL {
   const url = new URL(baseUrl);
-  const basePath = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  const basePath = url.pathname === "/" ? "" : trimTrailingSlashes(url.pathname);
   const routePath = operationPath.startsWith("/") ? operationPath : `/${operationPath}`;
   url.pathname = `${basePath}${routePath}` || "/";
   url.hash = "";
   return url;
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
 }
 
 function appendParameter(

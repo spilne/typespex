@@ -114,7 +114,7 @@ describe("MCP Streamable HTTP transport", () => {
       resolveMcpHttpServerOptions({
         host: " [::1] ",
         port: 0,
-        path: "/custom///",
+        path: `/custom${"/".repeat(10_000)}`,
         allowedHosts: ["http://localhost:3000"],
         allowedOrigins: ["http://127.0.0.1:3000"],
         legacy: "reject",

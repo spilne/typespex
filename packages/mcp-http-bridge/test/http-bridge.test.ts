@@ -146,6 +146,27 @@ describe("MCP HTTP bridge", () => {
     expect(fetched).toBe(false);
   });
 
+  test("rejects unresolved route parameters before fetch", async () => {
+    let fetched = false;
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "unresolved-path",
+      method: "GET",
+      path: "/items/{missing}",
+      responses: [{ statuses: [200], kind: "json" }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+    };
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        fetch: (async () => {
+          fetched = true;
+          return Response.json({});
+        }) as typeof fetch,
+      }),
+    ).rejects.toThrow("Unresolved HTTP route parameter");
+    expect(fetched).toBe(false);
+  });
+
   test("fails required authentication before fetch", async () => {
     let fetched = false;
     const operation: HttpBridgeOperation = {

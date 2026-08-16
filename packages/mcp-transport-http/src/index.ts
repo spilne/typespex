@@ -164,7 +164,10 @@ function normalizePath(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
     throw new TypeError(`Invalid MCP HTTP path: ${path}.`);
   }
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  if (path.length === 1) return path;
+  let end = path.length;
+  while (end > 1 && path.charCodeAt(end - 1) === 47) end--;
+  return path.slice(0, end);
 }
 
 function normalizeAllowlistHostname(value: string): string {
