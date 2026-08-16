@@ -34,15 +34,43 @@ export function createServiceLayout<FileKey extends string>(
   const filePattern =
     options["file-name-pattern"] ?? (output === "prefix" ? "{service}.{file}" : "{file}");
   const render = (pattern: string, file = "") =>
-    pattern
-      .replace(/\{([^}]+)\}/g, (_match, token: string) =>
-        token.trim() === "file" ? file : (tokens[token.trim()] ?? ""),
-      )
-      .replace(/[^A-Za-z0-9._-]/g, "-");
+    renderPatternTokens(pattern, file, tokens).replace(/[^A-Za-z0-9._-]/g, "-");
   return {
     outputDir: output === "directory" ? render(folderPattern) : "",
     fileNames: Object.fromEntries(
       Object.entries<string>(files).map(([key, file]) => [key, render(filePattern, file)]),
     ) as Record<FileKey, string>,
   };
+}
+
+function renderPatternTokens(
+  pattern: string,
+  file: string,
+  tokens: Readonly<Record<string, string>>,
+): string {
+  const rendered: string[] = [];
+  let cursor = 0;
+  while (cursor < pattern.length) {
+    const openingBrace = pattern.indexOf("{", cursor);
+    if (openingBrace === -1) {
+      rendered.push(pattern.slice(cursor));
+      break;
+    }
+    rendered.push(pattern.slice(cursor, openingBrace));
+
+    const closingBrace = pattern.indexOf("}", openingBrace + 1);
+    if (closingBrace === -1) {
+      rendered.push(pattern.slice(openingBrace));
+      break;
+    }
+    const rawToken = pattern.slice(openingBrace + 1, closingBrace);
+    if (rawToken.length === 0) {
+      rendered.push("{}");
+    } else {
+      const token = rawToken.trim();
+      rendered.push(token === "file" ? file : (tokens[token] ?? ""));
+    }
+    cursor = closingBrace + 1;
+  }
+  return rendered.join("");
 }

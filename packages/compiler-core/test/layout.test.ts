@@ -39,6 +39,20 @@ describe("compiler service layouts", () => {
     });
   });
 
+  test("renders malformed layout patterns in linear time", () => {
+    const pattern = "{{|".repeat(20_000);
+    const layout = createServiceLayout(
+      "Service",
+      { models: "models" },
+      {
+        "service-output": "directory",
+        "service-folder-pattern": pattern,
+      },
+    );
+
+    expect(layout.outputDir).toBe("-".repeat(pattern.length));
+  });
+
   test("detects case-insensitive artifact collisions before writes", () => {
     expect(() =>
       assertUniqueArtifactPaths([
