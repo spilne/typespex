@@ -1,5 +1,5 @@
 emit:
-  - "@typespex/emitter"
+  - "@typespex/http-emitter"
 options:
-  "@typespex/emitter":
+  "@typespex/http-emitter":
     emitter-output-dir: "{output-dir}"

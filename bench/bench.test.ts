@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createRadixMatcher, createRegexMatcher } from "@typespex/runtime";
+import { createRadixMatcher, createRegexMatcher } from "@typespex/http-server";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

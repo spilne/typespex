@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_COVERAGE_FILE = ".context/coverage/lcov.info";
 const COVERAGE_ROOTS = [
-  "packages/runtime/src",
-  "packages/shim-bun/src",
-  "packages/shim-express/src",
-  "packages/shim-hono/src",
-  "packages/shim-node/src",
+  "packages/codec/src",
+  "packages/http-client/src",
+  "packages/compiler-core/src",
+  "packages/http-server/src",
+  "packages/adapter-bun/src",
+  "packages/adapter-express/src",
+  "packages/adapter-hono/src",
+  "packages/adapter-node/src",
 ] as const;
 
 export interface CoverageThresholds {

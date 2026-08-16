@@ -1,0 +1,60 @@
+{
+  "name": "@typespex/adapter-hono",
+  "version": "0.1.1",
+  "description": "Hono adapter for @typespex/http-server HTTP router",
+  "keywords": [
+    "adapter",
+    "hono",
+    "http",
+    "server",
+    "typespec"
+  ],
+  "homepage": "https://github.com/spilne/typespex",
+  "bugs": {
+    "url": "https://github.com/spilne/typespex/issues"
+  },
+  "license": "MIT",
+  "author": "spilne",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spilne/typespex.git",
+    "directory": "packages/adapter-hono"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@typespex/http-server": "workspace:*"
+  },
+  "devDependencies": {
+    "hono": "^4.13.1",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "hono": ">=4.0.0 <5.0.0"
+  },
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0"
+  }
+}

@@ -21,43 +21,108 @@ export interface ReleasePackage {
   readonly imports: readonly string[];
 }
 
-/**
- * Publication order is intentional: every package that can depend on the
- * runtime comes after it. Keep this list explicit so adding a workspace cannot
- * silently add it to a release.
+interface PackageBoundary {
+  readonly dependencies: readonly string[];
+  readonly peerDependencies: readonly string[];
+}
+
+/** Publication order follows the public dependency graph. Keep this list
+ * explicit so adding a workspace cannot silently add it to a release.
  */
 export const RELEASE_PACKAGES: readonly ReleasePackage[] = [
   {
-    directory: "runtime",
-    name: "@typespex/runtime",
-    imports: ["@typespex/runtime", "@typespex/runtime/server"],
+    directory: "codec",
+    name: "@typespex/codec",
+    imports: ["@typespex/codec"],
   },
   {
-    directory: "emitter",
-    name: "@typespex/emitter",
-    imports: ["@typespex/emitter"],
+    directory: "http-client",
+    name: "@typespex/http-client",
+    imports: ["@typespex/http-client"],
   },
   {
-    directory: "shim-bun",
-    name: "@typespex/shim-bun",
-    imports: ["@typespex/shim-bun"],
+    directory: "compiler-core",
+    name: "@typespex/compiler-core",
+    imports: ["@typespex/compiler-core", "@typespex/compiler-core/unstable"],
   },
   {
-    directory: "shim-hono",
-    name: "@typespex/shim-hono",
-    imports: ["@typespex/shim-hono"],
+    directory: "http-server",
+    name: "@typespex/http-server",
+    imports: ["@typespex/http-server"],
   },
   {
-    directory: "shim-node",
-    name: "@typespex/shim-node",
-    imports: ["@typespex/shim-node"],
+    directory: "http-emitter",
+    name: "@typespex/http-emitter",
+    imports: ["@typespex/http-emitter"],
   },
   {
-    directory: "shim-express",
-    name: "@typespex/shim-express",
-    imports: ["@typespex/shim-express"],
+    directory: "adapter-bun",
+    name: "@typespex/adapter-bun",
+    imports: ["@typespex/adapter-bun"],
+  },
+  {
+    directory: "adapter-hono",
+    name: "@typespex/adapter-hono",
+    imports: ["@typespex/adapter-hono"],
+  },
+  {
+    directory: "adapter-node",
+    name: "@typespex/adapter-node",
+    imports: ["@typespex/adapter-node"],
+  },
+  {
+    directory: "adapter-express",
+    name: "@typespex/adapter-express",
+    imports: ["@typespex/adapter-express"],
   },
 ] as const;
+
+/** Public package edges are deliberately narrow. In particular, choosing one
+ * framework adapter must never install another framework.
+ */
+export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary>> = {
+  "@typespex/codec": {
+    dependencies: [],
+    peerDependencies: ["@js-temporal/polyfill"],
+  },
+  "@typespex/http-client": {
+    dependencies: [],
+    peerDependencies: [],
+  },
+  "@typespex/compiler-core": {
+    dependencies: ["@typespex/codec", "oxfmt"],
+    peerDependencies: ["@typespec/compiler"],
+  },
+  "@typespex/http-server": {
+    dependencies: ["lossless-json", "saxes"],
+    peerDependencies: [],
+  },
+  "@typespex/http-emitter": {
+    dependencies: ["oxfmt"],
+    peerDependencies: [
+      "@js-temporal/polyfill",
+      "@typespec/compiler",
+      "@typespec/http",
+      "@typespex/http-server",
+    ],
+  },
+  "@typespex/adapter-bun": {
+    dependencies: ["@typespex/http-server"],
+    peerDependencies: [],
+  },
+  "@typespex/adapter-hono": {
+    dependencies: ["@typespex/http-server"],
+    peerDependencies: ["hono"],
+  },
+  "@typespex/adapter-node": {
+    dependencies: ["@typespex/http-server"],
+    peerDependencies: [],
+  },
+  "@typespex/adapter-express": {
+    dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
+    peerDependencies: ["express"],
+  },
+} as const;
 
 interface PackageManifest {
   readonly name?: string;
@@ -105,8 +170,8 @@ export const RELEASE_PREFLIGHT_COMMANDS: readonly ReleaseCommand[] = [
   { command: "bun", args: ["run", "check:conformance"] },
   { command: "bun", args: ["run", "test"] },
   { command: "bun", args: ["run", "test:coverage"] },
-  { command: "node", args: ["./packages/shim-node/test/node-smoke.mjs"] },
-  { command: "node", args: ["./packages/shim-express/test/express-smoke.mjs"] },
+  { command: "node", args: ["./packages/adapter-node/test/node-smoke.mjs"] },
+  { command: "node", args: ["./packages/adapter-express/test/express-smoke.mjs"] },
 ] as const;
 
 class ReleaseError extends Error {}
@@ -141,6 +206,8 @@ export function validatePackedManifest(
     throw new ReleaseError(`${expected.name} tarball must declare the MIT license.`);
   }
 
+  validatePackageBoundary(manifest, expected);
+
   const files = new Set(manifest.files ?? []);
   for (const required of ["dist", "src", "README.md", "LICENSE"]) {
     if (!files.has(required)) {
@@ -172,6 +239,49 @@ export function validatePackedManifest(
 
   if (containsWorkspaceProtocol(manifest)) {
     throw new ReleaseError(`${expected.name} tarball contains a workspace: dependency value.`);
+  }
+}
+
+export function validatePackageBoundary(manifest: PackageManifest, expected: ReleasePackage): void {
+  const boundary = RELEASE_PACKAGE_BOUNDARIES[expected.name];
+  if (!boundary) {
+    throw new ReleaseError(`${expected.name} has no declared package boundary.`);
+  }
+  assertDependencyNames(
+    expected.name,
+    "dependencies",
+    Object.keys(manifest.dependencies ?? {}),
+    boundary.dependencies,
+  );
+  assertDependencyNames(
+    expected.name,
+    "peerDependencies",
+    Object.keys(manifest.peerDependencies ?? {}),
+    boundary.peerDependencies,
+  );
+  assertDependencyNames(
+    expected.name,
+    "optionalDependencies",
+    Object.keys(manifest.optionalDependencies ?? {}),
+    [],
+  );
+}
+
+function assertDependencyNames(
+  packageName: string,
+  section: string,
+  actual: readonly string[],
+  expected: readonly string[],
+): void {
+  const received = [...actual].sort();
+  const required = [...expected].sort();
+  if (
+    received.length !== required.length ||
+    received.some((name, index) => name !== required[index])
+  ) {
+    throw new ReleaseError(
+      `${packageName} ${section} must be [${required.join(", ")}]; received [${received.join(", ")}].`,
+    );
   }
 }
 
@@ -398,12 +508,21 @@ function verifySourceManifests(packages: readonly LoadedPackage[]): void {
       throw new ReleaseError(`${pkg.definition.name} has unsupported release version ${version}.`);
     }
 
-    for (const internalName of versions.keys()) {
-      const dependencyVersion = pkg.manifest.dependencies?.[internalName];
-      if (dependencyVersion !== undefined && dependencyVersion !== "workspace:*") {
-        throw new ReleaseError(
-          `${pkg.definition.name} source dependency on ${internalName} must use workspace:*; received ${dependencyVersion}.`,
-        );
+    validatePackageBoundary(pkg.manifest, pkg.definition);
+
+    for (const section of [
+      "dependencies",
+      "devDependencies",
+      "optionalDependencies",
+      "peerDependencies",
+    ] as const) {
+      for (const internalName of versions.keys()) {
+        const dependencyVersion = pkg.manifest[section]?.[internalName];
+        if (dependencyVersion !== undefined && dependencyVersion !== "workspace:*") {
+          throw new ReleaseError(
+            `${pkg.definition.name} source ${section}.${internalName} must use workspace:*; received ${dependencyVersion}.`,
+          );
+        }
       }
     }
   }

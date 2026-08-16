@@ -1,0 +1,40 @@
+# `@typespex/adapter-express`
+
+An adapter from an `@typespex/http-server` HTTP router to an Express request handler.
+
+## Entry points
+
+- `@typespex/adapter-express` exports `toExpressHandler`.
+
+Mount the returned terminal handler where the generated service should own the
+request path:
+
+```ts
+import express from "express";
+import { toExpressHandler } from "@typespex/adapter-express";
+
+const app = express();
+app.use("/api", toExpressHandler(router));
+app.listen(3000);
+```
+
+The handler delegates unmatched requests to the generated router's configured
+not-found behavior. Errors handled inside the router use its configured error
+behavior; anything that escapes the router boundary is logged and converted to
+the Node adapter's standard 500 response. The handler ends the Express request
+cycle and does not call `next()`.
+
+TypeSpex decodes and validates bodies from the raw request stream. Register the
+handler before `express.json()`, `express.urlencoded()`, or other middleware that
+consumes that stream.
+
+## Runtime requirements
+
+The package is ESM and targets ES2022. Node.js `>=22.12 <23` or `>=24 <25` and
+Express `5.x` are required. `@typespex/http-server` and `@typespex/adapter-node` are
+installed as regular dependencies; Express is a peer dependency. TypeScript
+projects should install `@types/express` `5.x` as a development dependency.
+
+## License
+
+MIT

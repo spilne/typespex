@@ -4,7 +4,7 @@ import {
   createRegexMatcher,
   type RouteMatcher,
   type RouteMatcherInput,
-} from "@typespex/runtime";
+} from "@typespex/http-server";
 import { Bench, mToNs, type Task } from "tinybench";
 import {
   benchmarkMetadata,

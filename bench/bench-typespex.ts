@@ -1,6 +1,6 @@
-import type { MatchedRequestContext } from "@typespex/runtime/server";
-import { bindRoute, createHttpRouter } from "@typespex/runtime/server";
-import { toBunHandler } from "@typespex/shim-bun";
+import type { MatchedRequestContext } from "@typespex/http-server";
+import { bindRoute, createHttpRouter } from "@typespex/http-server";
+import { toBunHandler } from "@typespex/adapter-bun";
 import { PetsOperations } from "../example/generated/pet-store/server-operations.js";
 import type { PetStoreServer } from "../example/generated/pet-store/server.js";
 import { benchmarkServerPort, createPetFixture } from "./fixture.js";
