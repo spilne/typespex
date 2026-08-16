@@ -1,5 +1,17 @@
 import type { DiagnosticTarget } from "@typespec/compiler";
 import type { ValueCodecDocument } from "@typespex/runtime/codec";
+import type {
+  HttpAuthAlternativePlan,
+  HttpAuthSchemePlan,
+  HttpWirePropertyPlan,
+  HttpWireValuePlan,
+} from "@typespex/runtime/http-client";
+export type {
+  HttpAuthAlternativePlan,
+  HttpAuthSchemePlan,
+  HttpWirePropertyPlan,
+  HttpWireValuePlan,
+} from "@typespex/runtime/http-client";
 
 export const CODEGEN_PLAN_VERSION = 1 as const;
 
@@ -9,10 +21,12 @@ export interface ServicePlan {
   readonly version: typeof CODEGEN_PLAN_VERSION;
   readonly name: string;
   readonly namespace: string;
+  readonly types: readonly TypePlan[];
   readonly operations: readonly OperationPlan[];
 }
 
 export interface OperationPlan {
+  readonly version: typeof CODEGEN_PLAN_VERSION;
   readonly name: string;
   readonly input: JsonWirePlan;
   readonly success?: JsonWirePlan;
@@ -20,19 +34,24 @@ export interface OperationPlan {
 }
 
 export interface TypePlan {
+  readonly version: typeof CODEGEN_PLAN_VERSION;
   readonly key: string;
   readonly name?: string;
-  readonly tsType: string;
-  readonly wire: JsonWirePlan;
+  readonly semanticType: string;
+  readonly wireType: string;
 }
 
 export interface JsonWirePlan {
+  readonly version: typeof CODEGEN_PLAN_VERSION;
   readonly schema: JsonSchema;
-  readonly codec: ValueCodecDocument;
+  /** Omitted when the validated JSON value is already the semantic value. */
+  readonly codec?: ValueCodecDocument;
   readonly semanticType: string;
+  readonly wireType: string;
 }
 
 export interface ArtifactPlan {
+  readonly version: typeof CODEGEN_PLAN_VERSION;
   readonly artifact: string;
   readonly fileName: string;
   readonly outputDir: string;
@@ -138,65 +157,10 @@ export interface HttpResponseHeaderPlan {
   readonly value?: HttpWireValuePlan;
 }
 
-export type HttpWireValuePlan =
-  | { readonly kind: "identity" }
-  | { readonly kind: "string" }
-  | { readonly kind: "number"; readonly integer?: boolean }
-  | { readonly kind: "boolean" }
-  | { readonly kind: "null" }
-  | {
-      readonly kind: "scalar-encoding";
-      readonly encoding:
-        | "number-string"
-        | "integer-string"
-        | "boolean-string"
-        | "rfc7231"
-        | "unix-timestamp"
-        | "duration-seconds"
-        | "duration-milliseconds"
-        | "base64url";
-    }
-  | {
-      readonly kind: "file-json";
-      readonly contentTypeSource?: string;
-      readonly filenameSource?: string;
-      readonly contentsSource: string;
-      readonly textContents: boolean;
-    }
-  | { readonly kind: "literal"; readonly value: string | number | boolean | null }
-  | { readonly kind: "array"; readonly item: HttpWireValuePlan }
-  | { readonly kind: "tuple"; readonly items: readonly HttpWireValuePlan[] }
-  | {
-      readonly kind: "object";
-      readonly properties: Readonly<Record<string, HttpWirePropertyPlan>>;
-      readonly additional?: HttpWireValuePlan;
-    }
-  | { readonly kind: "union"; readonly variants: readonly HttpWireValuePlan[] };
-
-export interface HttpWirePropertyPlan {
-  readonly sourceName: string;
-  readonly value: HttpWireValuePlan;
-  readonly optional: boolean;
-}
-
 export interface HttpServerPlan {
   readonly url: string;
   readonly fullyDefaulted: boolean;
 }
-
-export type HttpAuthSchemePlan =
-  | {
-      readonly id: string;
-      readonly type: "apiKey";
-      readonly location: "header" | "query" | "cookie";
-      readonly name: string;
-    }
-  | { readonly id: string; readonly type: "http"; readonly scheme: string }
-  | { readonly id: string; readonly type: "oauth2" | "openIdConnect" };
-
-export type HttpAuthAlternativePlan =
-  | { readonly noAuth: true }
-  | { readonly schemes: readonly HttpAuthSchemePlan[] };
 
 export interface CodegenIssue {
   readonly code:

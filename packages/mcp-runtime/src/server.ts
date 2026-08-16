@@ -13,14 +13,9 @@ import type {
   McpToolMiddleware,
   MaybePromise,
 } from "./application.js";
-import {
-  executeHttpBridgeTool,
-  type HttpBridgeOperation,
-  type McpHttpBridgeOptions,
-} from "./http-bridge.js";
+import type { HttpBridgeOperation, McpHttpBridgeOptions } from "./http-bridge.js";
 import {
   isMcpToolResult,
-  mcpError,
   mcpSuccess,
   McpToolError,
   type McpContent,
@@ -39,19 +34,45 @@ export type McpTaggedToolHandler<Input, Success, Error> = (
   context: McpToolContext,
 ) => MaybePromise<McpToolResult<Success, Error> | McpToolError>;
 
-export interface GeneratedMcpTool {
-  readonly name: string;
-  readonly handler: string;
+export interface GeneratedMcpTool<
+  Name extends string = string,
+  InputWire = any,
+  Input = any,
+  SuccessWire = any,
+  Success = any,
+  ErrorWire = any,
+  Error = any,
+> {
+  readonly name: Name;
+  readonly handler: Name;
   readonly title?: string;
   readonly description?: string;
   readonly icons?: readonly Icon[];
   readonly annotations?: ToolAnnotations;
-  readonly input: TypeSpecSchema;
-  readonly success?: TypeSpecSchema;
-  readonly errors?: TypeSpecSchema;
+  readonly input: TypeSpecSchema<InputWire, Input>;
+  readonly success?: TypeSpecSchema<SuccessWire, Success>;
+  readonly errors?: TypeSpecSchema<ErrorWire, Error>;
   readonly voidResult?: boolean;
+  readonly requiresTaggedResult?: true;
   readonly http?: HttpBridgeOperation;
 }
+
+type SchemaSemantic<Schema> = Schema extends TypeSpecSchema<any, infer Semantic> ? Semantic : never;
+type ToolSuccess<Tool extends GeneratedMcpTool> =
+  | (Tool extends { readonly success: infer Schema } ? SchemaSemantic<Schema> : never)
+  | (Tool extends { readonly voidResult: true } ? void : never);
+type ToolError<Tool extends GeneratedMcpTool> = Tool extends { readonly errors: infer Schema }
+  ? SchemaSemantic<Schema>
+  : never;
+type HandlerFor<Tool extends GeneratedMcpTool> = Tool extends {
+  readonly requiresTaggedResult: true;
+}
+  ? McpTaggedToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>>
+  : McpToolHandler<SchemaSemantic<Tool["input"]>, ToolSuccess<Tool>, ToolError<Tool>>;
+
+export type McpHandlersFor<Tools extends readonly GeneratedMcpTool[]> = {
+  readonly [Tool in Tools[number] as Tool["handler"]]: HandlerFor<Tool>;
+};
 
 export interface GeneratedMcpServerDefinition {
   readonly implementation: Implementation;
@@ -60,10 +81,10 @@ export interface GeneratedMcpServerDefinition {
   readonly registerCapabilities?: readonly ((server: McpServer) => void)[];
 }
 
-export function createGeneratedMcpServer<Handlers>(
+export function createGeneratedMcpServer<const Tools extends readonly GeneratedMcpTool[]>(
   definition: GeneratedMcpServerDefinition,
-  tools: readonly GeneratedMcpTool[],
-  application: McpApplication<Handlers>,
+  tools: Tools,
+  application: McpApplication<McpHandlersFor<Tools>>,
 ): McpServer {
   const server = new McpServer(definition.implementation, {
     instructions: definition.instructions,
@@ -76,8 +97,8 @@ export function createGeneratedMcpServer<Handlers>(
       {
         title: tool.title,
         description: tool.description,
-        inputSchema: tool.input.input,
-        ...(tool.success ? { outputSchema: tool.success.wire } : {}),
+        inputSchema: application.kind === "http-bridge" ? tool.input.wire : tool.input.input,
+        ...(tool.success && !tool.voidResult ? { outputSchema: tool.success.wire } : {}),
         annotations: tool.annotations,
         icons: tool.icons ? [...tool.icons] : undefined,
       },
@@ -89,30 +110,28 @@ export function createGeneratedMcpServer<Handlers>(
   return server;
 }
 
-async function executeTool<Handlers>(
+async function executeTool(
   tool: GeneratedMcpTool,
   input: unknown,
   rawContext: ServerContext,
-  application: McpApplication<Handlers>,
+  application: McpApplication<Record<string, McpToolHandler<any, any, any>>>,
 ): Promise<CallToolResult> {
   let context = createToolContext(rawContext);
   if (application.createContext) context = await application.createContext(context);
 
   try {
     const invoke = async (): Promise<unknown> => {
-      const handlers = application.handlers as Record<string, unknown> | undefined;
-      const nativeHandler =
-        handlers && Object.hasOwn(handlers, tool.handler) ? handlers[tool.handler] : undefined;
-      const useBridge =
-        application.kind === "http-bridge" ||
-        (application.kind === "hybrid" && application.execution === "http-bridge");
-      if (useBridge && tool.http) {
+      if (application.kind === "http-bridge") {
+        if (!tool.http) {
+          throw new McpToolError(`Tool ${tool.name} has no generated HTTP bridge operation.`);
+        }
         return executeBridgeTool(tool, input, context, application.bridge);
       }
+      const handlers = application.handlers as Record<string, unknown>;
+      const nativeHandler = Object.hasOwn(handlers, tool.handler)
+        ? handlers[tool.handler]
+        : undefined;
       if (typeof nativeHandler !== "function") {
-        if (tool.http && "bridge" in application) {
-          return executeBridgeTool(tool, input, context, application.bridge);
-        }
         throw new McpToolError(`No handler is configured for tool ${tool.name}.`);
       }
       return (nativeHandler as (value: unknown, context: McpToolContext) => MaybePromise<unknown>)(
@@ -144,38 +163,71 @@ async function executeBridgeTool(
   context: McpToolContext,
   options: McpHttpBridgeOptions,
 ): Promise<unknown> {
-  const encodedInput = await tool.input.encode(input);
-  if (!encodedInput.ok) {
-    throw new McpToolError(formatSchemaFailure(tool.name, "input", encodedInput.issues));
-  }
-  const result = await executeHttpBridgeTool(tool.http!, encodedInput.value, context, options);
+  const { executeHttpBridgeTool } = await loadHttpBridge();
+  const result = await executeHttpBridgeTool(tool.http!, input, context, options);
   if (result.kind === "success") {
+    if (tool.voidResult && result.value === undefined) return mcpSuccess(undefined);
     if (!tool.success) {
-      if (tool.voidResult && result.value === undefined) return mcpSuccess(undefined);
       throw new McpToolError(`Upstream returned a body for void tool ${tool.name}.`);
     }
-    const decoded = await tool.success.input["~standard"].validate(result.value);
-    if (decoded.issues) {
-      throw new McpToolError(formatSchemaFailure(tool.name, "success", decoded.issues));
+    if (!tool.voidResult) return classifiedWireResult("success", result.value);
+    const validated = await tool.success.validateWire(result.value);
+    if (!validated.ok) {
+      throw new McpToolError(formatSchemaFailure(tool.name, "success", validated.issues));
     }
-    return mcpSuccess(decoded.value);
+    return classifiedWireResult("success", validated.value);
   }
   if (!tool.errors) {
     throw new McpToolError(
       `Upstream returned modeled HTTP error ${result.status} for ${tool.name}.`,
     );
   }
-  const decoded = await tool.errors.input["~standard"].validate(result.value);
-  if (decoded.issues) {
-    throw new McpToolError(formatSchemaFailure(tool.name, "error", decoded.issues));
+  const validated = await tool.errors.validateWire(result.value);
+  if (!validated.ok) {
+    throw new McpToolError(formatSchemaFailure(tool.name, "error", validated.issues));
   }
-  return mcpError(decoded.value);
+  return classifiedWireResult("error", validated.value);
+}
+
+let httpBridgeModule: Promise<typeof import("./http-bridge.js")> | undefined;
+
+function loadHttpBridge(): Promise<typeof import("./http-bridge.js")> {
+  if (!httpBridgeModule) {
+    httpBridgeModule = import("./http-bridge.js").catch((error: unknown) => {
+      httpBridgeModule = undefined;
+      throw error;
+    });
+  }
+  return httpBridgeModule;
+}
+
+const classifiedWireResultTag: unique symbol = Symbol("typespex.classified-wire-result");
+interface ClassifiedWireResult {
+  readonly [classifiedWireResultTag]: true;
+  readonly kind: "success" | "error";
+  readonly value: unknown;
+}
+
+function classifiedWireResult(kind: "success" | "error", value: unknown): ClassifiedWireResult {
+  return { [classifiedWireResultTag]: true, kind, value };
+}
+
+function isClassifiedWireResult(value: unknown): value is ClassifiedWireResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    classifiedWireResultTag in value &&
+    value[classifiedWireResultTag] === true
+  );
 }
 
 async function normalizeToolResult(
   tool: GeneratedMcpTool,
   value: unknown,
 ): Promise<CallToolResult> {
+  if (isClassifiedWireResult(value)) {
+    return value.kind === "success" ? wireSuccess(value.value) : wireError(value.value);
+  }
   if (value instanceof McpToolError) return operationalErrorResult(value);
   if (isMcpToolResult(value)) {
     return value.kind === "success"
@@ -191,19 +243,20 @@ async function normalizeToolResult(
     throw new McpToolError(`Tool ${tool.name} declares no result but returned a value.`);
   }
 
-  const [success, error] = await Promise.all([
-    tool.success ? tool.success.encode(value) : Promise.resolve(undefined),
-    tool.errors ? tool.errors.encode(value) : Promise.resolve(undefined),
-  ]);
-  const successMatches = success?.ok === true;
-  const errorMatches = error?.ok === true;
-  if (successMatches && errorMatches) {
+  if (tool.requiresTaggedResult) {
     throw new McpToolError(
-      `Tool ${tool.name} returned a value matching both success and error schemas; return mcpSuccess() or mcpError() explicitly.`,
+      `Tool ${tool.name} has overlapping success and error schemas; return mcpSuccess() or mcpError() explicitly.`,
     );
   }
-  if (successMatches) return wireSuccess(success.value);
-  if (errorMatches) return wireError(error.value);
+
+  const success = tool.success
+    ? await tool.success.encode(value, {
+        validate: tool.errors !== undefined || tool.voidResult === true,
+      })
+    : undefined;
+  if (success?.ok) return wireSuccess(success.value);
+  const error = tool.errors ? await tool.errors.encode(value) : undefined;
+  if (error?.ok) return wireError(error.value);
   throw new McpToolError(
     `Tool ${tool.name} returned a value outside its declared TypeSpec result.`,
   );
@@ -222,7 +275,7 @@ async function encodeSuccess(
       throw new McpToolError(`Tool ${tool.name} has no success output schema.`);
     return validatedToolResult({ content: content ?? [] });
   }
-  const encoded = await tool.success.encode(value);
+  const encoded = await tool.success.encode(value, { validate: tool.voidResult === true });
   if (!encoded.ok)
     throw new McpToolError(formatSchemaFailure(tool.name, "success", encoded.issues));
   return wireSuccess(encoded.value, content);
@@ -298,7 +351,8 @@ function createToolContext(raw: ServerContext): McpToolContext {
     signal: raw.mcpReq.signal,
     authInfo: raw.http?.authInfo,
     raw,
-    notify: raw.mcpReq.notify,
+    notify: (notification) =>
+      raw.mcpReq.notify(notification as Parameters<ServerContext["mcpReq"]["notify"]>[0]),
     log: (level, data, logger) => raw.mcpReq.log(level, data, logger),
     async reportProgress(progress, total, message): Promise<void> {
       const progressToken = raw.mcpReq._meta?.progressToken;

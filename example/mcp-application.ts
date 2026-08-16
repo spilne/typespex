@@ -6,8 +6,7 @@ const pets = [
 ];
 
 export default definePetAssistantMcpApplication({
-  kind: "hybrid",
-  bridge: {},
+  kind: "native",
   handlers: {
     async getPet({ id }) {
       return (

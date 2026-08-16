@@ -53,7 +53,9 @@ describe("@typespex/mcp emitter", () => {
     expect(result.read("pets", "models.ts")).toContain("@deprecated Use CurrentPet.");
     const server = result.read("pets", "mcp-server.ts");
     expect(server).toContain('instructions: "Manage pets"');
-    expect(server).toContain("export type PingInput = Record<string, never>");
+    expect(operations).toContain("export type PingInput = Record<string, never>");
+    expect(operations).toContain("createTypeSpecSchema<GetPetSuccessWire, GetPetSuccess>");
+    expect(operations).not.toContain("codec:");
   });
 
   test("emits a complete HTTP bridge descriptor with inferred annotations", () => {
@@ -96,7 +98,9 @@ describe("@typespex/mcp emitter", () => {
     expect(operations).toContain("readOnlyHint: true");
     expect(operations).toContain("openWorldHint: true");
     expect(operations).toContain("destructiveHint: false");
-    expect(result.read("pet-api", "mcp-server.ts")).toContain("HttpBridgeMcpApplication");
+    const server = result.read("pet-api", "mcp-server.ts");
+    expect(server).toContain("HttpBridgeMcpApplication");
+    expect(server).not.toContain("NativeMcpApplication");
   });
 
   test("inherits service authentication and preserves no-auth alternatives", () => {
@@ -145,12 +149,12 @@ describe("@typespex/mcp emitter", () => {
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
     expect(result.read("streams-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
-    expect(result.read("streams-api", "mcp-server.ts")).toContain("readonly Item[]");
+    expect(result.read("streams-api", "mcp-operations.ts")).toContain("readonly Item[]");
   });
 
   test("accepts native and bridge modes as an array while mapping bridged streams", () => {
     const result = compileFixture(
-      "hybrid-jsonl",
+      "multi-mode-jsonl",
       `
         import "@typespec/http";
         import "@typespec/http/streams";
@@ -162,16 +166,18 @@ describe("@typespex/mcp emitter", () => {
         model Item { id: int32; }
         @service @server("https://api.example.test")
         @mcpServer(#{ version: "1.0.0" })
-        namespace HybridApi {
+        namespace MultiModeApi {
           @tool @get @route("/items") op list(): JsonlStream<Item>;
         }
       `,
       `    mode: [native, http-bridge]\n    launchers: []\n`,
     );
-    expect(result.read("hybrid-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
-    const server = result.read("hybrid-api", "mcp-server.ts");
-    expect(server).toContain("HybridMcpApplication");
-    expect(server).toContain("readonly Item[]");
+    expect(result.read("multi-mode-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
+    const server = result.read("multi-mode-api", "mcp-server.ts");
+    expect(server).toContain("NativeMcpApplication<MultiModeApiMcpHandlers>");
+    expect(server).toContain("| HttpBridgeMcpApplication");
+    expect(server).not.toContain("HybridMcpApplication");
+    expect(result.read("multi-mode-api", "mcp-operations.ts")).toContain("readonly Item[]");
   });
 
   test("unwraps and plans multipart HTTP parts for MCP inputs", () => {
@@ -198,11 +204,10 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const server = result.read("upload-api", "mcp-server.ts");
     const operations = result.read("upload-api", "mcp-operations.ts");
     const bridge = result.read("upload-api", "mcp-http-client.ts");
-    expect(server).toContain("label: string");
-    expect(server).toContain("files: ReadonlyArray<File>");
+    expect(operations).toContain("label: string");
+    expect(operations).toContain("files: ReadonlyArray<File>");
     expect(operations).toContain('contentEncoding: "base64"');
     expect(bridge).toContain('name: "wire-label"');
     expect(bridge).toContain("multi: true");
@@ -232,12 +237,12 @@ describe("@typespex/mcp emitter", () => {
       `    launchers: []\n`,
     );
     const models = result.read("visible-api", "models.ts");
-    const server = result.read("visible-api", "mcp-server.ts");
     const operations = result.read("visible-api", "mcp-operations.ts");
     expect(models).toContain("export interface PetUpdateInput");
     expect(models).toContain("export interface PetUpdateOutput");
-    expect(server).toContain("{ pet: PetUpdateInput }");
-    expect(server).toContain("export type UpdateOutput = PetUpdateOutput");
+    expect(operations).toContain("{ pet: PetUpdateInput }");
+    expect(operations).toContain("export type UpdateOutput = UpdateSuccess");
+    expect(operations).toContain("export type UpdateSuccess = PetUpdateOutput");
     const inputModel = models.match(/export interface PetUpdateInput \{([\s\S]*?)\n\}/)?.[1];
     const outputModel = models.match(/export interface PetUpdateOutput \{([\s\S]*?)\n\}/)?.[1];
     expect(inputModel).toContain("writeOnly: string");
@@ -247,12 +252,12 @@ describe("@typespex/mcp emitter", () => {
     expect(outputModel).toContain("name: string");
     expect(outputModel).not.toContain("writeOnly");
     const inputSchema = operations.slice(
-      operations.indexOf("const updateInput"),
-      operations.indexOf("const updateSuccess"),
+      operations.indexOf("const petSchemaDefinition ="),
+      operations.indexOf("const petSchemaDefinition2 ="),
     );
     const outputSchema = operations.slice(
-      operations.indexOf("const updateSuccess"),
-      operations.indexOf("export const mcpTools"),
+      operations.indexOf("const petSchemaDefinition2 ="),
+      operations.indexOf("const updateInput"),
     );
     expect(inputSchema).toContain('writeOnly: { type: "string" }');
     expect(inputSchema).not.toContain('readOnly: { type: "string" }');
@@ -286,7 +291,6 @@ describe("@typespex/mcp emitter", () => {
     );
     const models = result.read("temporal-files", "models.ts");
     const operations = result.read("temporal-files", "mcp-operations.ts");
-    const server = result.read("temporal-files", "mcp-server.ts");
     expect(models).toContain('import type { Temporal } from "@js-temporal/polyfill"');
     expect(models).toContain("date: Temporal.PlainDate");
     expect(models).toContain("time: Temporal.PlainTime");
@@ -294,8 +298,8 @@ describe("@typespex/mcp emitter", () => {
     expect(models).toContain("zoned: Temporal.ZonedDateTime");
     expect(models).toContain("elapsed: Temporal.Duration");
     expect(models).not.toContain("interface Attachment");
-    expect(server).toContain("file: File");
-    expect(server).toContain("export type InspectOutput = File");
+    expect(operations).toContain("file: File");
+    expect(operations).toContain("export type InspectSuccess = File");
     expect(operations).toContain('temporalKind: "zoned-date-time"');
     expect(operations).toContain('kind: "file"');
   });
@@ -438,6 +442,38 @@ describe("@typespex/mcp emitter", () => {
     expect(bridge).toContain('encoding: "base64url"');
   });
 
+  test("retains HTTP wire transforms through recursive properties and indexers", () => {
+    const result = compileFixture(
+      "bridge-recursive-wire",
+      `
+        import "@typespec/http";
+        import "@typespex/mcp";
+        using TypeSpec.Http;
+        using TypeSpex.Mcp;
+
+        model Node {
+          @encodedName("application/json", "wire_label") label: string;
+          next?: Node;
+        }
+        model StringTree extends Record<StringTree> {}
+
+        @service @server("https://api.example.test")
+        @mcpServer(#{ version: "1.0.0" }) namespace RecursiveApi {
+          @tool @post @route("/nodes")
+          op transform(@body body: Node): Node;
+
+          @tool @post @route("/tree")
+          op transformTree(@body body: StringTree): StringTree;
+        }
+      `,
+      `    mode: [http-bridge]\n    launchers: []\n`,
+    );
+    const bridge = result.read("recursive-api", "mcp-http-client.ts");
+    expect(bridge).toContain('kind: "definition"');
+    expect(bridge).toContain('kind: "ref"');
+    expect(bridge).toContain('sourceName: "wire_label"');
+  });
+
   test("rejects unsafe numbers and native streams", () => {
     const unsafe = compileFixtureWithDiagnostics(
       "unsafe-number",
@@ -462,7 +498,7 @@ describe("@typespex/mcp emitter", () => {
         }
       `,
     );
-    expect(constrained.read("values", "mcp-server.ts")).toContain("value: SafeInt");
+    expect(constrained.read("values", "mcp-operations.ts")).toContain("value: SafeInt");
     expect(constrained.read("values", "models.ts")).toContain("export type SafeInt = bigint");
     expect(constrained.read("values", "mcp-operations.ts")).toContain('kind: "bigint-number"');
 
@@ -495,8 +531,145 @@ describe("@typespex/mcp emitter", () => {
       `,
     );
     expect(result.stdout + result.stderr).toContain("overlapping success and error wire schemas");
-    expect(result.read("results", "mcp-server.ts")).toContain(
-      "McpTaggedToolHandler<RunInput, RunOutput, RunError>",
+    expect(result.read("results", "mcp-operations.ts")).toContain("requiresTaggedResult: true");
+    expect(result.read("results", "mcp-server.ts")).toContain("McpHandlersFor<typeof mcpTools>");
+  });
+
+  test("requires tagging unless success and error schemas are provably disjoint", () => {
+    const overlapping = compileFixture(
+      "literal-broad-overlap",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        model Success { value: "ok"; }
+        @error model Failure { value: string; }
+        model IntegerSuccess { value: int32; }
+        @error model NumberFailure { value: float64; }
+        @pattern("^ok-") scalar OkText extends string;
+        model PatternSuccess { value: OkText; }
+        @error model TextFailure { value: string; }
+        @mcpServer(#{ version: "1.0.0" }) namespace Results {
+          @tool op run(): Success | Failure;
+          @tool op numeric(): IntegerSuccess | NumberFailure;
+          @tool op pattern(): PatternSuccess | TextFailure;
+        }
+      `,
+    );
+    expect(overlapping.stdout + overlapping.stderr).toContain(
+      "overlapping success and error wire schemas",
+    );
+    expect(
+      overlapping.read("results", "mcp-operations.ts").match(/requiresTaggedResult: true/g),
+    ).toHaveLength(3);
+
+    const disjoint = compileFixture(
+      "disjoint-results",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        model Success { kind: "ok"; value: string; }
+        @error model Failure { kind: "failed"; message: string; }
+        @mcpServer(#{ version: "1.0.0" }) namespace Results {
+          @tool op run(): Success | Failure;
+        }
+      `,
+    );
+    expect(disjoint.stdout + disjoint.stderr).not.toContain(
+      "overlapping success and error wire schemas",
+    );
+    expect(disjoint.read("results", "mcp-operations.ts")).not.toContain(
+      "requiresTaggedResult: true",
+    );
+  });
+
+  test("shares schema definitions and omits identity codecs", () => {
+    const result = compileFixture(
+      "shared-contracts",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        model Pet { id: string; name: string; }
+        @mcpServer(#{ version: "1.0.0" }) namespace Pets {
+          @tool op getPet(id: string): Pet;
+          @tool op listPets(): Pet[];
+        }
+      `,
+    );
+    const operations = result.read("pets", "mcp-operations.ts");
+    expect(operations.match(/const petSchemaDefinition/g)).toHaveLength(1);
+    expect(operations).toContain("createTypeSpecSchema<GetPetSuccessWire, GetPetSuccess>");
+    expect(operations).not.toContain("codec:");
+    expect(operations).not.toContain("...{ $schema:");
+    expect(result.read("pets", "models.ts")).toContain("export type PetWire = Pet");
+  });
+
+  test("imports only model types referenced by generated operation aliases", () => {
+    const result = compileFixture(
+      "strict-type-imports",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        model Address { city: string; }
+        model Owner { name: string; address: Address; }
+        model Pet { id: string; owner: Owner; }
+        @mcpServer(#{ version: "1.0.0" }) namespace Pets {
+          @tool op getPet(Owner: string): Pet;
+        }
+      `,
+    );
+    const operations = result.read("pets", "mcp-operations.ts");
+    expect(operations).toContain('import type { Pet, PetWire } from "./models.js";');
+    expect(operations).not.toMatch(/import type \{[^\n]*(?:Address|Owner)/);
+    const server = result.read("pets", "mcp-server.ts");
+    expect(server).toContain("type NativeMcpApplication");
+    expect(server).not.toContain("type HttpBridgeMcpApplication");
+  });
+
+  test("rejects structured media types without a bridge serializer", () => {
+    const result = compileFixtureWithDiagnostics(
+      "bridge-xml-model",
+      `
+        import "@typespec/http";
+        import "@typespex/mcp";
+        using TypeSpec.Http;
+        using TypeSpex.Mcp;
+        model Pet { id: string; }
+        @service @server("https://api.example.test")
+        @mcpServer(#{ version: "1.0.0" }) namespace XmlApi {
+          @tool @post @route("/pets")
+          op create(@header contentType: "application/xml", @body body: Pet): void;
+        }
+      `,
+      `    mode: [http-bridge]\n    launchers: []\n`,
+    );
+    expect(result.stdout + result.stderr).toContain(
+      "application/xml is structured; only scalar text bodies are supported",
+    );
+    expect(() => result.files("xml-api")).toThrow();
+  });
+
+  test("carries bytes as binary even when the declared HTTP media type is textual", () => {
+    const result = compileFixture(
+      "bridge-xml-bytes",
+      `
+        import "@typespec/http";
+        import "@typespex/mcp";
+        using TypeSpec.Http;
+        using TypeSpex.Mcp;
+        @service @server("https://api.example.test")
+        @mcpServer(#{ version: "1.0.0" }) namespace XmlBytesApi {
+          @tool @post @route("/document")
+          op upload(@header contentType: "application/xml", @body body: bytes): void;
+        }
+      `,
+      `    mode: [http-bridge]\n    launchers: []\n`,
+    );
+    const bridge = result.read("xml-bytes-api", "mcp-http-client.ts");
+    expect(bridge).toContain(
+      'mediaTypes: [{ contentType: "application/xml", kind: "binary", value: { kind: "string" } }]',
+    );
+    expect(result.read("xml-bytes-api", "mcp-operations.ts")).toContain(
+      'contentEncoding: "base64"',
     );
   });
 
@@ -516,10 +689,9 @@ describe("@typespex/mcp emitter", () => {
       `,
     );
     const operations = result.read("results", "mcp-operations.ts");
-    const server = result.read("results", "mcp-server.ts");
     expect(operations).toContain("errors: runErrors");
-    expect(server).toContain("export type RunOutput = Success");
-    expect(server).toContain("export type RunError = Missing | Conflict");
+    expect(operations).toContain("export type RunSuccess = Success");
+    expect(operations).toContain("export type RunError = Missing | Conflict");
   });
 
   test("requires {service} for multi-server application modules", () => {

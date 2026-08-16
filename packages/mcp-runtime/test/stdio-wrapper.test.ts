@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import type { McpServerFactory } from "@modelcontextprotocol/server";
 
 let receivedOptions: Record<string, unknown> | undefined;
@@ -24,4 +24,9 @@ test("stdio wrapper delegates options and keeps diagnostics on stderr", async ()
 
   serveTypespexStdio((() => undefined) as unknown as McpServerFactory);
   expect(receivedOptions?.onerror).toBeFunction();
+  const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+  const error = new Error("stdio failure");
+  (receivedOptions?.onerror as (error: unknown) => void)(error);
+  expect(consoleError).toHaveBeenCalledWith(error);
+  consoleError.mockRestore();
 });

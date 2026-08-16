@@ -40,6 +40,28 @@ function operation(container: Namespace, name: string): Operation {
 }
 
 describe("TypePlanner", () => {
+  test("omits identity codecs and versions semantic and wire plans", async () => {
+    const program = await compile(`model Pet { id: string; name: string; }`);
+    const pet = model(program.getGlobalNamespaceType(), "Pet");
+    const planner = new TypePlanner(program);
+    const plan = planner.createWirePlan(pet);
+
+    expect(plan.version).toBe(1);
+    expect(plan.semanticType).toBe("Pet");
+    expect(plan.wireType).toBe("PetWire");
+    expect(plan.codec).toBeUndefined();
+    expect(planner.createTypePlans()).toEqual([
+      {
+        version: 1,
+        key: "Pet",
+        name: "Pet",
+        semanticType: "Pet",
+        wireType: "PetWire",
+      },
+    ]);
+    expect(planner.emitModels()).toContain("export type PetWire = Pet");
+  });
+
   test("plans semantic models, projected views, schemas, codecs, and defaults", async () => {
     const program = await compile(`
       @doc("A constrained identifier.")
@@ -77,6 +99,13 @@ describe("TypePlanner", () => {
         known: Slug;
       }
 
+      model EncodedDefault {
+        @encodedName("application/json", "wire_label") label: string;
+        @encode(string) enabled: boolean;
+        @encode(string) count: int32;
+        when: utcDateTime;
+      }
+
       #deprecated "Use NewEverything."
       @doc("Exercises the complete semantic and JSON wire planner.")
       model Everything {
@@ -90,6 +119,18 @@ describe("TypePlanner", () => {
         absent: null = null;
         strings: string[] = #["one", "two"];
         object: { label: string } = #{ label: "value" };
+        nested: EncodedDefault = #{
+          label: "nested",
+          enabled: true,
+          count: 5,
+          when: utcDateTime.fromISO("2024-02-03T04:05:06Z"),
+        };
+        nestedList: EncodedDefault[] = #[#{
+          label: "listed",
+          enabled: false,
+          count: 6,
+          when: utcDateTime.fromISO("2024-03-04T05:06:07Z"),
+        }];
         kind: Kind = Kind.cat;
         small: SmallId = 5;
         large: LargeId = 9007199254740993;
@@ -105,6 +146,7 @@ describe("TypePlanner", () => {
         date: plainDate;
         time: plainTime;
         instant: utcDateTime;
+        instantDefault: utcDateTime = utcDateTime.fromISO("2024-01-02T03:04:05Z");
         zoned: offsetDateTime;
         elapsed: duration;
         i8: int8;
@@ -171,12 +213,37 @@ describe("TypePlanner", () => {
     expect(schema).toContain('"wire_name"');
     expect(schema).not.toContain('"secret"');
     expect(schema).toContain('"contentEncoding":"base64"');
+    expect(schema).toContain('"default":"2024-01-02T03:04:05Z"');
     expect(codec).toContain('"temporalKind"');
+    expect(codec).toContain('"defaultValue":"2024-01-02T03:04:05Z"');
     expect(codec).toContain('"wireName":"wire_name"');
     expect(codec).toContain('"kind":"bigint-string"');
     expect(codec).toContain('"kind":"decimal-string"');
     expect(codec).toContain('"kind":"tuple"');
     expect(planner.emittedTypeNames).toContain("EverythingInput");
+
+    const fullWire = planner.createWirePlan(everything);
+    const fullSchema = fullWire.schema as {
+      $defs: {
+        Everything: {
+          properties: Record<string, { default?: unknown }>;
+        };
+      };
+    };
+    expect(fullSchema.$defs.Everything.properties.nested?.default).toEqual({
+      wire_label: "nested",
+      enabled: "true",
+      count: "5",
+      when: "2024-02-03T04:05:06Z",
+    });
+    expect(fullSchema.$defs.Everything.properties.nestedList?.default).toEqual([
+      {
+        wire_label: "listed",
+        enabled: "false",
+        count: "6",
+        when: "2024-03-04T05:06:07Z",
+      },
+    ]);
 
     // Reusing a projection key must preserve the original registered view.
     expect(
@@ -307,5 +374,27 @@ describe("TypePlanner", () => {
     expect(issues.filter((issue) => issue.code === "unsafe-number")).toHaveLength(2);
     expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(3);
     expect(planner.emitModels()).toContain("export type UnknownScalar = unknown");
+  });
+
+  test("reports unserializable defaults independently for properties with the same name", async () => {
+    const program = await compile(`
+      scalar Custom extends string { init fromValue(value: string); }
+      model First { createdAt: Custom = Custom.fromValue("first"); }
+      model Second { createdAt: Custom = Custom.fromValue("second"); }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const issues: CodegenIssue[] = [];
+    const planner = new TypePlanner(program, { onIssue: (issue) => issues.push(issue) });
+
+    planner.createWirePlan(model(global, "First"));
+    planner.createWirePlan(model(global, "Second"));
+
+    expect(issues.filter((issue) => issue.code === "unsupported-type")).toHaveLength(2);
+    expect(issues.map((issue) => issue.message)).toContain(
+      "Default value for First.createdAt cannot be represented on the JSON wire.",
+    );
+    expect(issues.map((issue) => issue.message)).toContain(
+      "Default value for Second.createdAt cannot be represented on the JSON wire.",
+    );
   });
 });

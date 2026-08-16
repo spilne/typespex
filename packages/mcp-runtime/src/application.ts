@@ -1,4 +1,4 @@
-import type { AuthInfo, ServerContext } from "@modelcontextprotocol/server";
+import type { ServerContext } from "@modelcontextprotocol/server";
 import type { McpHttpBridgeOptions } from "./http-bridge.js";
 import type { McpHttpServerOptions } from "./http.js";
 
@@ -13,15 +13,30 @@ export interface McpToolContext {
   readonly requestId: string | number;
   readonly requestMeta?: Readonly<Record<string, unknown>>;
   readonly signal: AbortSignal;
-  readonly authInfo?: AuthInfo;
+  readonly authInfo?: McpInboundAuthInfo;
+  /** Advanced SDK escape hatch. Prefer the stable TypeSpex fields above. */
   readonly raw: ServerContext;
-  readonly notify: ServerContext["mcpReq"]["notify"];
+  readonly notify: (notification: McpNotification) => Promise<void>;
   log(
     level: "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency",
     data: unknown,
     logger?: string,
   ): Promise<void>;
   reportProgress(progress: number, total?: number, message?: string): Promise<void>;
+}
+
+export interface McpInboundAuthInfo {
+  readonly token: string;
+  readonly clientId: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt?: number;
+  readonly resource?: URL;
+  readonly extra?: Readonly<Record<string, unknown>>;
+}
+
+export interface McpNotification {
+  readonly method: string;
+  readonly params?: Readonly<Record<string, unknown>>;
 }
 
 export interface McpToolInvocation {
@@ -53,24 +68,13 @@ export interface NativeMcpApplication<Handlers> extends McpApplicationBase {
   readonly handlers: Handlers;
 }
 
-export interface HttpBridgeMcpApplication<Handlers> extends McpApplicationBase {
+export interface HttpBridgeMcpApplication extends McpApplicationBase {
   readonly kind: "http-bridge";
   readonly bridge: McpHttpBridgeOptions;
-  readonly handlers?: Partial<Handlers>;
 }
 
-export interface HybridMcpApplication<Handlers> extends McpApplicationBase {
-  readonly kind: "hybrid";
-  readonly handlers: Handlers;
-  readonly bridge: McpHttpBridgeOptions;
-  readonly execution?: "native" | "http-bridge";
-}
+export type McpApplication<Handlers> = NativeMcpApplication<Handlers> | HttpBridgeMcpApplication;
 
-export type McpApplication<Handlers> =
-  | NativeMcpApplication<Handlers>
-  | HttpBridgeMcpApplication<Handlers>
-  | HybridMcpApplication<Handlers>;
-
-export function defineMcpApplication<T extends McpApplication<unknown>>(application: T): T {
+export function defineMcpApplication<T extends McpApplication<any>>(application: T): T {
   return application;
 }

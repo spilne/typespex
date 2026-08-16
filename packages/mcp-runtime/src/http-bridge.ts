@@ -3,6 +3,9 @@ import {
   HttpClientError,
   readBoundedBody,
   readBoundedJsonLines,
+  type HttpAuthAlternativePlan,
+  type HttpAuthSchemePlan,
+  type HttpWireValuePlan,
 } from "@typespex/runtime/http-client";
 import { ScalarEncodings } from "@typespex/runtime/scalar-encoding";
 import type { McpToolContext, MaybePromise } from "./application.js";
@@ -88,67 +91,9 @@ export interface HttpBridgeResponseMultipartPart {
   readonly value?: HttpWireValuePlan;
 }
 
-export type HttpWireValuePlan =
-  | { readonly kind: "identity" }
-  | { readonly kind: "string" }
-  | { readonly kind: "number"; readonly integer?: boolean }
-  | { readonly kind: "boolean" }
-  | { readonly kind: "null" }
-  | {
-      readonly kind: "scalar-encoding";
-      readonly encoding:
-        | "number-string"
-        | "integer-string"
-        | "boolean-string"
-        | "rfc7231"
-        | "unix-timestamp"
-        | "duration-seconds"
-        | "duration-milliseconds"
-        | "base64url";
-    }
-  | {
-      readonly kind: "file-json";
-      readonly contentTypeSource?: string;
-      readonly filenameSource?: string;
-      readonly contentsSource: string;
-      readonly textContents: boolean;
-    }
-  | { readonly kind: "literal"; readonly value: string | number | boolean | null }
-  | { readonly kind: "array"; readonly item: HttpWireValuePlan }
-  | { readonly kind: "tuple"; readonly items: readonly HttpWireValuePlan[] }
-  | {
-      readonly kind: "object";
-      readonly properties: Readonly<
-        Record<
-          string,
-          {
-            readonly sourceName: string;
-            readonly value: HttpWireValuePlan;
-            readonly optional: boolean;
-          }
-        >
-      >;
-      readonly additional?: HttpWireValuePlan;
-    }
-  | { readonly kind: "union"; readonly variants: readonly HttpWireValuePlan[] };
-
-export type HttpAuthScheme =
-  | {
-      readonly id: string;
-      readonly type: "apiKey";
-      readonly location: "header" | "query" | "cookie";
-      readonly name: string;
-    }
-  | {
-      readonly id: string;
-      readonly type: "http";
-      readonly scheme: string;
-    }
-  | { readonly id: string; readonly type: "oauth2" | "openIdConnect" };
-
-export type HttpAuthAlternative =
-  | { readonly noAuth: true }
-  | { readonly noAuth?: false; readonly schemes: readonly HttpAuthScheme[] };
+export type { HttpWireValuePlan } from "@typespex/runtime/http-client";
+export type HttpAuthScheme = HttpAuthSchemePlan;
+export type HttpAuthAlternative = HttpAuthAlternativePlan;
 
 export interface HttpBridgeServer {
   readonly url: string;
@@ -156,6 +101,7 @@ export interface HttpBridgeServer {
 }
 
 export interface HttpBridgeOperation {
+  readonly version: 1;
   readonly id: string;
   readonly method: string;
   readonly path: string;
@@ -218,6 +164,11 @@ export interface HttpBridgeResult {
 const DEFAULT_MAX_JSONL_ITEMS = 1_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIAGNOSTIC_BYTES = 64 * 1024;
+const EMPTY_ORIGINS: ReadonlySet<string> = new Set();
+const normalizedOriginsCache = new WeakMap<
+  readonly string[],
+  { readonly signature: string; readonly origins: ReadonlySet<string> }
+>();
 
 /** Executes a generated HTTP wire plan. Input and output are JSON-wire values. */
 export async function executeHttpBridgeTool(
@@ -226,6 +177,11 @@ export async function executeHttpBridgeTool(
   context: McpToolContext,
   options: McpHttpBridgeOptions,
 ): Promise<HttpBridgeResult> {
+  if (operation.version !== 1) {
+    throw new McpToolError(
+      `Unsupported HTTP bridge operation plan version ${String(operation.version)}.`,
+    );
+  }
   const baseUrl = await resolveServer(operation, input, context, options);
   const allowedOrigins = normalizeOrigins(options.allowedUpstreamOrigins);
   if (allowedOrigins.size > 0 && !allowedOrigins.has(baseUrl.origin)) {
@@ -292,13 +248,15 @@ export async function executeHttpBridgeTool(
     throw new McpToolError("No Fetch implementation is available for the HTTP bridge.");
   }
   const maxRedirects = boundedInteger(options.maxRedirects ?? 3, "maxRedirects", 0);
+  const timeoutMs =
+    options.timeoutMs === undefined ? undefined : boundedInteger(options.timeoutMs, "timeoutMs", 1);
   const method = operation.method.toUpperCase();
   const response = await fetchWithRedirectPolicy(
     fetchImplementation,
     url,
     { method, headers, body },
     context.signal,
-    options.timeoutMs,
+    timeoutMs,
     maxRedirects,
     allowedOrigins,
     credentialQueryNames,
@@ -420,7 +378,15 @@ async function resolveServer(
       `No upstream server is resolvable for ${operation.id}; configure bridge.server or bridge.resolveServer.`,
     );
   }
-  const url = resolved instanceof URL ? new URL(resolved) : new URL(resolved);
+  let url: URL;
+  try {
+    url = new URL(resolved);
+  } catch (error) {
+    throw new McpToolError(
+      `Invalid upstream server URL for ${operation.id}; expected an absolute HTTP(S) URL.`,
+      { cause: error },
+    );
+  }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new McpToolError(`Unsupported upstream URL scheme ${url.protocol}.`);
   }
@@ -659,7 +625,7 @@ function createRequestBody(body: HttpBridgeBody, input: unknown, headers: Header
   const kind = selected.kind;
   const valuePlan = selected.value ?? body.value;
   const transportValue = valuePlan ? encodeHttpWireValue(value, valuePlan) : value;
-  if (kind !== "multipart") headers.set("Content-Type", contentType);
+  if (kind !== "multipart") setSafeHeader(headers, "Content-Type", contentType);
   switch (kind) {
     case "json":
       return JSON.stringify(transportValue);
@@ -669,7 +635,7 @@ function createRequestBody(body: HttpBridgeBody, input: unknown, headers: Header
       return asBodyBytes(decodeBase64(scalar(transportValue)));
     case "file": {
       const file = asFileRecord(transportValue);
-      headers.set("Content-Type", file.mediaType ?? contentType);
+      setSafeHeader(headers, "Content-Type", file.mediaType ?? contentType);
       return asBodyBytes(decodeBase64(file.data));
     }
     case "form": {
@@ -759,7 +725,7 @@ function createPlannedMultipartBody(
   }
   chunks.push(new TextEncoder().encode(`--${boundary}--\r\n`));
   const mediaType = contentType.split(";", 1)[0]!.trim();
-  headers.set("Content-Type", `${mediaType}; boundary=${boundary}`);
+  setSafeHeader(headers, "Content-Type", `${mediaType}; boundary=${boundary}`);
   return asBodyBytes(concatenateBytes(chunks));
 }
 
@@ -1355,10 +1321,28 @@ function appendMultipart(form: FormData, name: string, value: unknown): void {
   form.append(name, typeof value === "string" ? value : JSON.stringify(value));
 }
 
-function decodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
+function decodeHttpWireValue(
+  value: unknown,
+  plan: HttpWireValuePlan,
+  definitions: ReadonlyMap<string, HttpWireValuePlan> = new Map(),
+): unknown {
   switch (plan.kind) {
     case "identity":
       return value;
+    case "definition": {
+      const nested = new Map(definitions);
+      nested.set(plan.name, plan.value);
+      return decodeHttpWireValue(value, plan.value, nested);
+    }
+    case "ref": {
+      const referenced = definitions.get(plan.name);
+      if (!referenced) {
+        throw new McpToolError(
+          `Unknown HTTP wire transform reference ${JSON.stringify(plan.name)}.`,
+        );
+      }
+      return decodeHttpWireValue(value, referenced, definitions);
+    }
     case "string":
       if (typeof value === "string") return value;
       throw new McpToolError("Upstream returned a non-string HTTP value.");
@@ -1387,19 +1371,19 @@ function decodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
     case "scalar-encoding":
       return decodeHttpScalarEncoding(value, plan.encoding);
     case "literal": {
-      const converted = decodeHttpWireValue(value, literalValuePlan(plan.value));
+      const converted = decodeHttpWireValue(value, literalValuePlan(plan.value), definitions);
       if (Object.is(converted, plan.value)) return converted;
       throw new McpToolError("Upstream returned an unexpected HTTP literal value.");
     }
     case "array": {
       const values = Array.isArray(value) ? value : [value];
-      return values.map((item) => decodeHttpWireValue(item, plan.item));
+      return values.map((item) => decodeHttpWireValue(item, plan.item, definitions));
     }
     case "tuple":
       if (!Array.isArray(value) || value.length !== plan.items.length) {
         throw new McpToolError(`Upstream returned an HTTP tuple with the wrong length.`);
       }
-      return plan.items.map((item, index) => decodeHttpWireValue(value[index], item));
+      return plan.items.map((item, index) => decodeHttpWireValue(value[index], item, definitions));
     case "object": {
       if (!isRecord(value)) throw new McpToolError("Upstream returned a non-object HTTP value.");
       const output: Record<string, unknown> = Object.create(null);
@@ -1414,11 +1398,17 @@ function decodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
           }
           continue;
         }
-        output[targetName] = decodeHttpWireValue(value[property.sourceName], property.value);
+        output[targetName] = decodeHttpWireValue(
+          value[property.sourceName],
+          property.value,
+          definitions,
+        );
       }
       if (plan.additional) {
         for (const [name, item] of Object.entries(value)) {
-          if (!known.has(name)) output[name] = decodeHttpWireValue(item, plan.additional);
+          if (!known.has(name)) {
+            output[name] = decodeHttpWireValue(item, plan.additional, definitions);
+          }
         }
       }
       return output;
@@ -1426,7 +1416,7 @@ function decodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
     case "union": {
       for (const variant of plan.variants) {
         try {
-          return decodeHttpWireValue(value, variant);
+          return decodeHttpWireValue(value, variant, definitions);
         } catch (error) {
           if (!(error instanceof McpToolError)) throw error;
         }
@@ -1456,10 +1446,28 @@ function decodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
   }
 }
 
-function encodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
+function encodeHttpWireValue(
+  value: unknown,
+  plan: HttpWireValuePlan,
+  definitions: ReadonlyMap<string, HttpWireValuePlan> = new Map(),
+): unknown {
   switch (plan.kind) {
     case "identity":
       return value;
+    case "definition": {
+      const nested = new Map(definitions);
+      nested.set(plan.name, plan.value);
+      return encodeHttpWireValue(value, plan.value, nested);
+    }
+    case "ref": {
+      const referenced = definitions.get(plan.name);
+      if (!referenced) {
+        throw new McpToolError(
+          `Unknown HTTP wire transform reference ${JSON.stringify(plan.name)}.`,
+        );
+      }
+      return encodeHttpWireValue(value, referenced, definitions);
+    }
     case "string":
       if (typeof value === "string") return value;
       throw new McpToolError("Expected a string HTTP request value.");
@@ -1485,12 +1493,12 @@ function encodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
       throw new McpToolError("Expected the declared HTTP request literal.");
     case "array":
       if (!Array.isArray(value)) throw new McpToolError("Expected an HTTP request array.");
-      return value.map((item) => encodeHttpWireValue(item, plan.item));
+      return value.map((item) => encodeHttpWireValue(item, plan.item, definitions));
     case "tuple":
       if (!Array.isArray(value) || value.length !== plan.items.length) {
         throw new McpToolError("Expected an HTTP request tuple with the declared length.");
       }
-      return plan.items.map((item, index) => encodeHttpWireValue(value[index], item));
+      return plan.items.map((item, index) => encodeHttpWireValue(value[index], item, definitions));
     case "object": {
       if (!isRecord(value)) throw new McpToolError("Expected an HTTP request object.");
       const output: Record<string, unknown> = Object.create(null);
@@ -1503,11 +1511,17 @@ function encodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
           }
           continue;
         }
-        output[property.sourceName] = encodeHttpWireValue(value[targetName], property.value);
+        output[property.sourceName] = encodeHttpWireValue(
+          value[targetName],
+          property.value,
+          definitions,
+        );
       }
       if (plan.additional) {
         for (const [name, item] of Object.entries(value)) {
-          if (!known.has(name)) output[name] = encodeHttpWireValue(item, plan.additional);
+          if (!known.has(name)) {
+            output[name] = encodeHttpWireValue(item, plan.additional, definitions);
+          }
         }
       }
       return output;
@@ -1515,7 +1529,7 @@ function encodeHttpWireValue(value: unknown, plan: HttpWireValuePlan): unknown {
     case "union":
       for (const variant of plan.variants) {
         try {
-          return encodeHttpWireValue(value, variant);
+          return encodeHttpWireValue(value, variant, definitions);
         } catch (error) {
           if (!(error instanceof McpToolError)) throw error;
         }
@@ -1716,27 +1730,51 @@ function objectPairs(value: Readonly<Record<string, unknown>>): string[] {
   return Object.entries(value).flatMap(([key, item]) => [key, scalar(item)]);
 }
 
+const HTTP_HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 function setSafeHeader(headers: Headers, name: string, value: string): void {
-  if (/\r|\n/.test(name) || /\r|\n/.test(value))
+  if (!HTTP_HEADER_NAME.test(name) || /[\u0000-\u0008\u000a-\u001f\u007f]/.test(value)) {
     throw new McpToolError("Rejected invalid HTTP header value.");
-  headers.set(name, value);
+  }
+  try {
+    headers.set(name, value);
+  } catch (error) {
+    throw new McpToolError("Rejected invalid HTTP header value.", { cause: error });
+  }
 }
 
-function normalizeOrigins(origins: readonly string[] | undefined): Set<string> {
+function normalizeOrigins(origins: readonly string[] | undefined): ReadonlySet<string> {
+  if (!origins) return EMPTY_ORIGINS;
+  const signature = JSON.stringify(origins);
+  const cached = normalizedOriginsCache.get(origins);
+  if (cached?.signature === signature) return cached.origins;
   const output = new Set<string>();
-  for (const origin of origins ?? []) {
-    const url = new URL(origin);
+  for (const origin of origins) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch (error) {
+      throw new McpToolError(`Invalid allowed upstream origin ${JSON.stringify(origin)}.`, {
+        cause: error,
+      });
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      throw new McpToolError(
+        `Allowed upstream origin ${JSON.stringify(origin)} must use HTTP or HTTPS.`,
+      );
+    }
     if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
-      throw new TypeError(`Expected an upstream origin, received ${origin}.`);
+      throw new McpToolError(`Expected an upstream origin, received ${origin}.`);
     }
     output.add(url.origin);
   }
+  normalizedOriginsCache.set(origins, { signature, origins: output });
   return output;
 }
 
 function boundedInteger(value: number, name: string, minimum: number): number {
   if (!Number.isSafeInteger(value) || value < minimum)
-    throw new TypeError(`${name} must be an integer >= ${minimum}.`);
+    throw new McpToolError(`${name} must be an integer >= ${minimum}.`);
   return value;
 }
 
@@ -1764,9 +1802,12 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 function encodeBase64(value: Uint8Array): string {
-  let binary = "";
-  for (const byte of value) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  const chunks: string[] = [];
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < value.length; offset += chunkSize) {
+    chunks.push(String.fromCharCode(...value.subarray(offset, offset + chunkSize)));
+  }
+  return btoa(chunks.join(""));
 }
 
 function asBodyBytes(value: Uint8Array): ArrayBuffer {

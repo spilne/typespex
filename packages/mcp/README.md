@@ -30,8 +30,14 @@ behavior to infer and therefore uses only explicit annotations.
 ## Runtime requirements
 
 Generation requires TypeSpec `>=1.14 <2` and Node.js `>=22.12 <23` or `>=24 <25`. Native mode has
-no `@typespec/http` requirement. Bridge and hybrid generation require aligned `@typespec/http`
-1.14 or newer. Generated applications also install `@typespex/mcp-runtime`.
+no `@typespec/http` requirement. Any mode selection containing `http-bridge` requires aligned `@typespec/http`
+1.14 or newer. When both values are selected, the generated application type is a union of the
+native and bridge configurations; there is no hybrid runtime object. Generated applications also
+install `@typespex/mcp-runtime`.
+
+The preview bridge currently supports JSON, form, multipart, scalar text, bytes/files, and bounded
+JSONL. Unsupported structured media contracts, including model-valued XML bodies, are compiler
+errors rather than implicit binary conversions.
 
 ## License
 

@@ -18,6 +18,7 @@ import {
 import type { HttpOperation, HttpService } from "@typespec/http";
 import {
   ArtifactFormatError,
+  CODEGEN_PLAN_VERSION,
   assertUniqueArtifactPaths,
   camelCase,
   createServiceLayout,
@@ -27,11 +28,12 @@ import {
   pascalCase,
   TypePlanner,
   typescriptIdentifier,
-  typescriptProperty,
   typescriptString,
   type ArtifactPlan,
   type HttpWireOperationPlan,
   type JsonWirePlan,
+  type OperationPlan,
+  type ServicePlan,
 } from "@typespex/codegen/unstable";
 import { listMcpServers, listMcpTools } from "./decorators.js";
 import {
@@ -52,6 +54,7 @@ interface ResolvedModes {
 }
 
 interface PlannedServer {
+  readonly plan: ServicePlan;
   readonly metadata: McpServerMetadata;
   readonly name: string;
   readonly symbolName: string;
@@ -64,18 +67,14 @@ interface PlannedServer {
 }
 
 interface PlannedTool {
+  readonly plan: OperationPlan;
   readonly metadata: McpToolMetadata;
   readonly operation: Operation;
   readonly name: string;
   readonly symbolName: string;
-  readonly input: JsonWirePlan;
-  readonly success?: JsonWirePlan;
-  readonly errors?: JsonWirePlan;
   readonly allowsVoid: boolean;
   readonly annotations?: McpToolMetadata["annotations"];
   readonly http?: HttpWireOperationPlan;
-  readonly successTypes: readonly Type[];
-  readonly errorTypes: readonly Type[];
   readonly requiresTaggedResult: boolean;
 }
 
@@ -378,7 +377,7 @@ function planServer(
         ? planner.createWirePlan(errors, { projection: outputProjection })
         : undefined;
     const requiresTaggedResult = Boolean(
-      successPlan && errorPlan && schemasDefinitelyOverlap(successPlan, errorPlan),
+      successPlan && errorPlan && !schemasDefinitelyDisjoint(successPlan, errorPlan),
     );
     if (requiresTaggedResult) {
       $lib.reportDiagnostic(context.program, {
@@ -387,19 +386,25 @@ function planServer(
         target: tool.operation,
       });
     }
+    const inputPlan = planner.createWirePlan(tool.operation.parameters, {
+      projection: inputProjection,
+    });
+    const operationPlan: OperationPlan = {
+      version: CODEGEN_PLAN_VERSION,
+      name: toolName,
+      input: inputPlan,
+      ...(successPlan ? { success: successPlan } : {}),
+      ...(errorPlan ? { errors: errorPlan } : {}),
+    };
     return {
+      plan: operationPlan,
       metadata: tool,
       operation: tool.operation,
       name: toolName,
       symbolName: toolSymbol,
-      input: planner.createWirePlan(tool.operation.parameters, { projection: inputProjection }),
-      success: successPlan,
-      errors: errorPlan,
       allowsVoid,
       annotations: mergeToolAnnotations(tool.annotations, httpOperation?.verb),
       ...(http ? { http } : {}),
-      successTypes: success,
-      errorTypes: errors,
       requiresTaggedResult,
     };
   });
@@ -419,7 +424,15 @@ function planServer(
     },
     context.options,
   );
+  const servicePlan: ServicePlan = {
+    version: CODEGEN_PLAN_VERSION,
+    name,
+    namespace: getNamespaceFullName(metadata.namespace),
+    types: planner.createTypePlans(),
+    operations: plannedTools.map((tool) => tool.plan),
+  };
   return {
+    plan: servicePlan,
     metadata,
     name,
     symbolName,
@@ -509,14 +522,33 @@ function emitServerArtifacts(
 
 function emitOperations(server: PlannedServer): string {
   const hasHttp = server.tools.some((tool) => tool.http);
+  const sharedDefinitions = collectSharedDefinitions(server.tools);
   const definitions = server.tools
     .map((tool) => {
-      const input = emitSchemaDefinition(`${camelCase(tool.symbolName)}Input`, tool.input);
-      const success = tool.success
-        ? emitSchemaDefinition(`${camelCase(tool.symbolName)}Success`, tool.success)
+      const input = emitSchemaDefinition(
+        `${camelCase(tool.symbolName)}Input`,
+        tool.plan.input,
+        `${tool.symbolName}InputWire`,
+        `${tool.symbolName}Input`,
+        sharedDefinitions,
+      );
+      const success = tool.plan.success
+        ? emitSchemaDefinition(
+            `${camelCase(tool.symbolName)}Success`,
+            tool.plan.success,
+            `${tool.symbolName}SuccessWire`,
+            `${tool.symbolName}Success`,
+            sharedDefinitions,
+          )
         : "";
-      const errors = tool.errors
-        ? emitSchemaDefinition(`${camelCase(tool.symbolName)}Errors`, tool.errors)
+      const errors = tool.plan.errors
+        ? emitSchemaDefinition(
+            `${camelCase(tool.symbolName)}Errors`,
+            tool.plan.errors,
+            `${tool.symbolName}ErrorWire`,
+            `${tool.symbolName}Error`,
+            sharedDefinitions,
+          )
         : "";
       return [input, success, errors].filter(Boolean).join("\n");
     })
@@ -535,17 +567,59 @@ function emitOperations(server: PlannedServer): string {
         ${metadata.icons ? `icons: ${typescriptString(normalizeIcons(metadata.icons))},` : ""}
         ${tool.annotations ? `annotations: ${typescriptString(tool.annotations)},` : ""}
         input: ${camelCase(tool.symbolName)}Input,
-        ${tool.success ? `success: ${camelCase(tool.symbolName)}Success,` : ""}
-        ${tool.errors ? `errors: ${camelCase(tool.symbolName)}Errors,` : ""}
+        ${tool.plan.success ? `success: ${camelCase(tool.symbolName)}Success,` : ""}
+        ${tool.plan.errors ? `errors: ${camelCase(tool.symbolName)}Errors,` : ""}
         ${tool.allowsVoid ? "voidResult: true," : ""}
+        ${tool.requiresTaggedResult ? "requiresTaggedResult: true," : ""}
         ${tool.http ? `http: mcpHttpBridgeOperations[${typescriptString(tool.name)}],` : ""}
       }`;
     })
     .join(",\n");
 
+  const referencedTypeNames = new Set(
+    server.tools.flatMap((tool) =>
+      [tool.plan.input, tool.plan.success, tool.plan.errors].flatMap((plan) =>
+        plan
+          ? [plan.semanticType, plan.wireType].flatMap((expression) =>
+              referencedTypeIdentifiers(expression),
+            )
+          : [],
+      ),
+    ),
+  );
+  const modelTypes = [
+    ...new Set(server.plan.types.flatMap((type) => [type.semanticType, type.wireType])),
+  ].filter((type) => referencedTypeNames.has(type));
+  const modelImport =
+    modelTypes.length > 0
+      ? `import type { ${modelTypes.join(", ")} } from "./${server.fileNames.models}.js";`
+      : "";
+  const aliases = server.tools
+    .map((tool) => {
+      const input = tool.plan.input;
+      const success = tool.plan.success;
+      const errors = tool.plan.errors;
+      return `export type ${tool.symbolName}InputWire = ${input.wireType};
+export type ${tool.symbolName}Input = ${input.semanticType};
+${success ? `export type ${tool.symbolName}SuccessWire = ${success.wireType};\nexport type ${tool.symbolName}Success = ${success.semanticType};` : `export type ${tool.symbolName}SuccessWire = never;\nexport type ${tool.symbolName}Success = never;`}
+export type ${tool.symbolName}Output = ${
+        [
+          ...(success ? [`${tool.symbolName}Success`] : []),
+          ...(tool.allowsVoid ? ["void"] : []),
+        ].join(" | ") || "never"
+      };
+${errors ? `export type ${tool.symbolName}ErrorWire = ${errors.wireType};\nexport type ${tool.symbolName}Error = ${errors.semanticType};` : `export type ${tool.symbolName}ErrorWire = never;\nexport type ${tool.symbolName}Error = never;`}`;
+    })
+    .join("\n\n");
+
   return `// Generated by @typespex/mcp. Do not edit.
 import { createTypeSpecSchema, type GeneratedMcpTool } from "@typespex/mcp-runtime";
+${modelImport}
 ${hasHttp ? `import { mcpHttpBridgeOperations } from "./${server.fileNames.httpClient}.js";` : ""}
+
+${aliases}
+
+${sharedDefinitions.declarations.join("\n")}
 
 ${definitions}
 
@@ -555,69 +629,139 @@ ${tools}
 `;
 }
 
-function emitSchemaDefinition(name: string, plan: JsonWirePlan): string {
-  return `const ${name} = createTypeSpecSchema({
-    schema: ${typescriptString(plan.schema)},
-    codec: ${typescriptString(plan.codec)},
+function referencedTypeIdentifiers(expression: string): string[] {
+  const withoutStrings = expression.replace(/"(?:\\.|[^"\\])*"/g, (value) =>
+    " ".repeat(value.length),
+  );
+  return [...withoutStrings.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)].flatMap((match) => {
+    const identifier = match[0];
+    const offset = match.index + identifier.length;
+    return /^\s*\??\s*:/.test(withoutStrings.slice(offset)) ? [] : [identifier];
+  });
+}
+
+function emitSchemaDefinition(
+  name: string,
+  plan: JsonWirePlan,
+  wireType: string,
+  semanticType: string,
+  shared: SharedDefinitions,
+): string {
+  return `const ${name} = createTypeSpecSchema<${wireType}, ${semanticType}>({
+    schema: ${emitSharedDocument(plan.schema, "$defs", shared.schema)},
+    ${plan.codec ? `codec: ${emitSharedDocument(plan.codec, "definitions", shared.codec)},` : ""}
   });`;
 }
 
-function emitServer(server: PlannedServer): string {
-  const imports = server.planner.emittedTypeNames;
-  const modelImport =
-    imports.length > 0
-      ? `import type { ${imports.join(", ")} } from "./${server.fileNames.models}.js";\n`
-      : "";
-  const aliases = server.tools
-    .map((tool) => {
-      const input = tool.input.semanticType;
-      const success =
-        [
-          ...(tool.success ? [tool.success.semanticType] : []),
-          ...(tool.allowsVoid ? ["void"] : []),
-        ].join(" | ") || "never";
-      const errors = tool.errorTypes.length === 0 ? "never" : tool.errors!.semanticType;
-      return `export type ${tool.symbolName}Input = ${input};
-export type ${tool.symbolName}Output = ${success};
-export type ${tool.symbolName}Error = ${errors};`;
+interface SharedDefinitions {
+  readonly schema: ReadonlyMap<string, string>;
+  readonly codec: ReadonlyMap<string, string>;
+  readonly declarations: readonly string[];
+}
+
+function collectSharedDefinitions(tools: readonly PlannedTool[]): SharedDefinitions {
+  const schema = new Map<string, string>();
+  const codec = new Map<string, string>();
+  const declarations: string[] = [];
+  const usedNames = new Set<string>();
+  const plans = tools.flatMap((tool) =>
+    [tool.plan.input, tool.plan.success, tool.plan.errors].filter(
+      (plan): plan is JsonWirePlan => plan !== undefined,
+    ),
+  );
+  const collect = (
+    document: unknown,
+    property: "$defs" | "definitions",
+    target: Map<string, string>,
+    suffix: string,
+  ): void => {
+    if (!isSchemaRecord(document) || !isSchemaRecord(document[property])) return;
+    for (const [definitionName, definition] of Object.entries(document[property])) {
+      const key = JSON.stringify(definition);
+      if (target.has(key)) continue;
+      const base = typescriptIdentifier(
+        camelCase(`${definitionName}${suffix}Definition`),
+        `${suffix}Definition`,
+      );
+      let identifier = base;
+      let index = 2;
+      while (usedNames.has(identifier)) identifier = `${base}${index++}`;
+      usedNames.add(identifier);
+      target.set(key, identifier);
+      declarations.push(`const ${identifier} = ${typescriptString(definition)} as const;`);
+    }
+  };
+  for (const plan of plans) {
+    collect(plan.schema, "$defs", schema, "Schema");
+    if (plan.codec) collect(plan.codec, "definitions", codec, "Codec");
+  }
+  return { schema, codec, declarations };
+}
+
+function emitSharedDocument(
+  document: unknown,
+  property: "$defs" | "definitions",
+  identifiers: ReadonlyMap<string, string>,
+): string {
+  if (!isSchemaRecord(document) || !isSchemaRecord(document[property])) {
+    return typescriptString(document);
+  }
+  const members = Object.entries(document)
+    .filter(([name]) => name !== property)
+    .map(([name, value]) => `${typescriptString(name)}: ${typescriptString(value)}`);
+  const definitions = Object.entries(document[property])
+    .map(([name, definition]) => {
+      const identifier = identifiers.get(JSON.stringify(definition));
+      return `${typescriptString(name)}: ${identifier ?? typescriptString(definition)}`;
     })
-    .join("\n\n");
-  const handlerProperties = server.tools
-    .map(
-      (tool) =>
-        `readonly ${typescriptProperty(tool.name)}: ${tool.requiresTaggedResult ? "McpTaggedToolHandler" : "McpToolHandler"}<${tool.symbolName}Input, ${tool.symbolName}Output, ${tool.symbolName}Error>;`,
-    )
-    .join("\n  ");
+    .join(", ");
+  members.push(`${typescriptString(property)}: { ${definitions} }`);
+  return `{ ${members.join(", ")} }`;
+}
+
+function emitServer(server: PlannedServer): string {
   const implementation = {
-    name: server.name,
+    name: server.plan.name,
     version: server.metadata.version,
     ...(server.metadata.icons ? { icons: normalizeIcons(server.metadata.icons) } : {}),
     ...(server.metadata.websiteUrl ? { websiteUrl: String(server.metadata.websiteUrl) } : {}),
   };
 
-  const applicationType = server.modes.native
-    ? server.modes.httpBridge
-      ? "HybridMcpApplication"
-      : "NativeMcpApplication"
-    : "HttpBridgeMcpApplication";
+  const applicationType =
+    server.modes.native && server.modes.httpBridge
+      ? `NativeMcpApplication<${server.symbolName}McpHandlers> | HttpBridgeMcpApplication`
+      : server.modes.native
+        ? `NativeMcpApplication<${server.symbolName}McpHandlers>`
+        : "HttpBridgeMcpApplication";
+  const exportedAliases = server.tools
+    .flatMap((tool) => [
+      `${tool.symbolName}InputWire`,
+      `${tool.symbolName}Input`,
+      `${tool.symbolName}SuccessWire`,
+      `${tool.symbolName}Success`,
+      `${tool.symbolName}Output`,
+      `${tool.symbolName}ErrorWire`,
+      `${tool.symbolName}Error`,
+    ])
+    .join(", ");
+  const applicationImports = [
+    ...(server.modes.httpBridge ? ["type HttpBridgeMcpApplication"] : []),
+    "type McpHandlersFor",
+    ...(server.modes.native ? ["type NativeMcpApplication"] : []),
+  ];
 
   return `// Generated by @typespex/mcp. Do not edit.
-${modelImport}import {
+import {
   createGeneratedMcpServer,
   defineMcpApplication,
-  type ${applicationType},
-  type McpTaggedToolHandler,
-  type McpToolHandler,
+  ${applicationImports.join(",\n  ")},
 } from "@typespex/mcp-runtime";
 import { mcpTools } from "./${server.fileNames.operations}.js";
+export type { ${exportedAliases} } from "./${server.fileNames.operations}.js";
 
-${aliases}
+export type ${server.symbolName}McpHandlers = McpHandlersFor<typeof mcpTools>;
 
-export interface ${server.symbolName}McpHandlers {
-  ${handlerProperties}
-}
-
-export type ${server.symbolName}McpApplication = ${applicationType}<${server.symbolName}McpHandlers>;
+export type ${server.symbolName}McpApplication = ${applicationType};
 
 export const define${server.symbolName}McpApplication = (application: ${server.symbolName}McpApplication): ${server.symbolName}McpApplication =>
   defineMcpApplication(application);
@@ -692,6 +836,7 @@ export const mcpHttpBridgeOperations = ${typescriptString(operations)} as const 
 
 function runtimeHttpOperation(plan: HttpWireOperationPlan): unknown {
   return {
+    version: plan.version,
     id: plan.operationId,
     method: plan.method,
     path: plan.path,
@@ -759,7 +904,8 @@ function artifact(
   content: string,
 ): ArtifactPlan {
   return {
-    artifact: `${server.name}.${artifactName}`,
+    version: CODEGEN_PLAN_VERSION,
+    artifact: `${server.plan.name}.${artifactName}`,
     fileName: `${fileName}.ts`,
     outputDir: server.outputDir,
     content,
@@ -833,35 +979,47 @@ function mergeToolAnnotations(
   return { ...inferred, ...explicit };
 }
 
-function schemasDefinitelyOverlap(success: JsonWirePlan, error: JsonWirePlan): boolean {
-  return schemaNodesOverlap(success.schema, success.schema, error.schema, error.schema, new Set());
+function schemasDefinitelyDisjoint(success: JsonWirePlan, error: JsonWirePlan): boolean {
+  return schemaNodesDefinitelyDisjoint(
+    success.schema,
+    success.schema,
+    error.schema,
+    error.schema,
+    new Set(),
+  );
 }
 
-function schemaNodesOverlap(
+function schemaNodesDefinitelyDisjoint(
   left: unknown,
   leftDocument: unknown,
   right: unknown,
   rightDocument: unknown,
   seen: Set<string>,
 ): boolean {
-  if (left === false || right === false) return false;
-  if (left === true || right === true) return true;
+  if (left === false || right === false) return true;
+  if (left === true || right === true) return false;
   if (!isSchemaRecord(left) || !isSchemaRecord(right)) return false;
   const resolvedLeft = resolveLocalSchemaRef(left, leftDocument);
   const resolvedRight = resolveLocalSchemaRef(right, rightDocument);
   if (resolvedLeft !== left || resolvedRight !== right) {
     const key = `${schemaIdentity(resolvedLeft)}|${schemaIdentity(resolvedRight)}`;
-    if (seen.has(key)) return true;
+    if (seen.has(key)) return false;
     seen.add(key);
-    return schemaNodesOverlap(resolvedLeft, leftDocument, resolvedRight, rightDocument, seen);
+    return schemaNodesDefinitelyDisjoint(
+      resolvedLeft,
+      leftDocument,
+      resolvedRight,
+      rightDocument,
+      seen,
+    );
   }
 
   const leftAlternatives = Array.isArray(left.anyOf) ? left.anyOf : [left];
   const rightAlternatives = Array.isArray(right.anyOf) ? right.anyOf : [right];
   if (leftAlternatives.length > 1 || rightAlternatives.length > 1) {
-    return leftAlternatives.some((leftAlternative) =>
-      rightAlternatives.some((rightAlternative) =>
-        schemaNodesOverlap(
+    return leftAlternatives.every((leftAlternative) =>
+      rightAlternatives.every((rightAlternative) =>
+        schemaNodesDefinitelyDisjoint(
           leftAlternative,
           leftDocument,
           rightAlternative,
@@ -873,43 +1031,60 @@ function schemaNodesOverlap(
   }
 
   if ("const" in left || "const" in right) {
-    return "const" in left && "const" in right && Object.is(left.const, right.const);
+    if ("const" in left && "const" in right) return !Object.is(left.const, right.const);
+    const literal = "const" in left ? left.const : right.const;
+    const other = "const" in left ? right : left;
+    const otherDocument = "const" in left ? rightDocument : leftDocument;
+    return schemaDefinitelyRejectsLiteral(other, otherDocument, literal, new Set(seen));
   }
-  if (Array.isArray(left.enum) && Array.isArray(right.enum)) {
-    const leftValues = left.enum;
-    const rightValues = right.enum;
-    return leftValues.some((value) => rightValues.some((candidate) => Object.is(value, candidate)));
+  if (Array.isArray(left.enum) || Array.isArray(right.enum)) {
+    if (Array.isArray(left.enum) && Array.isArray(right.enum)) {
+      const rightValues = right.enum as unknown[];
+      return left.enum.every(
+        (value) => !rightValues.some((candidate) => Object.is(value, candidate)),
+      );
+    }
+    const values = (Array.isArray(left.enum) ? left.enum : right.enum) as unknown[];
+    const other = Array.isArray(left.enum) ? right : left;
+    const otherDocument = Array.isArray(left.enum) ? rightDocument : leftDocument;
+    return values.every((value) =>
+      schemaDefinitelyRejectsLiteral(other, otherDocument, value, new Set(seen)),
+    );
   }
   const leftTypes = schemaTypes(left);
   const rightTypes = schemaTypes(right);
-  if (leftTypes && rightTypes && !leftTypes.some((type) => rightTypes.includes(type))) return false;
-  const commonType = leftTypes?.find((type) => rightTypes?.includes(type));
-  if (commonType === "object" || (left.properties && right.properties)) {
-    return objectSchemasOverlap(left, leftDocument, right, rightDocument, seen);
+  if (leftTypes && rightTypes && typeSetsDefinitelyDisjoint(leftTypes, rightTypes)) return true;
+  const commonTypes = commonSchemaTypes(leftTypes, rightTypes);
+  if (commonTypes.includes("object") || (left.properties && right.properties)) {
+    return objectSchemasDefinitelyDisjoint(left, leftDocument, right, rightDocument, seen);
   }
-  if (commonType === "number" || commonType === "integer") {
-    return numericSchemasOverlap(left, right);
+  if (commonTypes.includes("number") || commonTypes.includes("integer")) {
+    return numericSchemasDefinitelyDisjoint(left, right);
   }
-  if (commonType === "string") {
-    if (left.pattern || right.pattern) return left.pattern === right.pattern;
-    return stringRangesOverlap(left, right);
+  if (commonTypes.includes("string")) {
+    return stringRangesDefinitelyDisjoint(left, right);
   }
-  if (commonType === "array") {
+  if (commonTypes.includes("array")) {
     const leftMinimum = numberKeyword(left.minItems, 0);
     const rightMinimum = numberKeyword(right.minItems, 0);
-    if (leftMinimum === 0 && rightMinimum === 0) return true;
-    return schemaNodesOverlap(
-      left.items ?? true,
-      leftDocument,
-      right.items ?? true,
-      rightDocument,
-      seen,
+    const leftMaximum = numberKeyword(left.maxItems, Number.POSITIVE_INFINITY);
+    const rightMaximum = numberKeyword(right.maxItems, Number.POSITIVE_INFINITY);
+    if (Math.max(leftMinimum, rightMinimum) > Math.min(leftMaximum, rightMaximum)) return true;
+    return (
+      Math.max(leftMinimum, rightMinimum) > 0 &&
+      schemaNodesDefinitelyDisjoint(
+        left.items ?? true,
+        leftDocument,
+        right.items ?? true,
+        rightDocument,
+        seen,
+      )
     );
   }
-  return commonType !== undefined && commonType !== "never";
+  return false;
 }
 
-function objectSchemasOverlap(
+function objectSchemasDefinitelyDisjoint(
   left: Record<string, unknown>,
   leftDocument: unknown,
   right: Record<string, unknown>,
@@ -926,37 +1101,50 @@ function objectSchemasOverlap(
     left.additionalProperties === false &&
     [...rightRequired].some((property) => !(property in leftProperties))
   ) {
-    return false;
+    return true;
   }
   if (
     right.additionalProperties === false &&
     [...leftRequired].some((property) => !(property in rightProperties))
   ) {
-    return false;
+    return true;
   }
   for (const property of new Set([...leftRequired, ...rightRequired])) {
     const leftSchema = leftProperties[property];
     const rightSchema = rightProperties[property];
     if (leftSchema === undefined || rightSchema === undefined) continue;
-    if (!schemaNodesOverlap(leftSchema, leftDocument, rightSchema, rightDocument, new Set(seen))) {
-      return false;
+    if (
+      schemaNodesDefinitelyDisjoint(
+        leftSchema,
+        leftDocument,
+        rightSchema,
+        rightDocument,
+        new Set(seen),
+      )
+    ) {
+      return true;
     }
   }
-  return true;
+  return false;
 }
 
-function numericSchemasOverlap(
+function numericSchemasDefinitelyDisjoint(
   left: Record<string, unknown>,
   right: Record<string, unknown>,
 ): boolean {
-  const leftMinimum = numberKeyword(left.minimum, Number.NEGATIVE_INFINITY);
-  const rightMinimum = numberKeyword(right.minimum, Number.NEGATIVE_INFINITY);
-  const leftMaximum = numberKeyword(left.maximum, Number.POSITIVE_INFINITY);
-  const rightMaximum = numberKeyword(right.maximum, Number.POSITIVE_INFINITY);
-  return Math.max(leftMinimum, rightMinimum) <= Math.min(leftMaximum, rightMaximum);
+  const leftRange = numericRange(left);
+  const rightRange = numericRange(right);
+  if (leftRange.minimum > rightRange.maximum || rightRange.minimum > leftRange.maximum) return true;
+  if (leftRange.minimum === rightRange.maximum) {
+    return leftRange.minimumExclusive || rightRange.maximumExclusive;
+  }
+  if (rightRange.minimum === leftRange.maximum) {
+    return rightRange.minimumExclusive || leftRange.maximumExclusive;
+  }
+  return false;
 }
 
-function stringRangesOverlap(
+function stringRangesDefinitelyDisjoint(
   left: Record<string, unknown>,
   right: Record<string, unknown>,
 ): boolean {
@@ -965,7 +1153,112 @@ function stringRangesOverlap(
     numberKeyword(left.maxLength, Number.POSITIVE_INFINITY),
     numberKeyword(right.maxLength, Number.POSITIVE_INFINITY),
   );
-  return minimum <= maximum;
+  return minimum > maximum;
+}
+
+function schemaDefinitelyRejectsLiteral(
+  schema: unknown,
+  document: unknown,
+  value: unknown,
+  seen: Set<string>,
+): boolean {
+  if (schema === false) return true;
+  if (schema === true || !isSchemaRecord(schema)) return false;
+  const resolved = resolveLocalSchemaRef(schema, document);
+  if (resolved !== schema) {
+    const key = schemaIdentity(resolved);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return schemaDefinitelyRejectsLiteral(resolved, document, value, seen);
+  }
+  if (Array.isArray(schema.anyOf)) {
+    return schema.anyOf.every((variant) =>
+      schemaDefinitelyRejectsLiteral(variant, document, value, new Set(seen)),
+    );
+  }
+  if ("const" in schema && !Object.is(schema.const, value)) return true;
+  if (Array.isArray(schema.enum) && !schema.enum.some((item) => Object.is(item, value)))
+    return true;
+  const types = schemaTypes(schema);
+  const literalType = jsonTypeOf(value);
+  if (types && !types.some((type) => schemaTypeAccepts(type, literalType))) return true;
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) return true;
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return true;
+  }
+  if (typeof value === "number") {
+    const range = numericRange(schema);
+    if (value < range.minimum || value > range.maximum) return true;
+    if (value === range.minimum && range.minimumExclusive) return true;
+    if (value === range.maximum && range.maximumExclusive) return true;
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) return true;
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) return true;
+  }
+  return false;
+}
+
+function typeSetsDefinitelyDisjoint(left: readonly string[], right: readonly string[]): boolean {
+  return !left.some((leftType) =>
+    right.some(
+      (rightType) =>
+        leftType === rightType ||
+        (leftType === "number" && rightType === "integer") ||
+        (leftType === "integer" && rightType === "number"),
+    ),
+  );
+}
+
+function commonSchemaTypes(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): string[] {
+  if (!left && !right) return [];
+  if (!left) return [...right!];
+  if (!right) return [...left];
+  const result = new Set<string>();
+  for (const leftType of left) {
+    for (const rightType of right) {
+      if (leftType === rightType) result.add(leftType);
+      else if (
+        (leftType === "number" && rightType === "integer") ||
+        (leftType === "integer" && rightType === "number")
+      ) {
+        result.add("integer");
+      }
+    }
+  }
+  return [...result];
+}
+
+function schemaTypeAccepts(schemaType: string, literalType: string): boolean {
+  return schemaType === literalType || (schemaType === "number" && literalType === "integer");
+}
+
+function jsonTypeOf(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+  return typeof value === "object" ? "object" : typeof value;
+}
+
+function numericRange(schema: Record<string, unknown>): {
+  minimum: number;
+  maximum: number;
+  minimumExclusive: boolean;
+  maximumExclusive: boolean;
+} {
+  const exclusiveMinimum =
+    typeof schema.exclusiveMinimum === "number" ? schema.exclusiveMinimum : undefined;
+  const exclusiveMaximum =
+    typeof schema.exclusiveMaximum === "number" ? schema.exclusiveMaximum : undefined;
+  return {
+    minimum: exclusiveMinimum ?? numberKeyword(schema.minimum, Number.NEGATIVE_INFINITY),
+    maximum: exclusiveMaximum ?? numberKeyword(schema.maximum, Number.POSITIVE_INFINITY),
+    minimumExclusive: exclusiveMinimum !== undefined,
+    maximumExclusive: exclusiveMaximum !== undefined,
+  };
 }
 
 function resolveLocalSchemaRef(schema: Record<string, unknown>, document: unknown): unknown {

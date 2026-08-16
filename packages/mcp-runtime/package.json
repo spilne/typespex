@@ -62,7 +62,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.type-tests.json",
     "test": "bun test --timeout 30000"
   },
   "dependencies": {
@@ -72,7 +72,10 @@
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
+    "@types/express": "^5.0.6",
     "@types/node": "22.12.0",
+    "express": "^5.2.1",
+    "hono": "^4.13.1",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {

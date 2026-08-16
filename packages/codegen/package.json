@@ -46,7 +46,8 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --timeout 30000"
+    "test": "bun test --timeout 30000",
+    "test:compatibility": "bun test --timeout 30000 test/compatibility.test.ts"
   },
   "dependencies": {
     "@typespex/runtime": "workspace:*",

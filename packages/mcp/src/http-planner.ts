@@ -84,6 +84,7 @@ export function analyzeBridgeStreams(
       });
     }
     addMultipartSubstitutions(operation.parameters.body);
+    analyzeBody(operation, operation.parameters.body, "request");
     addStream(operation, api.getStreamMetadata(program, operation.parameters), [
       operation.operation.parameters,
       operation.parameters.body?.type,
@@ -91,6 +92,7 @@ export function analyzeBridgeStreams(
     for (const response of operation.responses) {
       for (const content of response.responses) {
         addMultipartSubstitutions(content.body);
+        analyzeBody(operation, content.body, "response");
         addStream(operation, api.getStreamMetadata(program, content), [
           response.type,
           content.body?.type,
@@ -114,6 +116,43 @@ export function analyzeBridgeStreams(
       }
       if (wrapper?.kind === "Model") typeSubstitutions.set(wrapper, part.body.type);
     }
+  }
+
+  function analyzeBody(
+    operation: HttpOperation,
+    body: HttpPayloadBody | undefined,
+    direction: string,
+  ): void {
+    if (!body) return;
+    if (body.bodyKind === "multipart") {
+      for (const part of body.parts)
+        analyzeBody(operation, part.body, `${direction} multipart part`);
+      return;
+    }
+    if (body.bodyKind === "file") return;
+    const contentTypes =
+      body.contentTypes.length > 0 ? body.contentTypes : defaultBodyContentTypes(body);
+    for (const contentType of contentTypes) {
+      const kind = bodyKind(program, body, contentType);
+      if (kind === "binary" && !isBytesLike(program, body.type)) {
+        addIssue(
+          operation,
+          `${direction} body ${contentType} is structured but the HTTP bridge has no serializer for that media type`,
+        );
+      } else if (kind === "text" && !isScalarLike(program, body.type)) {
+        addIssue(
+          operation,
+          `${direction} body ${contentType} is structured; only scalar text bodies are supported`,
+        );
+      } else if (kind === "form" && body.type.kind !== "Model") {
+        addIssue(operation, `${direction} form body must be an object model`);
+      }
+    }
+  }
+
+  function addIssue(operation: HttpOperation, message: string): void {
+    if (issues.some((issue) => issue.operation === operation && issue.message === message)) return;
+    issues.push({ operation, message });
   }
 
   function addStream(
@@ -223,7 +262,7 @@ function createBodyPlan(
   const contentTypes =
     body.contentTypes.length > 0 ? body.contentTypes : defaultBodyContentTypes(body);
   const stream = api.getStreamMetadata(program, operation.parameters);
-  const kind = stream ? "jsonl" : bodyKind(body, contentTypes[0]);
+  const kind = stream ? "jsonl" : bodyKind(program, body, contentTypes[0]);
   const contentTypePropertyPath = body.contentTypeProperty
     ? findPropertyPath(
         operation.parameters.properties,
@@ -235,7 +274,7 @@ function createBodyPlan(
     : undefined;
   const mediaTypes = contentTypes.map((contentType) => ({
     contentType,
-    kind: stream ? ("jsonl" as const) : bodyKind(body, contentType),
+    kind: stream ? ("jsonl" as const) : bodyKind(program, body, contentType),
     ...(body.bodyKind === "file" || body.bodyKind === "multipart"
       ? {}
       : {
@@ -244,7 +283,7 @@ function createBodyPlan(
             body.type,
             body.property,
             contentType,
-            httpValueContext(body, contentType),
+            httpValueContext(program, body, contentType),
           ),
         }),
   }));
@@ -258,7 +297,7 @@ function createBodyPlan(
           body.type,
           body.property,
           contentTypes[0],
-          httpValueContext(body, contentTypes[0]),
+          httpValueContext(program, body, contentTypes[0]),
         );
   const bodyPropertyPath = body.property
     ? findPropertyPath(
@@ -330,7 +369,7 @@ function createMultipartPartPlans(
       part.body.contentTypes.length > 0
         ? [...part.body.contentTypes]
         : defaultBodyContentTypes(part.body);
-    const kind = bodyKind(part.body, contentTypes[0]);
+    const kind = bodyKind(program, part.body, contentTypes[0]);
     return {
       source: wirePath(program, operation.operation.parameters, sourcePath, "application/json"),
       ...(part.name ? { name: part.name } : {}),
@@ -346,7 +385,7 @@ function createMultipartPartPlans(
               part.body.type,
               part.body.property,
               contentTypes[0],
-              httpValueContext(part.body, contentTypes[0]),
+              httpValueContext(program, part.body, contentTypes[0]),
             ),
           }),
     };
@@ -362,7 +401,7 @@ function createResponseMultipartPartPlans(
       part.body.contentTypes.length > 0
         ? [...part.body.contentTypes]
         : defaultBodyContentTypes(part.body);
-    const kind = bodyKind(part.body, contentTypes[0]);
+    const kind = bodyKind(program, part.body, contentTypes[0]);
     return {
       target:
         part.partKind === "model"
@@ -381,7 +420,7 @@ function createResponseMultipartPartPlans(
               part.body.type,
               part.body.property,
               contentTypes[0],
-              httpValueContext(part.body, contentTypes[0]),
+              httpValueContext(program, part.body, contentTypes[0]),
             ),
           }),
     };
@@ -404,8 +443,13 @@ function createResponsePlans(
     const contentTypes = body?.contentTypes ?? [];
     const mediaGroups =
       contentTypes.length > 0
-        ? groupMediaTypesByKind(body, contentTypes, Boolean(stream))
-        : [{ kind: body ? bodyKind(body, undefined) : ("empty" as const), contentTypes: [] }];
+        ? groupMediaTypesByKind(program, body, contentTypes, Boolean(stream))
+        : [
+            {
+              kind: body ? bodyKind(program, body, undefined) : ("empty" as const),
+              contentTypes: [],
+            },
+          ];
     const bodyPath = body?.property
       ? findPropertyPath(content.properties, (property) => property.property === body.property)
       : undefined;
@@ -453,7 +497,7 @@ function createResponsePlans(
               body.type,
               body.property,
               contentTypes[0] ?? "application/json",
-              httpValueContext(body, contentTypes[0]),
+              httpValueContext(program, body, contentTypes[0]),
             ),
           }
         : {}),
@@ -546,17 +590,19 @@ function authSchemePlan(auth: HttpAuth): HttpAuthSchemePlan | undefined {
 }
 
 function groupMediaTypesByKind(
+  program: Program,
   body: HttpPayloadBody | undefined,
   contentTypes: readonly string[],
   stream: boolean,
 ): { readonly kind: HttpResponsePlan["kind"]; readonly contentTypes: string[] }[] {
   return contentTypes.map((contentType) => ({
-    kind: stream ? "jsonl" : bodyKind(body, contentType),
+    kind: stream ? "jsonl" : bodyKind(program, body, contentType),
     contentTypes: [contentType],
   }));
 }
 
 function bodyKind(
+  program: Program,
   body: HttpPayloadBody | undefined,
   contentType: string | undefined,
 ): HttpBodyPlan["kind"] {
@@ -567,6 +613,9 @@ function bodyKind(
   if (mediaType === "application/x-www-form-urlencoded") return "form";
   if (mediaType?.startsWith("multipart/")) return "multipart";
   if (mediaType === "application/json" || mediaType?.endsWith("+json")) return "json";
+  if (body && isBytesLike(program, body.type)) return "binary";
+  if (mediaType === "application/xml" || mediaType === "text/xml" || mediaType?.endsWith("+xml"))
+    return "text";
   if (mediaType?.startsWith("text/")) return "text";
   return "binary";
 }
@@ -581,11 +630,12 @@ function defaultBodyContentTypes(body: HttpPayloadBody): string[] {
 type HttpValueContext = "value" | "text" | "header" | "binary";
 
 function httpValueContext(
+  program: Program,
   body: HttpPayloadBody,
   contentType: string | undefined,
 ): HttpValueContext {
   if (body.bodyKind === "file") return "binary";
-  const kind = bodyKind(body, contentType);
+  const kind = bodyKind(program, body, contentType);
   return kind === "json" || kind === "jsonl"
     ? "value"
     : kind === "binary" || kind === "file"
@@ -595,6 +645,43 @@ function httpValueContext(
 
 function normalizeMediaType(contentType: string): string {
   return contentType.split(";", 1)[0]!.trim().toLowerCase();
+}
+
+function isScalarLike(program: Program, type: Type): boolean {
+  switch (type.kind) {
+    case "Scalar":
+    case "String":
+    case "StringTemplate":
+    case "Number":
+    case "Boolean":
+    case "EnumMember":
+      return true;
+    case "Enum":
+      return true;
+    case "Union":
+      return [...type.variants.values()].every((variant) => isScalarLike(program, variant.type));
+    case "UnionVariant":
+    case "ModelProperty":
+      return isScalarLike(program, type.type);
+    case "Intrinsic":
+      return type.name === "null";
+    default:
+      return false;
+  }
+}
+
+function isBytesLike(program: Program, type: Type): boolean {
+  switch (type.kind) {
+    case "Scalar":
+      return scalarIntrinsic(program, type) === "bytes";
+    case "Union":
+      return [...type.variants.values()].every((variant) => isBytesLike(program, variant.type));
+    case "UnionVariant":
+    case "ModelProperty":
+      return isBytesLike(program, type.type);
+    default:
+      return false;
+  }
 }
 
 function normalizePathStyle(
@@ -609,12 +696,37 @@ function createHttpWireValuePlan(
   encodingTarget: ModelProperty | import("@typespec/compiler").Scalar | undefined,
   sourceContentType: string | undefined,
   context: HttpValueContext = "value",
-  visiting = new Set<Type>(),
 ): HttpWireValuePlan {
-  if (visiting.has(type)) return { kind: "identity" };
+  return createHttpWireValuePlanInner(program, type, encodingTarget, sourceContentType, context, {
+    visiting: new Set(),
+    recursive: new Set(),
+    names: new Map(),
+    nextName: 0,
+  });
+}
+
+interface HttpWirePlanningState {
+  readonly visiting: Set<Model>;
+  readonly recursive: Set<Model>;
+  readonly names: Map<Model, string>;
+  nextName: number;
+}
+
+function createHttpWireValuePlanInner(
+  program: Program,
+  type: Type,
+  encodingTarget: ModelProperty | import("@typespec/compiler").Scalar | undefined,
+  sourceContentType: string | undefined,
+  context: HttpValueContext,
+  state: HttpWirePlanningState,
+): HttpWireValuePlan {
   const mediaType = sourceContentType ?? "application/json";
   switch (type.kind) {
     case "Model": {
+      if (state.visiting.has(type)) {
+        state.recursive.add(type);
+        return { kind: "ref", name: httpWireDefinitionName(type, state) };
+      }
       if (isHttpFileModel(type)) {
         const contentType = inheritedProperty(type, "contentType");
         const filename = inheritedProperty(type, "filename");
@@ -631,57 +743,62 @@ function createHttpWireValuePlan(
             contents.type.kind === "Scalar" && scalarIntrinsic(program, contents.type) === "string",
         };
       }
+      state.visiting.add(type);
+      let value: HttpWireValuePlan;
       if (isArrayModelType(program, type)) {
-        return {
+        value = {
           kind: "array",
-          item: createHttpWireValuePlan(
+          item: createHttpWireValuePlanInner(
             program,
             type.indexer.value,
             undefined,
             sourceContentType,
             context,
-            visiting,
+            state,
           ),
         };
+      } else {
+        const properties = Object.fromEntries(
+          [...walkPropertiesInherited(type)].map((property) => {
+            const targetName = resolveEncodedName(program, property, "application/json");
+            return [
+              targetName,
+              {
+                sourceName: resolveEncodedName(program, property, mediaType),
+                value: createHttpWireValuePlanInner(
+                  program,
+                  property.type,
+                  property,
+                  sourceContentType,
+                  context,
+                  state,
+                ),
+                optional: property.optional || property.defaultValue !== undefined,
+              },
+            ];
+          }),
+        );
+        value = {
+          kind: "object",
+          properties,
+          ...(type.indexer?.value
+            ? {
+                additional: createHttpWireValuePlanInner(
+                  program,
+                  type.indexer.value,
+                  undefined,
+                  sourceContentType,
+                  context,
+                  state,
+                ),
+              }
+            : {}),
+        };
       }
-      visiting.add(type);
-      const properties = Object.fromEntries(
-        [...walkPropertiesInherited(type)].map((property) => {
-          const targetName = resolveEncodedName(program, property, "application/json");
-          return [
-            targetName,
-            {
-              sourceName: resolveEncodedName(program, property, mediaType),
-              value: createHttpWireValuePlan(
-                program,
-                property.type,
-                property,
-                sourceContentType,
-                context,
-                visiting,
-              ),
-              optional: property.optional || property.defaultValue !== undefined,
-            },
-          ];
-        }),
-      );
-      visiting.delete(type);
-      return {
-        kind: "object",
-        properties,
-        ...(type.indexer?.value
-          ? {
-              additional: createHttpWireValuePlan(
-                program,
-                type.indexer.value,
-                undefined,
-                sourceContentType,
-                context,
-                visiting,
-              ),
-            }
-          : {}),
-      };
+      state.visiting.delete(type);
+      return state.recursive.has(type)
+        ? { kind: "definition", name: httpWireDefinitionName(type, state), value }
+        : value;
     }
     case "Scalar": {
       const encoding = scalarHttpEncodingPlan(program, type, encodingTarget, context);
@@ -729,39 +846,39 @@ function createHttpWireValuePlan(
       return {
         kind: "union",
         variants: [...type.variants.values()].map((variant) =>
-          createHttpWireValuePlan(
+          createHttpWireValuePlanInner(
             program,
             variant.type,
             undefined,
             sourceContentType,
             context,
-            visiting,
+            state,
           ),
         ),
       };
     case "UnionVariant":
-      return createHttpWireValuePlan(
+      return createHttpWireValuePlanInner(
         program,
         type.type,
         undefined,
         sourceContentType,
         context,
-        visiting,
+        state,
       );
     case "ModelProperty":
-      return createHttpWireValuePlan(
+      return createHttpWireValuePlanInner(
         program,
         type.type,
         type,
         sourceContentType,
         context,
-        visiting,
+        state,
       );
     case "Tuple":
       return {
         kind: "tuple",
         items: type.values.map((item) =>
-          createHttpWireValuePlan(program, item, undefined, sourceContentType, context, visiting),
+          createHttpWireValuePlanInner(program, item, undefined, sourceContentType, context, state),
         ),
       };
     case "String":
@@ -781,6 +898,14 @@ function createHttpWireValuePlan(
     default:
       return { kind: "identity" };
   }
+}
+
+function httpWireDefinitionName(type: Model, state: HttpWirePlanningState): string {
+  const existing = state.names.get(type);
+  if (existing) return existing;
+  const name = `${type.name || "Model"}#${state.nextName++}`;
+  state.names.set(type, name);
+  return name;
 }
 
 function scalarIntrinsic(program: Program, scalar: import("@typespec/compiler").Scalar): string {

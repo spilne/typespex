@@ -16,6 +16,7 @@ import {
   getSummary,
   isArrayModelType,
   resolveEncodedName,
+  serializeValueAsJson,
   walkPropertiesInherited,
   type DiagnosticTarget,
   type EncodeData,
@@ -40,7 +41,13 @@ import {
   typescriptProperty,
   typescriptString,
 } from "./naming.js";
-import type { CodegenIssue, JsonSchema, JsonWirePlan } from "./plans.js";
+import {
+  CODEGEN_PLAN_VERSION,
+  type CodegenIssue,
+  type JsonSchema,
+  type JsonWirePlan,
+  type TypePlan,
+} from "./plans.js";
 
 export interface TypePlannerOptions {
   readonly datetimeMode?: "string" | "date" | "temporal";
@@ -88,9 +95,10 @@ export class TypePlanner {
   private readonly includedTypes = new Set<NamedType>();
   private readonly expandedTypes = new Set<NamedType>();
   private readonly generatedNames = new Map<NamedType, string>();
+  private readonly generatedWireNames = new Map<NamedType, string>();
   private readonly projections = new Map<string, RegisteredProjection>();
   private readonly projectionNames = new Set<string>();
-  private readonly reportedIssues = new Set<string>();
+  private readonly reportedIssues = new WeakMap<object, Set<string>>();
   private namesPrepared = false;
 
   constructor(
@@ -112,6 +120,13 @@ export class TypePlanner {
   getGeneratedName(type: NamedType): string {
     this.ensureNamesPrepared();
     const name = this.generatedNames.get(type);
+    if (!name) throw new Error(`Type ${type.name || type.kind} was not prepared for generation.`);
+    return name;
+  }
+
+  getGeneratedWireName(type: NamedType): string {
+    this.ensureNamesPrepared();
+    const name = this.generatedWireNames.get(type);
     if (!name) throw new Error(`Type ${type.name || type.kind} was not prepared for generation.`);
     return name;
   }
@@ -209,18 +224,24 @@ export class TypePlanner {
             ),
           } satisfies ValueCodecSpec);
     const schema = withDocumentMetadata(rootSchema, state.schemaDefinitions);
-    const codec: ValueCodecDocument = {
+    const codecDocument: ValueCodecDocument = {
       root: rootCodec,
       ...(Object.keys(state.codecDefinitions).length > 0
         ? { definitions: state.codecDefinitions }
         : {}),
     };
     return {
+      version: CODEGEN_PLAN_VERSION,
       schema,
-      codec,
+      ...(codecDocumentRequiresTransform(codecDocument) ? { codec: codecDocument } : {}),
       semanticType: types
         .map((item) =>
           projection ? this.projectedTypeToTs(item, projection) : this.typeToTs(item),
+        )
+        .join(" | "),
+      wireType: types
+        .map((item) =>
+          projection ? this.projectedWireTypeToTs(item, projection) : this.wireTypeToTs(item),
         )
         .join(" | "),
     };
@@ -230,9 +251,41 @@ export class TypePlanner {
   get emittedTypeNames(): readonly string[] {
     this.ensureNamesPrepared();
     return [
-      ...this.namedTypes.map((type) => this.getGeneratedName(type)),
+      ...this.namedTypes.flatMap((type) => [
+        this.getGeneratedName(type),
+        this.getGeneratedWireName(type),
+      ]),
       ...[...this.projections.values()].flatMap((projection) =>
-        [...projection.types].map((type) => this.getProjectionTypeName(type, projection)),
+        [...projection.types].flatMap((type) => {
+          const name = this.getProjectionTypeName(type, projection);
+          return [name, `${name}Wire`];
+        }),
+      ),
+    ];
+  }
+
+  /** Data-only declarations consumed by protocol emitters through ServicePlan. */
+  createTypePlans(): readonly TypePlan[] {
+    this.ensureNamesPrepared();
+    return [
+      ...this.namedTypes.map((type) => ({
+        version: CODEGEN_PLAN_VERSION,
+        key: this.getGeneratedName(type),
+        name: this.getGeneratedName(type),
+        semanticType: this.getGeneratedName(type),
+        wireType: this.getGeneratedWireName(type),
+      })),
+      ...[...this.projections.values()].flatMap((projection) =>
+        [...projection.types].map((type) => {
+          const name = this.getProjectionTypeName(type, projection);
+          return {
+            version: CODEGEN_PLAN_VERSION,
+            key: `${projection.key}:${name}`,
+            name,
+            semanticType: name,
+            wireType: `${name}Wire`,
+          };
+        }),
       ),
     ];
   }
@@ -240,9 +293,15 @@ export class TypePlanner {
   emitModels(): string {
     this.ensureNamesPrepared();
     const declarations = [
-      ...this.namedTypes.map((type) => this.emitNamedType(type)),
+      ...this.namedTypes.flatMap((type) => [
+        this.emitNamedType(type),
+        this.emitNamedWireType(type),
+      ]),
       ...[...this.projections.values()].flatMap((projection) =>
-        [...projection.types].map((type) => this.emitProjectedNamedType(type, projection)),
+        [...projection.types].flatMap((type) => [
+          this.emitProjectedNamedType(type, projection),
+          this.emitProjectedNamedWireType(type, projection),
+        ]),
       ),
     ].join("\n\n");
     const temporalImport =
@@ -274,6 +333,39 @@ export class TypePlanner {
       return `${documentation}export type ${name} = ${object} & Record<string, ${this.projectedTypeToTs(additional, projection)}>;`;
     }
     return `${documentation}export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
+  }
+
+  private emitProjectedNamedWireType(
+    type: Model | Union,
+    projection: RegisteredProjection,
+  ): string {
+    const name = `${this.getProjectionTypeName(type, projection)}Wire`;
+    if (!this.typeRequiresWireTransform(type, projection.propertyFilter)) {
+      return `export type ${name} = ${this.getProjectionTypeName(type, projection)};`;
+    }
+    if (type.kind === "Union") {
+      return `export type ${name} = ${
+        this.unionVariants(type)
+          .map((variant) => this.projectedWireTypeToTs(variant, projection))
+          .join(" | ") || "never"
+      };`;
+    }
+    if (isArrayModelType(this.program, type)) {
+      return `export type ${name} = ReadonlyArray<${this.projectedWireTypeToTs(type.indexer.value, projection)}>;`;
+    }
+    const properties = [...walkPropertiesInherited(type)]
+      .filter(projection.propertyFilter)
+      .map((property) => {
+        const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
+        const wireName = resolveEncodedName(this.program, property, "application/json");
+        return `${typescriptProperty(wireName)}${optional}: ${this.projectedWireTypeToTs(property.type, projection, property)}`;
+      });
+    const additional = this.modelIndexer(type)?.value;
+    if (additional) {
+      const object = `{ ${properties.join("; ")} }`;
+      return `export type ${name} = ${object} & Record<string, ${this.projectedWireTypeToTs(additional, projection)}>;`;
+    }
+    return `export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
   }
 
   private emitProjectedModelProperty(
@@ -314,6 +406,44 @@ export class TypePlanner {
         return `${documentation}export type ${name} = ${
           this.unionVariants(type)
             .map((variant) => this.typeToTs(variant))
+            .join(" | ") || "never"
+        };`;
+    }
+  }
+
+  private emitNamedWireType(type: NamedType): string {
+    const name = this.getGeneratedWireName(type);
+    if (!this.typeRequiresWireTransform(type)) {
+      return `export type ${name} = ${this.getGeneratedName(type)};`;
+    }
+    switch (type.kind) {
+      case "Model": {
+        if (isArrayModelType(this.program, type)) {
+          return `export type ${name} = ReadonlyArray<${this.wireTypeToTs(type.indexer.value)}>;`;
+        }
+        const properties = [...walkPropertiesInherited(type)].map((property) => {
+          const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
+          const wireName = resolveEncodedName(this.program, property, "application/json");
+          return `${typescriptProperty(wireName)}${optional}: ${this.wireTypeToTs(property.type, property)}`;
+        });
+        const additional = this.modelIndexer(type)?.value;
+        if (additional) {
+          const object = `{ ${properties.join("; ")} }`;
+          return `export type ${name} = ${object} & Record<string, ${this.wireTypeToTs(additional)}>;`;
+        }
+        return `export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
+      }
+      case "Scalar":
+        return `export type ${name} = ${this.scalarWireType(type, type)};`;
+      case "Enum":
+        return `export type ${name} = ${
+          [...type.members.values()].map((member) => this.enumMemberToTs(member)).join(" | ") ||
+          "never"
+        };`;
+      case "Union":
+        return `export type ${name} = ${
+          this.unionVariants(type)
+            .map((variant) => this.wireTypeToTs(variant))
             .join(" | ") || "never"
         };`;
     }
@@ -496,12 +626,21 @@ export class TypePlanner {
     );
     let name = baseName;
     let suffix = 2;
-    const originalNames = new Set(this.generatedNames.values());
-    while (originalNames.has(name) || this.projectionNames.has(name)) {
+    const originalNames = new Set([
+      ...this.generatedNames.values(),
+      ...this.generatedWireNames.values(),
+    ]);
+    while (
+      originalNames.has(name) ||
+      originalNames.has(`${name}Wire`) ||
+      this.projectionNames.has(name) ||
+      this.projectionNames.has(`${name}Wire`)
+    ) {
       name = `${baseName}${suffix++}`;
     }
     projection.names.set(type, name);
     this.projectionNames.add(name);
+    this.projectionNames.add(`${name}Wire`);
     return name;
   }
 
@@ -545,6 +684,161 @@ export class TypePlanner {
       default:
         return this.typeToTs(type);
     }
+  }
+
+  private wireTypeToTs(type: Type, encodingTarget?: ModelProperty | Scalar): string {
+    const substituted = this.substituteType(type);
+    if (substituted !== type) return this.wireTypeToTs(substituted, encodingTarget);
+    const useSiteScalarEncoding =
+      type.kind === "Scalar" &&
+      encodingTarget !== undefined &&
+      encodingTarget !== type &&
+      getEncode(this.program, encodingTarget) !== undefined;
+    if (
+      !useSiteScalarEncoding &&
+      isNamedType(type) &&
+      this.isNamedUserType(type) &&
+      !(type.kind === "Model" && (this.isFileModel(type) || this.isStreamModel(type)))
+    ) {
+      return this.getGeneratedWireName(type);
+    }
+    switch (type.kind) {
+      case "Model":
+        if (this.isFileModel(type)) {
+          return `{ name: string; mediaType?: string; data: string }`;
+        }
+        if (this.isStreamModel(type)) {
+          const element = this.options.streamElementTypes?.get(type);
+          return element ? `readonly ${this.wireTypeToTs(element)}[]` : "never";
+        }
+        if (isArrayModelType(this.program, type)) {
+          return `ReadonlyArray<${this.wireTypeToTs(type.indexer.value)}>`;
+        }
+        return this.wireModelExpressionToTs(type);
+      case "Scalar":
+        return this.scalarWireType(type, encodingTarget ?? type);
+      case "Enum":
+        return (
+          [...type.members.values()].map((member) => this.enumMemberToTs(member)).join(" | ") ||
+          "never"
+        );
+      case "EnumMember":
+        return this.enumMemberToTs(type);
+      case "Union":
+        return (
+          this.unionVariants(type)
+            .map((variant) => this.wireTypeToTs(variant))
+            .join(" | ") || "never"
+        );
+      case "UnionVariant":
+        return this.wireTypeToTs(type.type);
+      case "ModelProperty":
+        return this.wireTypeToTs(type.type, type);
+      case "Tuple":
+        return `readonly [${type.values.map((value) => this.wireTypeToTs(value)).join(", ")}]`;
+      case "String":
+        return typescriptString(type.value);
+      case "StringTemplate":
+        return type.stringValue === undefined ? "string" : typescriptString(type.stringValue);
+      case "Number":
+        return type.numericValue.asNumber() === null
+          ? typescriptString(type.valueAsString)
+          : type.valueAsString;
+      case "Boolean":
+        return String(type.value);
+      case "Intrinsic":
+        if (type.name === "null") return "null";
+        if (type.name === "never") return "never";
+        if (type.name === "void") return "void";
+        return "unknown";
+      default:
+        return "unknown";
+    }
+  }
+
+  private projectedWireTypeToTs(
+    type: Type,
+    projection: RegisteredProjection,
+    encodingTarget?: ModelProperty | Scalar,
+  ): string {
+    const substituted = this.substituteType(type);
+    if (substituted !== type) {
+      return this.projectedWireTypeToTs(substituted, projection, encodingTarget);
+    }
+    if (type.kind === "Model") {
+      if (this.isFileModel(type)) return `{ name: string; mediaType?: string; data: string }`;
+      if (this.isStreamModel(type)) {
+        const element = this.options.streamElementTypes?.get(type);
+        return element ? `readonly ${this.projectedWireTypeToTs(element, projection)}[]` : "never";
+      }
+      if (this.isNamedUserType(type)) {
+        if (!this.projectionChangesType(type, projection)) return this.getGeneratedWireName(type);
+        this.collectProjectionTypes(type, projection);
+        return `${this.getProjectionTypeName(type, projection)}Wire`;
+      }
+      if (isArrayModelType(this.program, type)) {
+        return `ReadonlyArray<${this.projectedWireTypeToTs(type.indexer.value, projection)}>`;
+      }
+      return this.projectedWireModelExpressionToTs(type, projection);
+    }
+    if (type.kind === "Union" && this.isNamedUserType(type)) {
+      if (!this.projectionChangesType(type, projection)) return this.getGeneratedWireName(type);
+      this.collectProjectionTypes(type, projection);
+      return `${this.getProjectionTypeName(type, projection)}Wire`;
+    }
+    if (type.kind === "Union") {
+      return (
+        this.unionVariants(type)
+          .map((variant) => this.projectedWireTypeToTs(variant, projection))
+          .join(" | ") || "never"
+      );
+    }
+    if (type.kind === "UnionVariant") {
+      return this.projectedWireTypeToTs(type.type, projection);
+    }
+    if (type.kind === "ModelProperty") {
+      return this.projectedWireTypeToTs(type.type, projection, type);
+    }
+    if (type.kind === "Tuple") {
+      return `readonly [${type.values
+        .map((item) => this.projectedWireTypeToTs(item, projection))
+        .join(", ")}]`;
+    }
+    return this.wireTypeToTs(type, encodingTarget);
+  }
+
+  private wireModelExpressionToTs(model: Model): string {
+    const properties = [...walkPropertiesInherited(model)].map((property) => {
+      const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
+      const wireName = resolveEncodedName(this.program, property, "application/json");
+      return `${typescriptProperty(wireName)}${optional}: ${this.wireTypeToTs(property.type, property)}`;
+    });
+    let expression =
+      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
+    const additional = this.modelIndexer(model)?.value;
+    if (additional) {
+      const indexer = `Record<string, ${this.wireTypeToTs(additional)}>`;
+      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
+    }
+    return expression;
+  }
+
+  private projectedWireModelExpressionToTs(model: Model, projection: RegisteredProjection): string {
+    const properties = [...walkPropertiesInherited(model)]
+      .filter(projection.propertyFilter)
+      .map((property) => {
+        const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
+        const wireName = resolveEncodedName(this.program, property, "application/json");
+        return `${typescriptProperty(wireName)}${optional}: ${this.projectedWireTypeToTs(property.type, projection, property)}`;
+      });
+    let expression =
+      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
+    const additional = this.modelIndexer(model)?.value;
+    if (additional) {
+      const indexer = `Record<string, ${this.projectedWireTypeToTs(additional, projection)}>`;
+      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
+    }
+    return expression;
   }
 
   private projectedModelExpressionToTs(model: Model, projection: RegisteredProjection): string {
@@ -737,7 +1031,7 @@ export class TypePlanner {
         };
       }
       properties[wireName] = propertySchema;
-      if (!property.optional && property.defaultValue === undefined) required.push(wireName);
+      if (!property.optional && !defaultValue.present) required.push(wireName);
     }
     return {
       type: "object",
@@ -1017,7 +1311,7 @@ export class TypePlanner {
       properties[property.name] = {
         wireName: resolveEncodedName(this.program, property, "application/json"),
         codec: this.codecForType(property.type, state, property, false, propertyFilter),
-        ...(property.optional ? { optional: true } : {}),
+        ...(property.optional || defaultValue.present ? { optional: true } : {}),
         ...(defaultValue.present ? { hasDefault: true, defaultValue: defaultValue.value } : {}),
       };
     }
@@ -1147,6 +1441,25 @@ export class TypePlanner {
     return { kind: "identity" };
   }
 
+  private typeRequiresWireTransform(
+    type: NamedType,
+    propertyFilter?: (property: ModelProperty) => boolean,
+  ): boolean {
+    const state: DocumentState = {
+      schemaDefinitions: Object.create(null) as Record<string, JsonSchema>,
+      codecDefinitions: Object.create(null) as Record<string, ValueCodecSpec>,
+      buildingSchemas: new Set(),
+      buildingCodecs: new Set(),
+    };
+    const document: ValueCodecDocument = {
+      root: this.codecForType(type, state, undefined, true, propertyFilter),
+      ...(Object.keys(state.codecDefinitions).length > 0
+        ? { definitions: state.codecDefinitions }
+        : {}),
+    };
+    return codecDocumentRequiresTransform(document);
+  }
+
   private ensureSchemaDefinition(
     type: NamedType,
     state: DocumentState,
@@ -1216,29 +1529,57 @@ export class TypePlanner {
     property: ModelProperty,
   ): { readonly present: false } | { readonly present: true; readonly value: unknown } {
     if (property.defaultValue === undefined) return { present: false };
-    return { present: true, value: this.valueToJson(property.defaultValue, property) };
+    try {
+      const value = this.valueToJson(property.defaultValue, property);
+      if (value === undefined) {
+        this.report(
+          "unsupported-type",
+          `Default value for ${this.propertyDisplayName(property)} cannot be represented on the JSON wire.`,
+          property,
+        );
+        return { present: false };
+      }
+      return { present: true, value };
+    } catch (error) {
+      this.report(
+        "unsupported-type",
+        `Default value for ${this.propertyDisplayName(property)} cannot be represented on the JSON wire: ${error instanceof Error ? error.message : String(error)}`,
+        property,
+      );
+      return { present: false };
+    }
   }
 
-  private valueToJson(value: Value, target: ModelProperty): unknown {
+  private valueToJson(value: Value, target: Type): unknown {
+    const resolvedTarget = this.resolveDefaultValueTarget(value, target);
     switch (value.valueKind) {
       case "StringValue":
         return value.value;
-      case "BooleanValue":
-        return value.value;
+      case "BooleanValue": {
+        const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
+        const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
+        const encode =
+          scalar && encodingTarget ? this.effectiveEncode(scalar, encodingTarget) : undefined;
+        return !this.options.canonicalJsonWire &&
+          encode &&
+          this.intrinsicScalarName(encode.type) === "string"
+          ? String(value.value)
+          : value.value;
+      }
       case "NullValue":
         return null;
       case "NumericValue": {
+        const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
+        const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
         const encode =
-          target.type.kind === "Scalar"
-            ? this.effectiveEncode(target.type, target)
-            : getEncode(this.program, target);
+          scalar && encodingTarget ? this.effectiveEncode(scalar, encodingTarget) : undefined;
         const number = value.value.asNumber();
         const canonicalString =
           this.options.canonicalJsonWire &&
-          target.type.kind === "Scalar" &&
-          (["numeric", "decimal", "decimal128"].includes(this.intrinsicScalarName(target.type)) ||
-            (["int64", "uint64", "integer"].includes(this.intrinsicScalarName(target.type)) &&
-              !this.integerRangeIsJsonSafe(target.type, target)));
+          scalar !== undefined &&
+          (["numeric", "decimal", "decimal128"].includes(this.intrinsicScalarName(scalar)) ||
+            (["int64", "uint64", "integer"].includes(this.intrinsicScalarName(scalar)) &&
+              !this.integerRangeIsJsonSafe(scalar, encodingTarget ?? scalar)));
         return (encode &&
           this.intrinsicScalarName(encode.type) === "string" &&
           !this.options.canonicalJsonWire) ||
@@ -1248,18 +1589,94 @@ export class TypePlanner {
       }
       case "EnumValue":
         return this.enumMemberValue(value.value);
-      case "ArrayValue":
-        return value.values.map((item) => this.valueToJson(item, target));
-      case "ObjectValue":
-        return Object.fromEntries(
-          [...value.properties.values()].map((property) => [
-            property.name,
-            this.valueToJson(property.value, target),
-          ]),
+      case "ArrayValue": {
+        const itemTypes =
+          resolvedTarget.kind === "Tuple"
+            ? resolvedTarget.values
+            : resolvedTarget.kind === "Model" && isArrayModelType(this.program, resolvedTarget)
+              ? value.values.map(() => resolvedTarget.indexer.value)
+              : [];
+        return value.values.map((item, index) =>
+          this.valueToJson(item, itemTypes[index] ?? item.type),
         );
+      }
+      case "ObjectValue": {
+        if (resolvedTarget.kind !== "Model") {
+          return serializeValueAsJson(this.program, value, resolvedTarget);
+        }
+        const definitions = new Map(
+          [...walkPropertiesInherited(resolvedTarget)].map((property) => [property.name, property]),
+        );
+        const additional = this.modelIndexer(resolvedTarget)?.value;
+        return Object.fromEntries(
+          [...value.properties.values()].map((property) => {
+            const definition = definitions.get(property.name);
+            return [
+              definition
+                ? resolveEncodedName(this.program, definition, "application/json")
+                : property.name,
+              this.valueToJson(property.value, definition ?? additional ?? property.value.type),
+            ];
+          }),
+        );
+      }
+      case "ScalarValue": {
+        // TypeSpec 1.0 fell back to the constructor's first argument for unknown scalar
+        // constructors, while newer 1.x releases correctly return undefined. Normalize the
+        // supported peer range so an opaque constructor never silently changes wire meaning.
+        const intrinsic = this.intrinsicScalarName(value.scalar);
+        if (
+          value.value.name !== "fromISO" ||
+          !["utcDateTime", "offsetDateTime", "plainDate", "plainTime", "duration"].includes(
+            intrinsic,
+          )
+        ) {
+          return undefined;
+        }
+        const scalar = resolvedTarget.kind === "Scalar" ? resolvedTarget : value.scalar;
+        const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
+        return serializeValueAsJson(
+          this.program,
+          value,
+          scalar,
+          !this.options.canonicalJsonWire && encodingTarget
+            ? this.effectiveEncode(scalar, encodingTarget)
+            : undefined,
+        );
+      }
       default:
         return undefined;
     }
+  }
+
+  private resolveDefaultValueTarget(value: Value, target: Type): Type {
+    const unwrapped =
+      target.kind === "ModelProperty" || target.kind === "UnionVariant" ? target.type : target;
+    if (unwrapped.kind === "Union") {
+      const checker = this.program.checker as typeof this.program.checker & {
+        isTypeAssignableTo?: (
+          source: Type,
+          target: Type,
+          diagnosticTarget: Value,
+        ) => readonly [boolean, readonly unknown[]];
+      };
+      const source = checker.getValueExactType(value) ?? value.type;
+      for (const variant of unwrapped.variants.values()) {
+        if (checker.isTypeAssignableTo?.(source, variant.type, value)[0]) {
+          return this.resolveDefaultValueTarget(value, variant.type);
+        }
+      }
+    }
+    return unwrapped;
+  }
+
+  private defaultValueScalar(valueScalar: Scalar | undefined, target: Type): Scalar | undefined {
+    return target.kind === "Scalar" ? target : valueScalar;
+  }
+
+  private propertyDisplayName(property: ModelProperty): string {
+    const modelName = property.model?.name;
+    return modelName ? `${modelName}.${property.name}` : property.name;
   }
 
   private visitType(type: Type): void {
@@ -1335,6 +1752,7 @@ export class TypePlanner {
   private assignGeneratedNames(): void {
     if (this.namesPrepared) return;
     this.generatedNames.clear();
+    this.generatedWireNames.clear();
     const used = new Map<string, NamedType>();
     for (const type of this.namedTypes) {
       const base = typescriptIdentifier(pascalCase(type.name || type.kind), "Value");
@@ -1348,6 +1766,16 @@ export class TypePlanner {
       while (used.has(candidate)) candidate = `${initial}${suffix++}`;
       used.set(candidate, type);
       this.generatedNames.set(type, candidate);
+    }
+    const usedNames = new Set(used.keys());
+    for (const type of this.namedTypes) {
+      const semanticName = this.generatedNames.get(type)!;
+      const base = `${semanticName}Wire`;
+      let candidate = base;
+      let suffix = 2;
+      while (usedNames.has(candidate)) candidate = `${base}${suffix++}`;
+      usedNames.add(candidate);
+      this.generatedWireNames.set(type, candidate);
     }
     this.namesPrepared = true;
   }
@@ -1464,6 +1892,17 @@ export class TypePlanner {
       default:
         return scalar.baseScalar ? this.scalarSemanticType(scalar.baseScalar) : "unknown";
     }
+  }
+
+  private scalarWireType(scalar: Scalar, encodingTarget: ModelProperty | Scalar): string {
+    const schema = this.scalarSchema(scalar, encodingTarget);
+    if (!isSchemaObject(schema)) return "never";
+    const type = schema.type;
+    if (type === "string") return "string";
+    if (type === "number" || type === "integer") return "number";
+    if (type === "boolean") return "boolean";
+    if (type === "null") return "null";
+    return "unknown";
   }
 
   private effectiveEncode(scalar: Scalar, target: ModelProperty | Scalar): EncodeData | undefined {
@@ -1585,8 +2024,10 @@ export class TypePlanner {
 
   private report(code: CodegenIssue["code"], message: string, target: DiagnosticTarget): void {
     const key = `${code}:${message}`;
-    if (this.reportedIssues.has(key)) return;
-    this.reportedIssues.add(key);
+    const issues = this.reportedIssues.get(target) ?? new Set<string>();
+    if (issues.has(key)) return;
+    issues.add(key);
+    this.reportedIssues.set(target, issues);
     this.options.onIssue?.({ code, message, target });
   }
 }
@@ -1614,4 +2055,57 @@ function withDocumentMetadata(
     ...(Object.keys(definitions).length > 0 ? { $defs: definitions } : {}),
   };
   return isSchemaObject(root) ? { ...metadata, ...root } : { ...metadata, allOf: [root] };
+}
+
+function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
+  const visiting = new Set<string>();
+  const requiresTransform = (spec: ValueCodecSpec): boolean => {
+    switch (spec.kind) {
+      case "identity":
+      case "primitive":
+      case "literal":
+      case "decimal-string":
+        return false;
+      case "date-time":
+        return !(
+          spec.representation === "string" ||
+          (spec.representation === "date" && spec.format !== "date-time")
+        );
+      case "bigint-string":
+      case "bigint-number":
+      case "number-string":
+      case "boolean-string":
+      case "bytes":
+      case "file":
+        return true;
+      case "array":
+        return requiresTransform(spec.item);
+      case "tuple":
+        return spec.items.some(requiresTransform);
+      case "union":
+        return spec.variants.some(requiresTransform);
+      case "object":
+        return (
+          Object.entries(spec.properties).some(
+            ([semanticName, property]) =>
+              property.wireName !== semanticName ||
+              property.hasDefault === true ||
+              requiresTransform(property.codec),
+          ) ||
+          (spec.additionalProperties !== undefined &&
+            spec.additionalProperties !== true &&
+            requiresTransform(spec.additionalProperties))
+        );
+      case "ref": {
+        if (visiting.has(spec.name)) return false;
+        const target = document.definitions?.[spec.name];
+        if (!target) return true;
+        visiting.add(spec.name);
+        const result = requiresTransform(target);
+        visiting.delete(spec.name);
+        return result;
+      }
+    }
+  };
+  return requiresTransform(document.root);
 }

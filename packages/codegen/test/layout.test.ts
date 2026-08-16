@@ -42,20 +42,44 @@ describe("codegen service layouts", () => {
   test("detects case-insensitive artifact collisions before writes", () => {
     expect(() =>
       assertUniqueArtifactPaths([
-        { artifact: "one", outputDir: "service", fileName: "Models.ts", content: "" },
-        { artifact: "two", outputDir: "service", fileName: "models.ts", content: "" },
+        {
+          version: CODEGEN_PLAN_VERSION,
+          artifact: "one",
+          outputDir: "service",
+          fileName: "Models.ts",
+          content: "",
+        },
+        {
+          version: CODEGEN_PLAN_VERSION,
+          artifact: "two",
+          outputDir: "service",
+          fileName: "models.ts",
+          content: "",
+        },
       ]),
     ).toThrow(ArtifactCollisionError);
   });
 
   test("formats artifacts and identifies the failed artifact", async () => {
     const [formatted] = await formatTypeScriptArtifacts([
-      { artifact: "models", outputDir: "service", fileName: "models.ts", content: "const x=1" },
+      {
+        version: CODEGEN_PLAN_VERSION,
+        artifact: "models",
+        outputDir: "service",
+        fileName: "models.ts",
+        content: "const x=1",
+      },
     ]);
     expect(formatted?.content).toBe("const x = 1;\n");
 
     const failure = formatTypeScriptArtifacts([
-      { artifact: "server", outputDir: "service", fileName: "server.ts", content: "const =" },
+      {
+        version: CODEGEN_PLAN_VERSION,
+        artifact: "server",
+        outputDir: "service",
+        fileName: "server.ts",
+        content: "const =",
+      },
     ]);
     await expect(failure).rejects.toBeInstanceOf(ArtifactFormatError);
     await expect(failure).rejects.toMatchObject({ artifact: "server", fileName: "server.ts" });

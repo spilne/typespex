@@ -10,6 +10,7 @@ import {
   type HttpBridgeOperation,
   type HttpWireValuePlan,
 } from "../src/http-bridge.js";
+import { McpToolError } from "../src/results.js";
 
 const context = {
   requestId: 1,
@@ -20,6 +21,7 @@ describe("MCP HTTP bridge", () => {
   test("serializes parameters, applies auth, and decodes declared responses", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "getPet",
       method: "GET",
       path: "/pets/{id}",
@@ -61,6 +63,7 @@ describe("MCP HTTP bridge", () => {
 
   test("reconstructs modeled status, header, and body fields", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "getPet",
       method: "GET",
       path: "/pets/missing",
@@ -97,6 +100,7 @@ describe("MCP HTTP bridge", () => {
 
   test("treats a declared non-error response as success regardless of status class", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "declared-alternate-success",
       method: "GET",
       path: "/lookup",
@@ -113,6 +117,7 @@ describe("MCP HTTP bridge", () => {
   test("rejects dot path segments before URL normalization", async () => {
     let fetched = false;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "safe-path",
       method: "GET",
       path: "/items/{id}",
@@ -144,6 +149,7 @@ describe("MCP HTTP bridge", () => {
   test("fails required authentication before fetch", async () => {
     let fetched = false;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "secure",
       method: "GET",
       path: "/secure",
@@ -169,6 +175,7 @@ describe("MCP HTTP bridge", () => {
   test("rejects empty credentials while preserving a declared no-auth alternative", async () => {
     let fetches = 0;
     const secure: HttpBridgeOperation = {
+      version: 1,
       id: "secure",
       method: "GET",
       path: "/secure",
@@ -202,6 +209,7 @@ describe("MCP HTTP bridge", () => {
 
   test("requires an origin allowlist for dynamic server resolution", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "dynamic",
       method: "GET",
       path: "/value",
@@ -216,6 +224,7 @@ describe("MCP HTTP bridge", () => {
 
   test("rejects ambiguous static and dynamic server configuration", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "ambiguous-server",
       method: "GET",
       path: "/value",
@@ -230,8 +239,70 @@ describe("MCP HTTP bridge", () => {
     ).rejects.toThrow("either bridge.server or bridge.resolveServer, not both");
   });
 
+  test("normalizes invalid upstream origin configuration as operational errors", async () => {
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "invalid-origin",
+      method: "GET",
+      path: "/value",
+      responses: [{ statuses: [200], kind: "json" }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+    };
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        allowedUpstreamOrigins: ["not a URL"],
+      }),
+    ).rejects.toThrow("Invalid allowed upstream origin");
+    await expect(
+      executeHttpBridgeTool(operation, {}, context, {
+        allowedUpstreamOrigins: ["file:///tmp"],
+      }),
+    ).rejects.toThrow("must use HTTP or HTTPS");
+  });
+
+  test("normalizes invalid upstream servers and numeric limits as operational errors", async () => {
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "invalid-options",
+      method: "GET",
+      path: "/value",
+      responses: [{ statuses: [200], kind: "json" }],
+    };
+    for (const server of ["api.example.test", "/relative"]) {
+      const error = await executeHttpBridgeTool(operation, {}, context, { server }).then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+      expect(error).toBeInstanceOf(McpToolError);
+      expect(String(error)).toContain("Invalid upstream server URL");
+    }
+
+    const invalidLimit = await executeHttpBridgeTool(operation, {}, context, {
+      server: "https://api.example.test",
+      maxRedirects: 1.5,
+    }).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+    expect(invalidLimit).toBeInstanceOf(McpToolError);
+    expect(String(invalidLimit)).toContain("maxRedirects must be an integer");
+
+    for (const timeoutMs of [Number.NaN, -5, 0, 1.5]) {
+      const invalidTimeout = await executeHttpBridgeTool(operation, {}, context, {
+        server: "https://api.example.test",
+        timeoutMs,
+      }).then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+      expect(invalidTimeout).toBeInstanceOf(McpToolError);
+      expect(String(invalidTimeout)).toContain("timeoutMs must be an integer >= 1");
+    }
+  });
+
   test("redacts undeclared upstream bodies unless explicitly exposed", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "undeclared",
       method: "GET",
       path: "/value",
@@ -271,6 +342,7 @@ describe("MCP HTTP bridge", () => {
 
   test("cancels bodies declared as empty", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "empty",
       method: "GET",
       path: "/empty",
@@ -298,6 +370,7 @@ describe("MCP HTTP bridge", () => {
 
   test("enforces JSONL item and byte bounds", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "list",
       method: "GET",
       path: "/items",
@@ -318,6 +391,7 @@ describe("MCP HTTP bridge", () => {
   test("preserves server base paths and prefers exact responses over defaults", async () => {
     let requestUrl: string | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "prefixed",
       method: "GET",
       path: "/items",
@@ -343,6 +417,7 @@ describe("MCP HTTP bridge", () => {
   test("expands RFC 6570 path values and preserves literal route query fields", async () => {
     let requestUrl: string | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "segments",
       method: "GET",
       path: "/files{segments}",
@@ -372,6 +447,7 @@ describe("MCP HTTP bridge", () => {
   test("selects request media types from encoded input", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "flexible",
       method: "POST",
       path: "/value",
@@ -397,9 +473,57 @@ describe("MCP HTTP bridge", () => {
     expect(await request?.text()).toBe("hello");
   });
 
+  test("rejects unsafe generated and file Content-Type values as operational errors", async () => {
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "unsafe-content-type",
+      method: "POST",
+      path: "/file",
+      body: {
+        source: ["file"],
+        kind: "file",
+        contentType: "application/octet-stream",
+      },
+      responses: [{ statuses: [204], kind: "empty" }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+    };
+    for (const mediaType of ["text/plain\r\nx-injected: true", "image/png\u0000"]) {
+      await expect(
+        executeHttpBridgeTool(
+          operation,
+          {
+            file: {
+              name: "unsafe.txt",
+              mediaType,
+              data: "",
+            },
+          },
+          context,
+          { fetch: (async () => new Response(null, { status: 204 })) as typeof fetch },
+        ),
+      ).rejects.toThrow("Rejected invalid HTTP header value");
+    }
+
+    await expect(
+      executeHttpBridgeTool(
+        {
+          ...operation,
+          body: undefined,
+          parameters: [
+            { source: ["value"], name: "invalid header", location: "header", required: true },
+          ],
+        },
+        { value: "present" },
+        context,
+        { fetch: (async () => new Response(null, { status: 204 })) as typeof fetch },
+      ),
+    ).rejects.toThrow("Rejected invalid HTTP header value");
+  });
+
   test("omits absent optional fields from property-composed request bodies", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "composed-body",
       method: "POST",
       path: "/pets",
@@ -432,6 +556,7 @@ describe("MCP HTTP bridge", () => {
   test("writes planned multipart parts with names, files, and multiplicity", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "upload",
       method: "POST",
       path: "/upload",
@@ -491,6 +616,7 @@ describe("MCP HTTP bridge", () => {
 
   test("reconstructs tuple targets and repeated response headers", async () => {
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "tuple",
       method: "GET",
       path: "/tuple",
@@ -539,6 +665,7 @@ describe("MCP HTTP bridge", () => {
       },
     };
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "form",
       method: "POST",
       path: "/form",
@@ -621,6 +748,7 @@ describe("MCP HTTP bridge", () => {
       },
     };
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "encoded",
       method: "POST",
       path: "/encoded",
@@ -739,6 +867,7 @@ describe("MCP HTTP bridge", () => {
       },
     };
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "json-file",
       method: "POST",
       path: "/json-file",
@@ -790,6 +919,7 @@ describe("MCP HTTP bridge", () => {
       `--${boundary}--\r\n`,
     ].join("");
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "download-parts",
       method: "GET",
       path: "/parts",
@@ -990,6 +1120,7 @@ describe("MCP HTTP bridge", () => {
     };
     let wireBody: Record<string, unknown> | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "wire-values",
       method: "POST",
       path: "/wire-values",
@@ -1036,9 +1167,55 @@ describe("MCP HTTP bridge", () => {
     expect(result.value).toEqual(semanticBody);
   });
 
+  test("preserves wire transforms throughout recursive values", async () => {
+    const nodePlan: HttpWireValuePlan = {
+      kind: "definition",
+      name: "Node#0",
+      value: {
+        kind: "object",
+        properties: {
+          label: {
+            sourceName: "wire_label",
+            value: { kind: "string" },
+            optional: false,
+          },
+          next: {
+            sourceName: "wire_next",
+            value: { kind: "ref", name: "Node#0" },
+            optional: true,
+          },
+        },
+      },
+    };
+    const operation: HttpBridgeOperation = {
+      version: 1,
+      id: "recursive-values",
+      method: "POST",
+      path: "/recursive-values",
+      body: { source: ["body"], kind: "json", value: nodePlan },
+      responses: [{ statuses: [200], kind: "json", bodyValue: nodePlan }],
+      servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
+    };
+    const semanticBody = { label: "root", next: { label: "child" } };
+    let wireBody: unknown;
+    const result = await executeHttpBridgeTool(operation, { body: semanticBody }, context, {
+      fetch: (async (_input, init) => {
+        wireBody = JSON.parse(String(init?.body));
+        return Response.json(wireBody);
+      }) as typeof fetch,
+    });
+
+    expect(wireBody).toEqual({
+      wire_label: "root",
+      wire_next: { wire_label: "child" },
+    });
+    expect(result.value).toEqual(semanticBody);
+  });
+
   test("serializes path, query, header, cookie, and auth credential styles", async () => {
     let request: Request | undefined;
     const operation: HttpBridgeOperation = {
+      version: 1,
       id: "styles",
       method: "GET",
       path: "/root/{optional}{label}/{matrix}/{segments}/{simple}",

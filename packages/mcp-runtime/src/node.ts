@@ -20,7 +20,7 @@ export async function runTypespexNodeServer(
   options: McpHttpServerOptions = {},
 ): Promise<Server> {
   const resolved = resolveMcpHttpServerOptions(options);
-  const handler = createTypespexHttpHandler(factory, resolved);
+  const handler = createTypespexHttpHandler(factory, options);
   const nodeHandler = toNodeHandler(handler, { onerror: resolved.onError });
   const server = createServer((request, response) => {
     void nodeHandler(request, response);

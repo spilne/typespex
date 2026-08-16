@@ -20,6 +20,226 @@ afterEach(async () => {
 });
 
 describe("generated MCP server", () => {
+  test("defers validator compilation and avoids codecs for identity contracts", async () => {
+    let invalidPatternSchema: ReturnType<typeof createTypeSpecSchema> | undefined;
+    expect(() => {
+      invalidPatternSchema = createTypeSpecSchema({
+        schema: {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "string",
+          pattern: "[",
+        },
+      });
+    }).not.toThrow();
+    expect(invalidPatternSchema).toBeDefined();
+
+    const identity = createTypeSpecSchema<{ value: string }>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+    });
+    const value = { value: "same-reference" };
+    const decoded = await identity.input["~standard"].validate(value);
+    expect(decoded).toEqual({ value });
+    if ("value" in decoded) expect(decoded.value).toBe(value);
+
+    const projected = createTypeSpecSchema({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          choice: {
+            anyOf: [
+              {
+                type: "object",
+                properties: { first: { type: "string" } },
+                required: ["first"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: { second: { type: "string" } },
+                required: ["second"],
+                additionalProperties: false,
+              },
+            ],
+          },
+          list: { type: "array", items: { $ref: "#/$defs/Item" } },
+          map: { type: "object", additionalProperties: { $ref: "#/$defs/Item" } },
+          left: { $ref: "#/$defs/Left" },
+          right: { $ref: "#/$defs/Right" },
+        },
+        required: ["choice", "list", "map", "left", "right"],
+        additionalProperties: false,
+        $defs: {
+          Item: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+            additionalProperties: false,
+          },
+          Left: {
+            type: "object",
+            properties: { left: { type: "string" } },
+            required: ["left"],
+            additionalProperties: false,
+          },
+          Right: {
+            type: "object",
+            properties: { right: { type: "string" } },
+            required: ["right"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const shared = { left: "left", right: "right" };
+    await expect(
+      projected.encode(
+        {
+          choice: { second: "selected", secret: true },
+          list: [{ id: "one", secret: true }],
+          map: { entry: { id: "two", secret: true } },
+          left: shared,
+          right: shared,
+          secret: true,
+        },
+        { validate: true },
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        choice: { second: "selected" },
+        list: [{ id: "one" }],
+        map: { entry: { id: "two" } },
+        left: { left: "left" },
+        right: { right: "right" },
+      },
+    });
+
+    const recursive = createTypeSpecSchema({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        $ref: "#/$defs/Node",
+        $defs: {
+          Node: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              child: { anyOf: [{ type: "null" }, { $ref: "#/$defs/Node" }] },
+            },
+            required: ["label"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const cyclic: { label: string; child?: unknown } = { label: "cycle" };
+    cyclic.child = cyclic;
+    const cycleResult = await recursive.encode(cyclic, { validate: false });
+    expect(cycleResult.ok).toBe(false);
+    if (!cycleResult.ok) {
+      expect(cycleResult.issues[0]?.message).toBe(
+        "Cyclic semantic values cannot be encoded as JSON.",
+      );
+    }
+
+    const recursiveUnion = createTypeSpecSchema({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        $ref: "#/$defs/Value",
+        $defs: {
+          Value: { anyOf: [{ $ref: "#/$defs/First" }, { $ref: "#/$defs/Second" }] },
+          First: {
+            type: "object",
+            properties: {
+              kind: { const: "first" },
+              child: { $ref: "#/$defs/Value" },
+            },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+          Second: {
+            type: "object",
+            properties: {
+              kind: { const: "second" },
+              child: { $ref: "#/$defs/Value" },
+            },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const chain: { kind: string; child?: unknown } = { kind: "second" };
+    let tail = chain;
+    for (let depth = 0; depth < 20; depth += 1) {
+      const child: { kind: string; child?: unknown } = { kind: "second" };
+      tail.child = child;
+      tail = child;
+    }
+    const started = performance.now();
+    const recursiveResult = await recursiveUnion.encode(chain, { validate: false });
+    expect(recursiveResult.ok).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  test("projects wider handler objects through codec-less generated output schemas", async () => {
+    const input = createTypeSpecSchema<Record<string, never>>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    });
+    const success = createTypeSpecSchema<{ id: string; owner: { name: string } }>({
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        $ref: "#/$defs/PetAlias",
+        $defs: {
+          PetAlias: { $ref: "#/$defs/Pet" },
+          Pet: {
+            type: "object",
+            properties: { id: { type: "string" }, owner: { $ref: "#/$defs/Owner" } },
+            required: ["id", "owner"],
+            additionalProperties: false,
+          },
+          Owner: {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const server = createGeneratedMcpServer(
+      { implementation: { name: "identity-output", version: "1.0.0" } },
+      [{ name: "read", handler: "read", input, success }],
+      {
+        handlers: {
+          read: () => ({
+            id: "p1",
+            owner: { name: "Roman", privateNote: "internal" },
+            internalScore: 42,
+          }),
+        },
+      },
+    );
+    const client = await connect(server, "auto");
+
+    const listed = await client.listTools();
+    expect(listed.tools[0]?.outputSchema).toMatchObject({ type: "object" });
+    const result = await client.callTool({ name: "read", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ id: "p1", owner: { name: "Roman" } });
+  });
+
   for (const negotiation of ["legacy", "auto"] as const) {
     test(`lists and calls typed tools over ${negotiation} protocol negotiation`, async () => {
       const input = createTypeSpecSchema<{ id: string }>({
@@ -171,13 +391,23 @@ describe("generated MCP server", () => {
     });
     const server = createGeneratedMcpServer(
       { implementation: { name: "ambiguous", version: "1.0.0" } },
-      [{ name: "ambiguous", handler: "ambiguous", input: schema, success: schema, errors: schema }],
-      { handlers: { ambiguous: () => ({ value: "both" }) } },
+      [
+        {
+          name: "ambiguous",
+          handler: "ambiguous",
+          input: schema,
+          success: schema,
+          errors: schema,
+          requiresTaggedResult: true,
+        },
+      ],
+      // Deliberately bypass the generated compile-time handler type to verify runtime hardening.
+      { handlers: { ambiguous: () => ({ value: "both" }) } } as any,
     );
     const client = await connect(server, "legacy");
     const result = await client.callTool({ name: "ambiguous", arguments: { value: "input" } });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain("matching both success and error schemas");
+    expect(JSON.stringify(result)).toContain("overlapping success and error schemas");
   });
 
   test("does not resolve native handlers through the prototype chain", async () => {
@@ -243,6 +473,7 @@ describe("generated MCP server", () => {
           success: schema,
           errors: schema,
           http: {
+            version: 1,
             id: "read",
             method: "GET",
             path: "/values/{value}",
@@ -260,6 +491,7 @@ describe("generated MCP server", () => {
           input: schema,
           voidResult: true,
           http: {
+            version: 1,
             id: "empty",
             method: "POST",
             path: "/empty",
@@ -312,6 +544,7 @@ describe("generated MCP server", () => {
       },
       [
         tool("void", { voidResult: true }),
+        tool("optionalVoid", { success: schema, voidResult: true }),
         tool("badVoid"),
         tool("taggedVoid"),
         tool("taggedError"),
@@ -337,6 +570,7 @@ describe("generated MCP server", () => {
         },
         handlers: {
           void: () => undefined,
+          optionalVoid: () => undefined,
           badVoid: () => "unexpected",
           taggedVoid: () => mcpSuccess(undefined, { content: [{ type: "text", text: "done" }] }),
           taggedError: () => mcpError({ value: "failure" }),
@@ -356,6 +590,7 @@ describe("generated MCP server", () => {
     const call = (name: string) => client.callTool({ name, arguments: { value: "input" } });
 
     expect(await call("void")).toMatchObject({ content: [] });
+    expect(await call("optionalVoid")).toMatchObject({ content: [] });
     expect(await call("taggedVoid")).toMatchObject({ content: [{ type: "text", text: "done" }] });
     for (const name of [
       "badVoid",

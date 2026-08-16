@@ -8,6 +8,7 @@
   "include": [
     "server.ts",
     "mcp-application.ts",
+    "mcp-type-tests.ts",
     "mcp-e2e.test.ts",
     "e2e.test.ts",
     "generated/**/*.ts",

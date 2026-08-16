@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createServer, type Server } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import express from "express";
+import { Hono } from "hono";
 import {
   createGeneratedMcpServer,
   createTypeSpecSchema,
@@ -37,9 +39,11 @@ describe("MCP transports", () => {
     expect(await callEcho(client, "node")).toEqual({ value: "node" });
   });
 
-  test("mounts as an Express-compatible Node handler", async () => {
+  test("mounts in a real Express application", async () => {
     const handler = createTypespexNodeHandler(factory);
-    const server = createServer((request, response) => void handler(request, response));
+    const app = express();
+    app.use((request, response) => void handler(request, response));
+    const server = createServer(app);
     await listen(server);
     nodeServers.push(server);
     const address = server.address();
@@ -48,8 +52,10 @@ describe("MCP transports", () => {
     expect(await callEcho(client, "express")).toEqual({ value: "express" });
   });
 
-  test("mounts as a fetch-native Hono handler", async () => {
+  test("mounts in a real Hono application", async () => {
     const hono = createTypespexHonoHandler(factory);
+    const app = new Hono();
+    app.all("/mcp", (context) => hono(context));
     const client = await connect(
       new URL("http://127.0.0.1:3000/mcp"),
       "auto",
@@ -57,7 +63,7 @@ describe("MCP transports", () => {
         const request = new Request(input, init);
         const headers = new Headers(request.headers);
         headers.set("host", "127.0.0.1:3000");
-        return hono({ req: { raw: new Request(request, { headers }) } });
+        return app.fetch(new Request(request, { headers }));
       },
     );
     expect(await callEcho(client, "hono")).toEqual({ value: "hono" });
@@ -140,9 +146,41 @@ describe("MCP transports", () => {
       verifyAuth: () => ({ token: "verified", clientId: "test", scopes: [] }),
     });
     expect(secured.allowedHosts).toEqual(["api.example.test"]);
-    expect(secured.allowedOrigins).toEqual(["app.example.test"]);
+    expect(secured.allowedOrigins).toEqual(["https://app.example.test:444"]);
     expect(secured.requiresAuth).toBe(true);
     expect(resolveMcpHttpServerOptions().requiresAuth).toBe(false);
+
+    const exactOrigin = createTypespexHttpHandler(factory, {
+      host: "0.0.0.0",
+      allowedHosts: ["api.example.test"],
+      allowedOrigins: ["https://app.example.test:444"],
+      verifyAuth: () => ({ token: "verified", clientId: "test", scopes: [] }),
+    });
+    const emptyOrigin = await exactOrigin.fetch(
+      new Request("https://api.example.test/mcp", {
+        headers: { host: "api.example.test", origin: "" },
+      }),
+    );
+    expect(emptyOrigin.status).not.toBe(403);
+    for (const origin of [
+      "http://app.example.test:444",
+      "https://app.example.test:445",
+      "https://app.example.test:444/path",
+    ]) {
+      const rejected = await exactOrigin.fetch(
+        new Request("https://api.example.test/mcp", {
+          headers: { host: "api.example.test", origin },
+        }),
+      );
+      expect(rejected.status).toBe(403);
+      expect(rejected.headers.get("content-type")).toContain("application/json");
+      expect(await rejected.json()).toEqual({
+        jsonrpc: "2.0",
+        error: { code: -32_000, message: `Invalid Origin: ${origin}` },
+        id: null,
+      });
+    }
+    await exactOrigin.close();
   });
 });
 

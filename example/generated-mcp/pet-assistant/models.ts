@@ -4,7 +4,11 @@ export interface Pet {
   name: string;
 }
 
+export type PetWire = Pet;
+
 export interface NotFoundError {
   code: "NOT_FOUND";
   message: string;
 }
+
+export type NotFoundErrorWire = NotFoundError;

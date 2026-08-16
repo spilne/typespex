@@ -27,7 +27,7 @@ export function runTypespexBunServer(
   const bun = (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
   if (!bun) throw new Error("runTypespexBunServer() must be called from Bun.");
   const resolved = resolveMcpHttpServerOptions(options);
-  const handler = createTypespexHttpHandler(factory, resolved);
+  const handler = createTypespexHttpHandler(factory, options);
   const server = bun.serve({
     hostname: resolved.host,
     port: resolved.port,

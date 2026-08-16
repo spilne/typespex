@@ -3,6 +3,7 @@ import type { HttpBridgeOperation } from "@typespex/mcp-runtime/http-bridge";
 
 export const mcpHttpBridgeOperations = {
   getPet: {
+    version: 1,
     id: "getPet",
     method: "GET",
     path: "/pets/{id}",
@@ -52,6 +53,7 @@ export const mcpHttpBridgeOperations = {
     servers: [{ url: "https://pets.example.test", fullyDefaulted: true }],
   },
   listPets: {
+    version: 1,
     id: "listPets",
     method: "GET",
     path: "/pets",
