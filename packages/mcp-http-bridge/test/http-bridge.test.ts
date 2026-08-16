@@ -594,6 +594,43 @@ describe("MCP HTTP bridge", () => {
       ).rejects.toThrow("Rejected invalid HTTP header value");
     }
 
+    const multipartOperation: HttpBridgeOperation = {
+      ...operation,
+      id: "unsafe-multipart-content-type",
+      body: {
+        source: ["file"],
+        kind: "multipart",
+        contentType: "multipart/form-data",
+        multipartParts: [
+          {
+            source: ["file"],
+            name: "file",
+            multi: false,
+            optional: false,
+            kind: "file",
+            contentTypes: ["application/octet-stream"],
+          },
+        ],
+      },
+    };
+    for (const mediaType of ["text/plain\r\nx-injected: true", "image/png\u0000"]) {
+      let fetched = false;
+      await expect(
+        executeHttpBridgeTool(
+          multipartOperation,
+          { file: { name: "unsafe.txt", mediaType, data: "" } },
+          context,
+          {
+            fetch: (async () => {
+              fetched = true;
+              return new Response(null, { status: 204 });
+            }) as typeof fetch,
+          },
+        ),
+      ).rejects.toThrow("Rejected invalid HTTP header value");
+      expect(fetched).toBe(false);
+    }
+
     await expect(
       executeHttpBridgeTool(
         {

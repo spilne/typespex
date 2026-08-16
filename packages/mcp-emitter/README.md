@@ -12,7 +12,13 @@ explicitly.
 
 ## Runtime requirements
 
-The emitter requires TypeSpec `>=1.14 <2` and Node.js `>=22.12 <23` or `>=24 <25`.
+The emitter requires `@typespec/compiler >=1.14 <2` and Node.js `>=22.12 <23` or `>=24 <25`.
+HTTP bridge mode additionally requires the aligned `@typespec/http` release. Install the aligned
+`@typespec/streams` release when a specification uses TypeSpec stream models; the emitter uses its
+metadata to reject native streams and plan supported HTTP JSONL streams.
+
+Generated applications using `datetime-mode: temporal` must install `@js-temporal/polyfill` unless
+they provide a compatible `globalThis.Temporal` implementation.
 
 ## License
 
