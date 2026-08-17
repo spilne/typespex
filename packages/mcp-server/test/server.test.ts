@@ -276,12 +276,13 @@ describe("generated MCP server", () => {
     if (recursiveResult.ok) {
       let projected = recursiveResult.value as { kind: string; child?: unknown };
       let projectedDepth = 0;
-      while (Object.hasOwn(projected, "child")) {
+      while (projectedDepth < chainDepth && Object.hasOwn(projected, "child")) {
         projected = projected.child as { kind: string; child?: unknown };
         projectedDepth += 1;
       }
-      expect(projected).toEqual({ kind: "second" });
       expect(projectedDepth).toBe(chainDepth);
+      expect(Object.hasOwn(projected, "child")).toBe(false);
+      expect(projected).toEqual({ kind: "second" });
     }
   });
 
