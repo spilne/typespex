@@ -577,6 +577,22 @@ describe("schema-aware multipart decoding", () => {
     expect(issueMessages(result).join("\n")).toContain("outside its declared contract");
   });
 
+  test("rejects decoder maps without a usable decoder", async () => {
+    const result = await decodeBody(
+      multipartRequest("multipart/mixed", "missing-decoder", [{ body: "value" }]),
+      {
+        multipart: Decoders.multipartTuple<[string]>([
+          {
+            decoders: { text: undefined },
+          },
+        ]),
+      },
+      { contentTypes: ["multipart/mixed"] },
+    );
+
+    expect(issueMessages(result).join("\n")).toContain("Multipart part has no decoder");
+  });
+
   test("rejects malformed boundary, delimiter, headers, and unknown named fields", async () => {
     const tuple = Decoders.multipartTuple<[string]>([{ kind: "text", decoder: Decoders.string }]);
     const missingBoundary = new Request("http://localhost/upload", {
