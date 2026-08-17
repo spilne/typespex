@@ -107,7 +107,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const bridge = result.read("pet-api", "mcp-http-client.ts");
+    const bridge = result.read("pet-api", "mcp-http-bridge.ts");
     expect(bridge).toContain('method: "GET"');
     expect(bridge).toContain('path: "/pets/{id}"');
     expect(bridge).toContain('source: ["id"]');
@@ -142,7 +142,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const bridge = result.read("secure-api", "mcp-http-client.ts");
+    const bridge = result.read("secure-api", "mcp-http-bridge.ts");
     expect(bridge).toContain('id: "BearerAuth"');
     expect(bridge).toContain('scheme: "Bearer"');
     expect(bridge).toContain("noAuth: true");
@@ -168,7 +168,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    expect(result.read("streams-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
+    expect(result.read("streams-api", "mcp-http-bridge.ts")).toContain('kind: "jsonl"');
     expect(result.read("streams-api", "mcp-operations.ts")).toContain("readonly Item[]");
   });
 
@@ -192,7 +192,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [native, http-bridge]\n    launchers: []\n`,
     );
-    expect(result.read("multi-mode-api", "mcp-http-client.ts")).toContain('kind: "jsonl"');
+    expect(result.read("multi-mode-api", "mcp-http-bridge.ts")).toContain('kind: "jsonl"');
     const server = result.read("multi-mode-api", "mcp-server.ts");
     expect(server).toContain("NativeMcpApplication<MultiModeApiMcpHandlers>");
     expect(server).toContain("| McpHttpBridgeApplication");
@@ -225,7 +225,7 @@ describe("@typespex/mcp emitter", () => {
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
     const operations = result.read("upload-api", "mcp-operations.ts");
-    const bridge = result.read("upload-api", "mcp-http-client.ts");
+    const bridge = result.read("upload-api", "mcp-http-bridge.ts");
     expect(operations).toContain("label: string");
     expect(operations).toContain("files: ReadonlyArray<File>");
     expect(operations).toContain('contentEncoding: "base64"');
@@ -411,7 +411,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const bridge = query.read("query-api", "mcp-http-client.ts");
+    const bridge = query.read("query-api", "mcp-http-bridge.ts");
     expect(bridge).toContain('literalQuery: [{ name: "fixed", value: "full text" }]');
 
     const fragment = compileFixtureWithDiagnostics(
@@ -466,7 +466,7 @@ describe("@typespex/mcp emitter", () => {
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
     const operations = result.read("encoding-api", "mcp-operations.ts");
-    const bridge = result.read("encoding-api", "mcp-http-client.ts");
+    const bridge = result.read("encoding-api", "mcp-http-bridge.ts");
     expect(operations).toContain(
       'count: { type: "integer", minimum: -2147483648, maximum: 2147483647 }',
     );
@@ -507,7 +507,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const bridge = result.read("recursive-api", "mcp-http-client.ts");
+    const bridge = result.read("recursive-api", "mcp-http-bridge.ts");
     expect(bridge).toContain('kind: "definition"');
     expect(bridge).toContain('kind: "ref"');
     expect(bridge).toContain('sourceName: "wire_label"');
@@ -705,7 +705,7 @@ describe("@typespex/mcp emitter", () => {
       `,
       `    mode: [http-bridge]\n    launchers: []\n`,
     );
-    const bridge = result.read("xml-bytes-api", "mcp-http-client.ts");
+    const bridge = result.read("xml-bytes-api", "mcp-http-bridge.ts");
     expect(bridge).toContain(
       'mediaTypes: [{ contentType: "application/xml", kind: "binary", value: { kind: "string" } }]',
     );
