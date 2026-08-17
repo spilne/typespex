@@ -255,17 +255,35 @@ describe("generated MCP server", () => {
         },
       },
     });
-    const chain: { kind: string; child?: unknown } = { kind: "second" };
-    let tail = chain;
-    for (let depth = 0; depth < 20; depth += 1) {
-      const child: { kind: string; child?: unknown } = { kind: "second" };
-      tail.child = child;
-      tail = child;
+    const chainDepth = 20;
+    let childReads = 0;
+    let chain: { kind: string; child?: unknown } = { kind: "second" };
+    for (let depth = 0; depth < chainDepth; depth += 1) {
+      const child = chain;
+      chain = { kind: "second" };
+      Object.defineProperty(chain, "child", {
+        enumerable: true,
+        get() {
+          childReads += 1;
+          return child;
+        },
+      });
     }
-    const started = performance.now();
     const recursiveResult = await recursiveUnion.encode(chain, { validate: false });
     expect(recursiveResult.ok).toBe(true);
-    expect(performance.now() - started).toBeLessThan(1_000);
+    // Each union branch may inspect an edge once. Cached projections must prevent repeated walks.
+    expect(childReads).toBeLessThanOrEqual(chainDepth * 2);
+    if (recursiveResult.ok) {
+      let projected = recursiveResult.value as { kind: string; child?: unknown };
+      let projectedDepth = 0;
+      while (projectedDepth < chainDepth && Object.hasOwn(projected, "child")) {
+        projected = projected.child as { kind: string; child?: unknown };
+        projectedDepth += 1;
+      }
+      expect(projectedDepth).toBe(chainDepth);
+      expect(Object.hasOwn(projected, "child")).toBe(false);
+      expect(projected).toEqual({ kind: "second" });
+    }
   });
 
   test("projects wider handler objects through codec-less generated output schemas", async () => {
