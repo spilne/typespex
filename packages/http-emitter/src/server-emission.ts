@@ -5,12 +5,9 @@ import {
   getRelativeNamespaceSegments,
   type EmitterCtx,
 } from "./ctx.js";
-import {
-  buildInputType,
-  buildResultType,
-  collectModelImports,
-  groupOperations,
-} from "./emit-server-common.js";
+import { buildInputType } from "./server-input-types.js";
+import { collectModelImports, groupOperations } from "./server-operation-layout.js";
+import { buildResultType } from "./server-response-plan.js";
 import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import {
   emitHintEntries,

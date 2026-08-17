@@ -27,7 +27,7 @@ import {
   discriminatedVariants,
   resolveDiscriminatedUnion,
 } from "./discriminated-unions.js";
-import { buildInputType } from "./emit-server-common.js";
+import { buildInputType } from "./server-input-types.js";
 import { propertiesShareSource } from "./http-models.js";
 import { getExplodedQueryModelProperties, isExplodedQueryRecord } from "./http-parameter-shapes.js";
 import { getJsonPropertyWireName } from "./json-wire-transforms.js";

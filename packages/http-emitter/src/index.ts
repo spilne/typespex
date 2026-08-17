@@ -14,7 +14,7 @@ import { emitServerHints } from "./emit-server-hints.js";
 import { emitServerOperations } from "./emit-server-operations.js";
 import { emitServer } from "./emit-server.js";
 import { emitServerRouter } from "./emit-server-router.js";
-import { reportUnsupportedResponseStatusContracts } from "./emit-server-common.js";
+import { reportUnsupportedResponseStatusContracts } from "./server-response-plan.js";
 import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
 import { getServerHttpOperations } from "./operation-surface.js";
 import { reportRequestInputCollisions } from "./request-input-plan.js";
