@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { defaultContentType, mediaTypeMatches } from "../src/media-types.js";
+import {
+  defaultContentType,
+  extractMediaType,
+  mediaTypeMatches,
+  normalizeMediaType,
+} from "../src/media-types.js";
 
 describe("HTTP bridge media types", () => {
   test("matches exact, wildcard, and structured-suffix media ranges", () => {
@@ -8,6 +13,9 @@ describe("HTTP bridge media types", () => {
     expect(mediaTypeMatches("text/plain", "text/*")).toBe(true);
     expect(mediaTypeMatches("application/problem+json", "application/*+json")).toBe(true);
     expect(mediaTypeMatches("image/png", "text/*")).toBe(false);
+    expect(extractMediaType(null)).toBeUndefined();
+    expect(extractMediaType(" Application/JSON ; charset=utf-8")).toBe("Application/JSON");
+    expect(normalizeMediaType(" Application/JSON ; charset=utf-8")).toBe("application/json");
   });
 
   test("provides defaults for every supported request body kind", () => {

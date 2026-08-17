@@ -45,6 +45,10 @@ describe("HTTP bridge response decoding", () => {
       ),
     ).resolves.toBe("AAEC");
 
+    await expect(decode(new Response(new Uint8Array([3])), { statuses: [200] })).resolves.toBe(
+      "Aw==",
+    );
+
     await expect(
       decode(
         new Response(new Uint8Array([65]), {
@@ -112,6 +116,18 @@ describe("HTTP bridge response decoding", () => {
     ).resolves.toEqual({
       body: { ok: true },
       contentType: "application/json",
+    });
+
+    await expect(
+      decode(new Response("hello"), {
+        statuses: [200],
+        kind: "text",
+        bodyTarget: ["body"],
+        contentTypeTarget: ["contentType"],
+      }),
+    ).resolves.toEqual({
+      body: "hello",
+      contentType: undefined,
     });
   });
 });

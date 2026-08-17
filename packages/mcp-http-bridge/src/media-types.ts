@@ -1,11 +1,23 @@
 import type { HttpBridgeBody } from "./contracts.js";
 
+export function extractMediaType(contentType: string | null | undefined): string | undefined {
+  if (contentType === null || contentType === undefined) return undefined;
+  const separator = contentType.indexOf(";");
+  const mediaType = (separator < 0 ? contentType : contentType.slice(0, separator)).trim();
+  return mediaType || undefined;
+}
+
+export function normalizeMediaType(contentType: string | null | undefined): string | undefined {
+  return extractMediaType(contentType)?.toLowerCase();
+}
+
 export function mediaTypeMatches(actual: string | undefined, declared: string): boolean {
-  if (!actual) return false;
-  const expected = declared.split(";", 1)[0]!.trim().toLowerCase();
-  if (expected === "*/*" || expected === actual) return true;
+  const received = normalizeMediaType(actual);
+  const expected = normalizeMediaType(declared);
+  if (!received || !expected) return false;
+  if (expected === "*/*" || expected === received) return true;
   const [expectedType, expectedSubtype] = expected.split("/");
-  const [actualType, actualSubtype] = actual.split("/");
+  const [actualType, actualSubtype] = received.split("/");
   const subtypeMatches =
     expectedSubtype === "*" ||
     expectedSubtype === actualSubtype ||

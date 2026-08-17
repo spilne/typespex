@@ -12,7 +12,12 @@ import { asBodyBytes, asFileRecord, decodeBase64, isFileRecord } from "./binary.
 import { upstreamRequestFailure } from "./errors.js";
 import { assertSafeHeaderValue, setSafeHeader } from "./http-headers.js";
 import { objectPairs, scalar } from "./http-serialization.js";
-import { defaultContentType, mediaTypeMatches } from "./media-types.js";
+import {
+  defaultContentType,
+  extractMediaType,
+  mediaTypeMatches,
+  normalizeMediaType,
+} from "./media-types.js";
 import { getSourceValue, isRecord, setTargetValue } from "./value-paths.js";
 import { encodeHttpWireValue } from "./wire-values.js";
 
@@ -394,7 +399,7 @@ function resolveRequestMediaType(
       ? [{ contentType: body.contentType, kind: body.kind }]
       : [{ contentType: defaultContentType(body.kind), kind: body.kind }]);
   if (typeof requested === "string") {
-    const actual = requested.split(";", 1)[0]!.trim().toLowerCase();
+    const actual = normalizeMediaType(requested);
     const selected = mediaTypes.find((candidate) =>
       mediaTypeMatches(actual, candidate.contentType),
     );
@@ -433,7 +438,7 @@ function createPlannedMultipartBody(
     for (const item of values) appendMimePart(chunks, boundary, part, item);
   }
   chunks.push(new TextEncoder().encode(`--${boundary}--\r\n`));
-  const mediaType = contentType.split(";", 1)[0]!.trim();
+  const mediaType = extractMediaType(contentType) ?? contentType.trim();
   setSafeHeader(headers, "Content-Type", `${mediaType}; boundary=${boundary}`);
   return asBodyBytes(concatenateBytes(chunks));
 }

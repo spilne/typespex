@@ -9,7 +9,7 @@ import { asBodyBytes, encodeBase64, fileToRecord, responseFileName } from "./bin
 import { boundedInteger, upstreamRequestFailure } from "./errors.js";
 import { setSafeHeader } from "./http-headers.js";
 import { splitHttpList } from "./http-serialization.js";
-import { mediaTypeMatches } from "./media-types.js";
+import { extractMediaType, mediaTypeMatches, normalizeMediaType } from "./media-types.js";
 import { isRecord, setTargetValue } from "./value-paths.js";
 import { decodeHttpWireValue } from "./wire-values.js";
 
@@ -103,11 +103,10 @@ export async function decodeHttpBridgeResponse(
       break;
     case "file": {
       const bytes = await readLimitedBytes(response, maxBytes, signal);
+      const mediaType = extractMediaType(response.headers.get("content-type"));
       body = {
         name: responseFileName(response.headers.get("content-disposition")) ?? "response.bin",
-        ...(response.headers.get("content-type")
-          ? { mediaType: response.headers.get("content-type")!.split(";", 1)[0]!.trim() }
-          : {}),
+        ...(mediaType ? { mediaType } : {}),
         data: encodeBase64(bytes),
       };
       break;
@@ -133,7 +132,7 @@ export async function decodeHttpBridgeResponse(
     output = setTargetValue(
       output,
       descriptor.contentTypeTarget,
-      response.headers.get("content-type")?.split(";", 1)[0]?.trim(),
+      extractMediaType(response.headers.get("content-type")),
     );
   }
   for (const header of descriptor.headers ?? []) {
@@ -209,13 +208,11 @@ function decodePlannedMultipartBody(
       }
     }
     if (!descriptor) throw new McpToolError("Upstream returned an undeclared multipart part.");
-    const actualContentType = part.headers.get("content-type")?.split(";", 1)[0]?.trim();
+    const actualContentType = extractMediaType(part.headers.get("content-type"));
     if (
       descriptor.contentTypes.length > 0 &&
       (!actualContentType ||
-        !descriptor.contentTypes.some((declared) =>
-          mediaTypeMatches(actualContentType.toLowerCase(), declared),
-        ))
+        !descriptor.contentTypes.some((declared) => mediaTypeMatches(actualContentType, declared)))
     ) {
       throw new McpToolError(
         `Upstream multipart part ${JSON.stringify(descriptor.name ?? descriptor.target.join("."))} has an undeclared Content-Type.`,
@@ -254,7 +251,7 @@ function decodeMultipartPart(
   part: ParsedMimePart,
   descriptor: HttpBridgeResponseMultipartPart,
 ): unknown {
-  const contentType = part.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  const contentType = extractMediaType(part.headers.get("content-type"));
   let value: unknown;
   switch (descriptor.kind) {
     case "file":
@@ -389,7 +386,7 @@ export function selectHttpBridgeResponse(
   status: number,
   contentType: string | null,
 ): HttpBridgeResponse | undefined {
-  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  const mediaType = normalizeMediaType(contentType);
   return responses
     .flatMap((response) => {
       const statusScore = Math.max(
@@ -413,7 +410,7 @@ export function selectHttpBridgeResponse(
         : Math.max(
             ...response.mediaTypes.map((declared) =>
               mediaTypeMatches(mediaType, declared)
-                ? declared.split(";", 1)[0]!.trim() === mediaType
+                ? normalizeMediaType(declared) === mediaType
                   ? 2
                   : 1
                 : -1,
@@ -450,7 +447,7 @@ export async function cancelUpstreamResponse(response: Response): Promise<void> 
 }
 
 function inferResponseKind(contentType: string | null): NonNullable<HttpBridgeResponse["kind"]> {
-  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const mediaType = normalizeMediaType(contentType) ?? "";
   if (mediaType === "application/jsonl" || mediaType === "application/x-ndjson") return "jsonl";
   if (mediaType === "application/json" || mediaType.endsWith("+json")) return "json";
   if (mediaType === "application/x-www-form-urlencoded") return "form";
