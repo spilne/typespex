@@ -10,7 +10,7 @@ middleware. Generated HTTP and MCP servers both satisfy the structural contract.
 
 Use the app adapter for a standalone generated service or the middleware
 adapter to compose generated routes with an existing Hono application.
-Unexpected errors flow through Hono's `onError` handler.
+Unexpected errors raised while routing flow through Hono's `onError` handler.
 
 ## Runtime requirements
 

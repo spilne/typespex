@@ -6,8 +6,9 @@ export interface NodeHandlerOptions {
   /** Trust the first X-Forwarded-Proto value when running behind a trusted proxy. */
   readonly trustProxy?: boolean;
   /**
-   * Whether unexpected router failures become a standalone 500 response or
-   * escape to a host framework. Defaults to `respond`.
+   * Whether unexpected router failures before the response starts become a
+   * standalone 500 response or escape to a host framework. Failures after the
+   * response starts destroy the connection. Defaults to `respond`.
    */
   readonly errorMode?: "respond" | "throw";
 }

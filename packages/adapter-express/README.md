@@ -22,8 +22,10 @@ app.listen(3000);
 
 The handler delegates unmatched requests to the generated router's configured
 not-found behavior. Expected HTTP errors remain responses; unexpected failures
-are passed to Express error middleware with `next(error)`. The handler calls
-`next()` only for failures, not for unmatched routes.
+raised before the response starts are passed to Express error middleware with
+`next(error)`. If a response stream fails after headers are sent, the connection
+is closed instead. The handler calls `next()` only for delegable failures, not
+for unmatched routes.
 
 TypeSpex decodes and validates bodies from the raw request stream. Register the
 handler before `express.json()`, `express.urlencoded()`, or other middleware that

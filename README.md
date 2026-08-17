@@ -299,7 +299,8 @@ a `Response`.
 ## Hosting Adapters
 
 Node and Bun accept the shared `Logger` contract from `@typespex/http-server` for their standalone
-error boundary. Express and Hono delegate unexpected failures to their native error handlers.
+error boundary. Express and Hono delegate unexpected failures raised before a response starts to
+their native error handlers; later stream failures close the underlying connection.
 
 ### Bun
 
@@ -344,10 +345,12 @@ app.listen(3000);
 ```
 
 The adapter is terminal for normal responses: the generated router supplies its not-found response.
-Unexpected failures are passed to Express error middleware with `next(error)`. Register it before
-`express.json()`, `express.urlencoded()`, or any other middleware that consumes the raw request body
-stream. Express removes the mount prefix before the generated router matches the request, so the
-example serves a generated `/todos` route at `/api/todos`.
+Unexpected failures raised before the response starts are passed to Express error middleware with
+`next(error)`. Later stream failures close the connection because Express can no longer replace the
+response. Register the handler before `express.json()`, `express.urlencoded()`, or any other
+middleware that consumes the raw request body stream. Express removes the mount prefix before the
+generated router matches the request, so the example serves a generated `/todos` route at
+`/api/todos`.
 
 ### Hono
 
@@ -378,7 +381,7 @@ export default app;
 
 `toHonoMiddleware` calls Hono's `next()` only when no TypeSpex operation matched. A response from a
 matched operation, including a modeled 404, is terminal and does not fall through.
-Unexpected failures flow through Hono's `onError` handler.
+Unexpected failures raised while routing flow through Hono's `onError` handler.
 
 At the runtime level, `router.handle(request)` is the complete application and includes TypeSpex
 middleware and not-found handling. `router.tryHandle(request)` returns `undefined` only when no

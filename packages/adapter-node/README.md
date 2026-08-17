@@ -11,7 +11,9 @@ the structural router contract.
 The handler accepts the shared `HttpRouter` and `Logger` contracts from
 `@typespex/http-server`. Unexpected failures become a logged 500 response by
 default. Set `errorMode: "throw"` when embedding it in a host framework with
-its own error boundary.
+its own error boundary. Only failures raised before the response starts can be
+delegated; a failure after headers or body bytes are written closes the
+connection because no error handler can safely replace that response.
 
 The adapter bridges Node request and response streams to the standard Fetch API
 types used by the runtime.
