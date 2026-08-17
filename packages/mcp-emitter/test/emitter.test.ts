@@ -36,7 +36,7 @@ describe("@typespex/mcp emitter", () => {
     expect(operations).toContain('name: "getPet"');
     expect(operations).toContain('name: "ping"');
     expect(operations).not.toContain("hidden");
-    expect(operations).toContain("errors: getPetErrors");
+    expect(operations).toContain('errors: schemaDocument.get<GetPetError>("GetPetError")');
     expect(operations).toContain("voidResult: true");
     expect(operations).toContain('format: "date-time"');
     expect(operations).toContain('description: "A pet record."');
@@ -45,7 +45,7 @@ describe("@typespex/mcp emitter", () => {
     const server = result.read("pets", "mcp-server.ts");
     expect(server).toContain('instructions: "Manage pets"');
     expect(operations).toContain("export type PingInput = Record<string, never>");
-    expect(operations).toContain("createSchema<GetPetSuccess>");
+    expect(operations).toContain('success: schemaDocument.get<GetPetSuccess>("GetPetSuccess")');
     expect(operations).not.toContain("codec:");
   });
 
@@ -241,10 +241,14 @@ describe("@typespex/mcp emitter", () => {
         import "@typespex/mcp";
         using TypeSpex.Mcp;
 
+        model Owner { name: string; }
         model Pet {
           @visibility(Lifecycle.Create) writeOnly: string;
           @visibility(Lifecycle.Read) readOnly: string;
+          @visibility(Lifecycle.Create) createdAt: utcDateTime;
+          @visibility(Lifecycle.Read) updatedAt: utcDateTime;
           @visibility(Lifecycle.Create, Lifecycle.Read) name: string;
+          owner: Owner;
         }
 
         @mcpServer(#{ version: "1.0.0" }) namespace VisibleApi {
@@ -254,7 +258,7 @@ describe("@typespex/mcp emitter", () => {
           op update(pet: Pet): Pet;
         }
       `,
-      `    launchers: []\n`,
+      `    datetime-mode: temporal\n    launchers: []\n`,
     );
     const models = result.read("visible-api", "models.ts");
     const operations = result.read("visible-api", "mcp-operations.ts");
@@ -266,23 +270,32 @@ describe("@typespex/mcp emitter", () => {
     const inputModel = models.match(/export interface PetUpdateInput \{([\s\S]*?)\n\}/)?.[1];
     const outputModel = models.match(/export interface PetUpdateOutput \{([\s\S]*?)\n\}/)?.[1];
     expect(inputModel).toContain("writeOnly: string");
+    expect(inputModel).toContain("createdAt: Temporal.Instant");
     expect(inputModel).toContain("name: string");
     expect(inputModel).not.toContain("readOnly");
+    expect(inputModel).not.toContain("updatedAt");
     expect(outputModel).toContain("readOnly: string");
+    expect(outputModel).toContain("updatedAt: Temporal.Instant");
     expect(outputModel).toContain("name: string");
     expect(outputModel).not.toContain("writeOnly");
+    expect(outputModel).not.toContain("createdAt");
     const inputSchema = operations.slice(
-      operations.indexOf("const petSchemaDefinition ="),
-      operations.indexOf("const petSchemaDefinition2 ="),
+      operations.indexOf("    Pet: {"),
+      operations.indexOf("    PetForUpdateSuccess: {"),
     );
     const outputSchema = operations.slice(
-      operations.indexOf("const petSchemaDefinition2 ="),
-      operations.indexOf("const updateInput"),
+      operations.indexOf("    PetForUpdateSuccess: {"),
+      operations.indexOf("  },\n});"),
     );
     expect(inputSchema).toContain('writeOnly: { type: "string" }');
     expect(inputSchema).not.toContain('readOnly: { type: "string" }');
+    expect(inputSchema).toContain('$ref: "#/$defs/Owner"');
     expect(outputSchema).toContain('readOnly: { type: "string" }');
     expect(outputSchema).not.toContain('writeOnly: { type: "string" }');
+    expect(outputSchema).toContain('$ref: "#/$defs/OwnerForUpdateSuccess"');
+    const codecDefinitions = operations.slice(operations.indexOf("  codecDefinitions: {"));
+    expect(codecDefinitions).toContain("PetForUpdateSuccess: {");
+    expect(codecDefinitions).toContain('temporalKind: "instant"');
   });
 
   test("emits Temporal semantic types and treats File derivatives as MCP file records", () => {
@@ -637,11 +650,28 @@ describe("@typespex/mcp emitter", () => {
       `,
     );
     const operations = result.read("pets", "mcp-operations.ts");
-    expect(operations.match(/const petSchemaDefinition/g)).toHaveLength(1);
-    expect(operations).toContain("createSchema<GetPetSuccess>");
-    expect(operations).not.toContain("codec:");
-    expect(operations).not.toContain("...{ $schema:");
+    expect(operations.match(/\n    Pet: \{/g)).toHaveLength(1);
+    expect(operations).toContain('success: schemaDocument.get<GetPetSuccess>("GetPetSuccess")');
+    expect(operations).not.toContain("codecs:");
+    expect(operations).not.toContain("createSchema<");
     expect(result.read("pets", "models.ts")).not.toContain("PetWire");
+  });
+
+  test("emits prototype-named schema properties as ordinary data", () => {
+    const result = compileFixture(
+      "prototype-properties",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        model Payload { __proto__: string; constructor: string; }
+        @mcpServer(#{ version: "1.0.0" }) namespace Values {
+          @tool op echo(payload: Payload): Payload;
+        }
+      `,
+    );
+    const operations = result.read("values", "mcp-operations.ts");
+    expect(operations).toContain('["__proto__"]: { type: "string" }');
+    expect(operations).toContain('constructor: { type: "string" }');
   });
 
   test("imports only model types referenced by generated operation aliases", () => {
@@ -733,7 +763,7 @@ describe("@typespex/mcp emitter", () => {
       `,
     );
     const operations = result.read("results", "mcp-operations.ts");
-    expect(operations).toContain("errors: runErrors");
+    expect(operations).toContain('errors: schemaDocument.get<RunError>("RunError")');
     expect(operations).toContain("export type RunSuccess = Success");
     expect(operations).toContain("export type RunError = Missing | Conflict");
   });

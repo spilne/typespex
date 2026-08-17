@@ -1,6 +1,7 @@
 import {
   createMcpServer,
   createSchema,
+  createSchemaDocument,
   mcpError,
   mcpSuccess,
   type McpToolDefinition,
@@ -26,6 +27,15 @@ const input = createSchema<{ wire_id: string }, { id: string }>({
 });
 const success = createSchema<{ wire_name: string }, { name: string }>({ schema: true });
 const error = createSchema<{ code: "missing" }, { code: "missing" }>({ schema: true });
+
+const schemas = createSchemaDocument({
+  schemas: { input: true, success: true },
+  codecs: { input: { kind: "identity" } },
+});
+const documentedInput = schemas.get<{ wire_id: string }, { id: string }>("input");
+void documentedInput;
+// @ts-expect-error schema document lookups are restricted to declared names
+schemas.get("missing");
 
 const tools = [
   { name: "read", input, success, errors: error },
