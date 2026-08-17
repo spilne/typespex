@@ -28,6 +28,11 @@ export {
   type SchemaResult,
 } from "./schema.js";
 export {
+  createSchemaDocument,
+  type SchemaDocument,
+  type SchemaDocumentDefinition,
+} from "./schema-document.js";
+export {
   createMcpServer,
   type McpHandlersFor,
   type McpServerDefinition,
