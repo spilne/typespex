@@ -3,9 +3,9 @@ import { createTestHost, createTestRunner } from "@typespec/compiler/testing";
 import { getAllHttpServices } from "@typespec/http";
 import { HttpTestLibrary } from "@typespec/http/testing";
 import { createEmitterContext } from "../src/ctx.js";
-import { buildHoistedDecoders } from "../src/server-input-decoders.js";
+import { buildHoistedDecoders } from "../src/server-value-decoders.js";
 
-describe("server input decoder emission", () => {
+describe("server value decoder emission", () => {
   test("retains hoisted declarations across repeated collection passes", async () => {
     const host = await createTestHost({ libraries: [HttpTestLibrary] });
     const runner = await createTestRunner(host);
