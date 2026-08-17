@@ -1,7 +1,7 @@
 import type { EmitterCtx } from "./ctx.js";
 import { addTemporalImport } from "./datetime-mode.js";
 import type { HttpOperation } from "@typespec/http";
-import { emitResultResponseEncoder } from "./emit-server-common.js";
+import { emitResultResponseEncoder } from "./server-response-encoder.js";
 import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
 import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import {
