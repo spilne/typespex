@@ -105,6 +105,8 @@ export type MultipartTupleDescriptors<A extends readonly unknown[]> = {
 type MultipartSchemaMode = "form-data" | "tuple";
 
 const MULTIPART_BODY = Symbol("typespex.multipart.body");
+const MULTIPART_PART_KINDS: readonly MultipartPartKind[] = ["text", "binary", "json", "file"];
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 type MultipartDecoderInput = Record<string, unknown> & {
   readonly [MULTIPART_BODY]: ParsedMultipartBody;
@@ -172,7 +174,7 @@ function validateMultipartSchema(
     const descriptor = descriptors[index]!;
     const path = mode === "tuple" ? `[${index}]` : "";
     const decoders = descriptorDecoders(descriptor);
-    if (Object.keys(decoders).length === 0) {
+    if (availableMultipartPartKinds(decoders).length === 0) {
       issues.push({ path, message: "Multipart part has no decoder." });
     }
     if (descriptor.fileNameHeader !== undefined) {
@@ -554,9 +556,7 @@ function selectMultipartPartKind(
   decoders: MultipartPartDecoderMap,
   contentType: string | undefined,
 ): DecoderResult<MultipartPartKind> {
-  const kinds = (Object.keys(decoders) as MultipartPartKind[]).filter(
-    (kind) => decoders[kind] !== undefined,
-  );
+  const kinds = availableMultipartPartKinds(decoders);
   if (kinds.length === 1) return succeed(kinds[0]!);
 
   const mediaKind = multipartMediaKind(contentType);
@@ -566,6 +566,10 @@ function selectMultipartPartKind(
     return fail("", "Multipart part omits Content-Type, so its representation is ambiguous.");
   }
   return fail("", `Multipart part content type "${contentType}" has no matching decoder.`);
+}
+
+function availableMultipartPartKinds(decoders: MultipartPartDecoderMap): MultipartPartKind[] {
+  return MULTIPART_PART_KINDS.filter((kind) => decoders[kind] !== undefined);
 }
 
 function multipartMediaKind(contentType: string | undefined): MultipartPartKind | undefined {
@@ -594,7 +598,7 @@ function multipartFile(descriptor: MultipartPartDescriptor, part: ParsedMultipar
 }
 
 function strictMultipartText(bytes: Uint8Array): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return strictUtf8Decoder.decode(bytes);
 }
 
 function isHeaderName(name: string): boolean {
