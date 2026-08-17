@@ -57,7 +57,7 @@
     "@typespex/adapter-hono": "workspace:*",
     "@typespex/adapter-node": "workspace:*",
     "express": "^5.2.1",
-    "hono": "^4.13.1",
+    "hono": "^4.13.2",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {

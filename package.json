@@ -38,7 +38,7 @@
     "@typespec/streams": "^0.85.0",
     "@typespec/versioning": "^0.85.0",
     "@typespec/xml": "^0.85.0",
-    "oxfmt": "0.62.0"
+    "oxfmt": "0.63.0"
   },
   "overrides": {
     "fast-uri": "3.1.5",
