@@ -8,7 +8,7 @@ import {
   createMcpHttpBridgeApplication,
   type McpHttpBridgeApplication,
 } from "@typespex/mcp-http-bridge";
-import { mcpHttpBridgeOperations } from "./mcp-http-client.js";
+import { mcpHttpBridgeOperations } from "./mcp-http-bridge.js";
 import type { McpHttpServerOptions } from "@typespex/mcp-transport-http";
 import type { McpStdioOptions } from "@typespex/mcp-transport-stdio";
 import { mcpTools } from "./mcp-operations.js";
