@@ -48,7 +48,7 @@
     "@typespex/http-server": "workspace:*"
   },
   "devDependencies": {
-    "hono": "^4.13.1",
+    "hono": "^4.13.2",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
