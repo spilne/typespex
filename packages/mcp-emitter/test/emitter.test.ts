@@ -76,6 +76,19 @@ describe("@typespex/mcp emitter", () => {
     expect(result.read("tools", "mcp-bun.ts")).toContain("@typespex/adapter-bun");
     expect(result.read("tools", "mcp-express.ts")).toContain("@typespex/adapter-express");
     expect(result.read("tools", "mcp-hono.ts")).toContain("@typespex/adapter-hono");
+    const launcherFiles = [
+      "mcp-stdio.ts",
+      "mcp-node.ts",
+      "mcp-bun.ts",
+      "mcp-express.ts",
+      "mcp-hono.ts",
+    ];
+    const launchersWithLateImports = launcherFiles.filter((fileName) => {
+      const source = result.read("tools", fileName);
+      const applicationOffset = source.indexOf("\nconst application:");
+      return applicationOffset < 0 || source.indexOf("\nimport ", applicationOffset) >= 0;
+    });
+    expect(launchersWithLateImports).toEqual([]);
   });
 
   test("emits a complete HTTP bridge descriptor with inferred annotations", () => {
