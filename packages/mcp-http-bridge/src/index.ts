@@ -11,14 +11,16 @@ import { ScalarEncodings } from "@typespex/codec";
 import {
   McpToolError,
   mcpSuccess,
-  mcpWireError,
-  mcpWireSuccess,
-  type ExecutableMcpApplication,
-  type GeneratedMcpTool,
   type McpApplicationBase,
+  type McpToolDefinition,
   type McpToolContext,
   type MaybePromise,
 } from "@typespex/mcp-server";
+import {
+  mcpWireError,
+  mcpWireSuccess,
+  type ExecutableMcpApplication,
+} from "@typespex/mcp-server/internal";
 
 export type HttpParameterLocation = "path" | "query" | "header" | "cookie";
 export type HttpParameterStyle =
@@ -164,15 +166,15 @@ export interface McpHttpBridgeOptions {
   readonly exposeUpstreamDiagnostics?: boolean;
 }
 
-export interface HttpBridgeMcpApplication extends McpApplicationBase {
+export interface McpHttpBridgeApplication extends McpApplicationBase {
   readonly kind: "http-bridge";
   readonly bridge: McpHttpBridgeOptions;
 }
 
 /** Converts a public HTTP bridge configuration into the server core's executor seam. */
-export function createHttpBridgeServerApplication(
+export function createMcpHttpBridgeApplication(
   operations: Readonly<Record<string, HttpBridgeOperation>>,
-  application: HttpBridgeMcpApplication,
+  application: McpHttpBridgeApplication,
 ): ExecutableMcpApplication {
   return {
     kind: "executor",
@@ -193,7 +195,7 @@ export function createHttpBridgeServerApplication(
 }
 
 async function executeBridgeResult(
-  tool: GeneratedMcpTool,
+  tool: McpToolDefinition,
   operation: HttpBridgeOperation,
   input: unknown,
   context: McpToolContext,

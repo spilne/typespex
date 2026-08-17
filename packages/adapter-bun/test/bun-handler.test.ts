@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { toBunHandler } from "../src/index.js";
 import type { HttpRouter } from "@typespex/http-server";
 
+const silentLogger = {
+  error() {},
+  warn() {},
+  info() {},
+};
+
 function mockRouter(handle: (request: Request) => Promise<Response>): HttpRouter {
   return { handle, tryHandle: handle };
 }
@@ -11,7 +17,7 @@ describe("toBunHandler", () => {
     const router = mockRouter(async (request) =>
       Response.json({ url: request.url, method: request.method }),
     );
-    const handler = toBunHandler(router);
+    const handler = toBunHandler(router, { logger: silentLogger });
 
     const response = await handler.fetch(new Request("http://localhost/test"));
     expect(response.status).toBe(200);
@@ -23,7 +29,7 @@ describe("toBunHandler", () => {
 
   test("returns 404 from router for unmatched routes", async () => {
     const router = mockRouter(async () => Response.json({ error: "Not Found" }, { status: 404 }));
-    const handler = toBunHandler(router);
+    const handler = toBunHandler(router, { logger: silentLogger });
 
     const response = await handler.fetch(new Request("http://localhost/unknown"));
     expect(response.status).toBe(404);
@@ -33,7 +39,7 @@ describe("toBunHandler", () => {
     const router = mockRouter(async () => {
       throw new Error("boom");
     });
-    const handler = toBunHandler(router);
+    const handler = toBunHandler(router, { logger: silentLogger });
 
     const response = await handler.fetch(new Request("http://localhost/test"));
     expect(response.status).toBe(500);

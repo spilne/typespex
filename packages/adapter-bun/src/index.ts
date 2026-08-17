@@ -1,24 +1,7 @@
-export interface FetchRouter {
-  handle(request: Request): Promise<Response>;
-}
-
-export interface AdapterLogContext {
-  readonly [key: string]: unknown;
-}
-
-export interface AdapterLogger {
-  error(message: string, context?: AdapterLogContext): void;
-}
-
-const consoleLogger: AdapterLogger = {
-  error(message, context) {
-    if (context) console.error(message, context);
-    else console.error(message);
-  },
-};
+import { consoleLogger, type HttpRouter, type Logger } from "@typespex/http-server";
 
 export interface BunHandlerOptions {
-  readonly logger?: AdapterLogger;
+  readonly logger?: Logger;
 }
 
 /**
@@ -28,7 +11,7 @@ export interface BunHandlerOptions {
  * Bun.serve({ port: 3000, ...toBunHandler(router) });
  */
 export function toBunHandler(
-  router: FetchRouter,
+  router: HttpRouter,
   options?: BunHandlerOptions,
 ): {
   fetch: (request: Request) => Promise<Response>;

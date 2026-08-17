@@ -5,13 +5,10 @@ import { createPetAssistantMcpServer, type PetAssistantMcpApplication } from "./
 const application: PetAssistantMcpApplication = applicationDefinition;
 import { createServer } from "node:http";
 import { toNodeHandler } from "@typespex/adapter-node";
-import {
-  createTypespexHttpHandler,
-  resolveMcpHttpServerOptions,
-} from "@typespex/mcp-transport-http";
+import { createMcpHttpHandler, resolveMcpHttpServerOptions } from "@typespex/mcp-transport-http";
 
 const options = resolveMcpHttpServerOptions(application.http);
-const mcpHandler = createTypespexHttpHandler(
+const mcpHandler = createMcpHttpHandler(
   () => createPetAssistantMcpServer(application),
   application.http,
 );

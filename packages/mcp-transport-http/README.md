@@ -8,7 +8,8 @@ wraps MCP SDK v2 HTTP handlers. Node, Bun, Express, and Hono integration stays i
 
 ## Entry points
 
-- `@typespex/mcp-transport-http` exports the fetch-native handler and HTTP server options.
+- `@typespex/mcp-transport-http` exports `createMcpHttpHandler`, HTTP server options, and their
+  security-policy resolver.
 
 ## Runtime requirements
 

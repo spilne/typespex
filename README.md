@@ -37,23 +37,23 @@ TypeSpec MCP root
 
 ## Packages
 
-| Package                         | Purpose                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `@typespex/compiler-core`       | Unstable, protocol-neutral planning, naming, schema, layout, and artifact utilities for emitter authors.    |
-| `@typespex/codec`               | Converts validated protocol wire values to semantic TypeScript values and back.                             |
-| `@typespex/http-emitter`        | Compiles TypeSpec HTTP services into typed server bindings.                                                 |
-| `@typespex/http-server`         | Runs generated HTTP routes, request decoding, middleware, handlers, and response encoding.                  |
-| `@typespex/http-client`         | Defines HTTP operation plans and bounded Fetch, redirect, and body-reading policy for clients and bridges.  |
-| `@typespex/mcp`                 | Provides the TypeSpec `@mcpServer` and opt-in `@tool` vocabulary.                                           |
-| `@typespex/mcp-emitter`         | Compiles MCP roots into typed models, schemas, application contracts, and selected launchers.               |
-| `@typespex/mcp-server`          | Registers validated generated tools and supplies typed contexts, middleware, results, and server factories. |
-| `@typespex/mcp-http-bridge`     | Executes generated HTTP operation plans behind MCP tools, including auth, redirects, limits, and JSONL.     |
-| `@typespex/mcp-transport-http`  | Provides secure, Fetch-native MCP Streamable HTTP handling; it contains no framework adapter.               |
-| `@typespex/mcp-transport-stdio` | Provides protocol-clean MCP stdio serving with diagnostics kept off stdout.                                 |
-| `@typespex/adapter-node`        | Connects any Fetch `Request`/`Response` router to Node's built-in HTTP server.                              |
-| `@typespex/adapter-bun`         | Connects any Fetch router to `Bun.serve`.                                                                   |
-| `@typespex/adapter-express`     | Mounts any Fetch router in Express without installing Hono or an HTTP server implementation.                |
-| `@typespex/adapter-hono`        | Mounts any Fetch router in Hono without installing Express or an HTTP server implementation.                |
+| Package                         | Purpose                                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `@typespex/compiler-core`       | Unstable, protocol-neutral planning, naming, schema, layout, and artifact utilities for emitter authors.     |
+| `@typespex/codec`               | Converts validated protocol wire values to semantic TypeScript values and back.                              |
+| `@typespex/http-emitter`        | Compiles TypeSpec HTTP services into typed server bindings.                                                  |
+| `@typespex/http-server`         | Runs generated HTTP routes, request decoding, middleware, handlers, and response encoding.                   |
+| `@typespex/http-client`         | Defines HTTP operation plans and bounded Fetch, redirect, and body-reading policy for clients and bridges.   |
+| `@typespex/mcp`                 | Provides the TypeSpec `@mcpServer` and opt-in `@tool` vocabulary.                                            |
+| `@typespex/mcp-emitter`         | Compiles MCP roots into typed models, schemas, application contracts, and selected launchers.                |
+| `@typespex/mcp-server`          | Registers validated tool definitions and supplies typed contexts, middleware, results, and server factories. |
+| `@typespex/mcp-http-bridge`     | Executes generated HTTP operation plans behind MCP tools, including auth, redirects, limits, and JSONL.      |
+| `@typespex/mcp-transport-http`  | Provides secure, Fetch-native MCP Streamable HTTP handling; it contains no framework adapter.                |
+| `@typespex/mcp-transport-stdio` | Provides protocol-clean MCP stdio serving with diagnostics kept off stdout.                                  |
+| `@typespex/adapter-node`        | Connects any Fetch `Request`/`Response` router to Node's built-in HTTP server.                               |
+| `@typespex/adapter-bun`         | Connects any Fetch router to `Bun.serve`.                                                                    |
+| `@typespex/adapter-express`     | Mounts any Fetch router in Express without installing Hono or an HTTP server implementation.                 |
+| `@typespex/adapter-hono`        | Mounts any Fetch router in Hono without installing Express or an HTTP server implementation.                 |
 
 ## Prerequisites
 
@@ -289,7 +289,7 @@ context parameter when it is unused. Its return type is the union of results dec
 operation. Returning the `NotFoundError` value above produces a 404; the handler does not construct
 a `Response`.
 
-`createTodosServerRouter` also accepts `HttpInterpreterOptions`:
+`createTodosServerRouter` also accepts `HttpRouterOptions`:
 
 - `middleware` wraps matched handlers and the complete-router not-found handler.
 - `createContext` can synchronously or asynchronously create a custom request context.
@@ -298,7 +298,9 @@ a `Response`.
 
 ## Hosting Adapters
 
-All adapters accept an optional structured `logger` with at least an `error` method.
+Node and Bun accept the shared `Logger` contract from `@typespex/http-server` for their standalone
+error boundary. Express and Hono delegate unexpected failures raised before a response starts to
+their native error handlers; later stream failures close the underlying connection.
 
 ### Bun
 
@@ -342,9 +344,10 @@ app.use("/api", toExpressHandler(router));
 app.listen(3000);
 ```
 
-The adapter is terminal: the generated router supplies its not-found response and the underlying
-Node adapter logs and converts any error that escapes the router boundary to a 500 response. It does
-not call Express `next()`. Register it before `express.json()`, `express.urlencoded()`, or any other
+The adapter is terminal for normal responses: the generated router supplies its not-found response.
+Unexpected failures raised before the response starts are passed to Express error middleware with
+`next(error)`. Later stream failures close the connection because Express can no longer replace the
+response. Register the handler before `express.json()`, `express.urlencoded()`, or any other
 middleware that consumes the raw request body stream. Express removes the mount prefix before the
 generated router matches the request, so the example serves a generated `/todos` route at
 `/api/todos`.
@@ -378,6 +381,7 @@ export default app;
 
 `toHonoMiddleware` calls Hono's `next()` only when no TypeSpex operation matched. A response from a
 matched operation, including a modeled 404, is terminal and does not fall through.
+Unexpected failures raised while routing flow through Hono's `onError` handler.
 
 At the runtime level, `router.handle(request)` is the complete application and includes TypeSpex
 middleware and not-found handling. `router.tryHandle(request)` returns `undefined` only when no

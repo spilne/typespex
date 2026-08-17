@@ -44,9 +44,11 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@typespex/http-server": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.20.1",
-    "@typespex/http-server": "workspace:*",
     "typescript": "^5.7.0"
   },
   "engines": {

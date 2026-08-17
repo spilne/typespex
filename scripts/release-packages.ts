@@ -166,19 +166,19 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
     ],
   },
   "@typespex/adapter-bun": {
-    dependencies: [],
+    dependencies: ["@typespex/http-server"],
     peerDependencies: [],
   },
   "@typespex/adapter-hono": {
-    dependencies: [],
+    dependencies: ["@typespex/http-server"],
     peerDependencies: ["hono"],
   },
   "@typespex/adapter-node": {
-    dependencies: [],
+    dependencies: ["@typespex/http-server"],
     peerDependencies: [],
   },
   "@typespex/adapter-express": {
-    dependencies: ["@typespex/adapter-node"],
+    dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
     peerDependencies: ["express"],
   },
 } as const;

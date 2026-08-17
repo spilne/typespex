@@ -563,9 +563,9 @@ describe("response status lowering", () => {
     expect(await ranged.text()).toBe("dynamic");
 
     mixedFixedDynamicResult = { status: 999, body: "must-not-fall-through" };
-    const invalidDynamic = await router.handle(new Request("http://localhost/mixed-fixed-dynamic"));
-    expect(invalidDynamic.status).toBe(500);
-    expect(await invalidDynamic.text()).toBe("Internal Server Error");
+    await expect(
+      router.handle(new Request("http://localhost/mixed-fixed-dynamic")),
+    ).rejects.toThrow("did not match any declared HTTP response variant");
   });
 
   test("encodes implicit errors alongside ranged statuses", async () => {
@@ -603,9 +603,9 @@ describe("response status lowering", () => {
     });
 
     handlerResult = { status: 493, code: "invalid", message: "Outside the declared range" };
-    const invalidRange = await router.handle(new Request("http://localhost/failure"));
-    expect(invalidRange.status).toBe(500);
-    expect(await invalidRange.text()).toBe("Internal Server Error");
+    await expect(router.handle(new Request("http://localhost/failure"))).rejects.toThrow(
+      "did not match any declared HTTP response variant",
+    );
 
     handlerResult = { code: "unexpected", message: "Unexpected failure" };
     const fallback = await router.handle(new Request("http://localhost/failure"));

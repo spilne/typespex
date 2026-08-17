@@ -61,7 +61,7 @@ exports[`operation structures standalone operations — no interface wrapper 3`]
 
 import type {
   ComposableHttpRouter,
-  HttpInterpreterOptions,
+  HttpRouterOptions,
   MatchedRequestContext,
 } from "@typespex/http-server";
 import { bindRoute, createHttpRouter } from "@typespex/http-server";
@@ -70,7 +70,7 @@ import { StatusApiOperations } from "./server-operations.js";
 
 export function createStatusApiServerRouter<Ctx extends MatchedRequestContext>(
   implementation: StatusApiServer<Ctx>,
-  options?: HttpInterpreterOptions<Ctx>,
+  options?: HttpRouterOptions<Ctx>,
 ): ComposableHttpRouter {
   return createHttpRouter([bindRoute(StatusApiOperations.health, implementation.health)], options);
 }
@@ -318,7 +318,7 @@ exports[`operation structures escapes TypeScript identifiers and property names 
 
 import type {
   ComposableHttpRouter,
-  HttpInterpreterOptions,
+  HttpRouterOptions,
   MatchedRequestContext,
 } from "@typespex/http-server";
 import { bindRoute, createHttpRouter } from "@typespex/http-server";
@@ -327,7 +327,7 @@ import { ItemsOperations } from "./server-operations.js";
 
 export function createEscapingApiServerRouter<Ctx extends MatchedRequestContext>(
   implementation: EscapingApiServer<Ctx>,
-  options?: HttpInterpreterOptions<Ctx>,
+  options?: HttpRouterOptions<Ctx>,
 ): ComposableHttpRouter {
   return createHttpRouter(
     [

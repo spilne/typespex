@@ -41,7 +41,7 @@ function combineMiddleware<Ctx extends RequestContext>(
 /** Creates the app for one route — decode, handle, encode. No Map lookup. */
 function createRouteApp<I, R, Ctx extends RequestContext>(
   route: RouteBinding<I, R, Ctx>,
-  notFound: HttpInterpreterOptions<Ctx>["notFound"],
+  notFound: HttpRouterOptions<Ctx>["notFound"],
 ): HttpApp<Ctx> {
   return async (ctx: Ctx) => {
     if (!ctx.match) {
@@ -66,7 +66,7 @@ function createDefaultContext(request: Request, match?: MatchedEndpoint): Reques
 
 /** Not-found app — used when no route matches. */
 function createNotFoundApp<Ctx extends RequestContext>(
-  options: HttpInterpreterOptions<Ctx>,
+  options: HttpRouterOptions<Ctx>,
 ): HttpApp<Ctx> {
   return async (ctx: Ctx) => {
     if (options.notFound) return options.notFound(ctx);
@@ -74,8 +74,8 @@ function createNotFoundApp<Ctx extends RequestContext>(
   };
 }
 
-/** Options for the HTTP interpreter produced by `createHttpRouter`. */
-export interface HttpInterpreterOptions<Ctx extends RequestContext> {
+/** Options for a router produced by `createHttpRouter`. */
+export interface HttpRouterOptions<Ctx extends RequestContext> {
   readonly middleware?: ReadonlyArray<Middleware<Ctx>>;
   readonly createContext?: (request: Request, match?: MatchedEndpoint) => Promise<Ctx> | Ctx;
   readonly onUnhandledError?: (error: unknown, context: Ctx) => Promise<Response> | Response;
@@ -129,7 +129,7 @@ export function bindRoute<I, R, Ctx extends RequestContext>(
 /** Creates an HTTP router that matches requests, decodes input, runs middleware, and encodes responses. */
 export function createHttpRouter<Ctx extends RequestContext>(
   routes: ReadonlyArray<RouteBinding<any, any, Ctx>>,
-  options: HttpInterpreterOptions<Ctx> = {},
+  options: HttpRouterOptions<Ctx> = {},
   matcher?: RouteMatcher<RouteBinding<any, any, Ctx>>,
 ): ComposableHttpRouter {
   const middleware = options.middleware ?? [];
@@ -200,7 +200,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
         return options.onUnhandledError(error, context);
       }
 
-      return new Response("Internal Server Error", { status: 500 });
+      throw error;
     }
   }
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import express, { type Express } from "express";
+import express, { type ErrorRequestHandler, type Express } from "express";
 import {
   Either,
   bindRoute,
@@ -81,33 +81,28 @@ describe("toExpressHandler", () => {
     });
   });
 
-  test("uses the standard adapter 500 response for unhandled failures", async () => {
-    const logged: unknown[] = [];
+  test("delegates unhandled failures to Express error middleware", async () => {
+    const failure = new Error("boom");
+    let observed: unknown;
     const router: HttpRouter = {
       async handle() {
-        throw new Error("boom");
+        throw failure;
       },
     };
     const app = express();
-    app.use(
-      toExpressHandler(router, {
-        logger: {
-          error(_message, fields) {
-            logged.push(fields?.error);
-          },
-          warn() {},
-          info() {},
-        },
-      }),
-    );
+    app.use(toExpressHandler(router));
+    const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
+      observed = error;
+      response.status(598).send("express error boundary");
+    };
+    app.use(handleError);
     const origin = await listen(app);
 
     const response = await fetch(`${origin}/failure`);
 
-    expect(response.status).toBe(500);
-    expect(await response.text()).toBe("Internal Server Error");
-    expect(logged).toHaveLength(1);
-    expect(logged[0]).toBeInstanceOf(Error);
+    expect(response.status).toBe(598);
+    expect(await response.text()).toBe("express error boundary");
+    expect(observed).toBe(failure);
   });
 });
 

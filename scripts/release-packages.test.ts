@@ -73,6 +73,29 @@ describe("release package validation", () => {
       dependencies: ["@typespex/codec", "@typespex/http-client"],
       peerDependencies: ["@typespex/mcp-server"],
     });
+    expect({
+      bun: RELEASE_PACKAGE_BOUNDARIES["@typespex/adapter-bun"],
+      express: RELEASE_PACKAGE_BOUNDARIES["@typespex/adapter-express"],
+      hono: RELEASE_PACKAGE_BOUNDARIES["@typespex/adapter-hono"],
+      node: RELEASE_PACKAGE_BOUNDARIES["@typespex/adapter-node"],
+    }).toEqual({
+      bun: {
+        dependencies: ["@typespex/http-server"],
+        peerDependencies: [],
+      },
+      express: {
+        dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
+        peerDependencies: ["express"],
+      },
+      hono: {
+        dependencies: ["@typespex/http-server"],
+        peerDependencies: ["hono"],
+      },
+      node: {
+        dependencies: ["@typespex/http-server"],
+        peerDependencies: [],
+      },
+    });
   });
 
   test("keeps release preflight aligned with the required quality gates", () => {

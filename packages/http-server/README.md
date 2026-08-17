@@ -10,6 +10,11 @@ and operation primitives for TypeSpec-generated HTTP servers.
 Generated services normally import this package directly. Choose one adapter
 package to connect the router to a server framework.
 
+`createHttpRouter` turns expected `HttpError` values into responses and accepts
+an optional `onUnhandledError` mapper. Without that mapper, unexpected failures
+escape to the host boundary: Node and Bun adapters provide a standalone 500,
+while Hono and Express use their framework-native error handling.
+
 ## XML payloads
 
 Generated XML operations use `XmlCodec` values to decode and encode the same TypeSpec model.

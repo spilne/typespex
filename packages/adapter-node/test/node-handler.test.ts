@@ -469,6 +469,16 @@ describe("toNodeHandler", () => {
     expect(response.body).toBe("Internal Server Error");
   });
 
+  test("throws an unhandled router error before the response starts in throw mode", async () => {
+    const failure = new Error("boom");
+    const router = mockRouter(async () => {
+      throw failure;
+    });
+    const handler = toNodeHandler(router, { errorMode: "throw" });
+
+    await expect(invokeHandler(handler, { url: "/test" })).rejects.toBe(failure);
+  });
+
   test("clears staged response headers when streaming fails before the first chunk", async () => {
     const router = mockRouter(async () => {
       const headers = new Headers({
@@ -895,6 +905,25 @@ describe("toNodeHandler", () => {
       return new Response(stream);
     });
     const handler = toNodeHandler(router, { logger: silentLogger });
+
+    const response = await invokeHandler(handler, { url: "/stream-error" });
+
+    expect(response.body).toBe("partial");
+    expect(response.destroyed).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("destroys the connection instead of throwing after headers are sent", async () => {
+    const router = mockRouter(async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("partial"));
+          setTimeout(() => controller.error(new Error("stream failed")), 0);
+        },
+      });
+      return new Response(stream);
+    });
+    const handler = toNodeHandler(router, { errorMode: "throw" });
 
     const response = await invokeHandler(handler, { url: "/stream-error" });
 

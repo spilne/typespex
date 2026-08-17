@@ -32,35 +32,41 @@ export interface McpNotification {
   readonly params?: Readonly<Record<string, unknown>>;
 }
 
-export interface McpToolInvocation {
+export interface McpToolInvocation<Context extends McpToolContext = McpToolContext> {
   readonly tool: string;
   readonly input: unknown;
-  readonly context: McpToolContext;
+  readonly context: Context;
 }
 
 export type McpToolNext = () => Promise<unknown>;
-export type McpToolMiddleware = (
-  invocation: McpToolInvocation,
+export type McpToolMiddleware<Context extends McpToolContext = McpToolContext> = (
+  invocation: McpToolInvocation<Context>,
   next: McpToolNext,
 ) => MaybePromise<unknown>;
 
-export interface McpApplicationBase {
-  readonly middleware?: readonly McpToolMiddleware[];
-  readonly createContext?: (context: McpToolContext) => MaybePromise<McpToolContext>;
+export interface McpApplicationBase<Context extends McpToolContext = McpToolContext> {
+  readonly middleware?: readonly McpToolMiddleware<Context>[];
+  readonly createContext?: (context: McpToolContext) => MaybePromise<Context>;
   readonly onUnhandledError?: (
     error: unknown,
-    context: McpToolContext,
+    context: Context,
     tool: string,
   ) => MaybePromise<void>;
 }
 
-export interface NativeMcpApplication<Handlers> extends McpApplicationBase {
+export interface NativeMcpApplication<
+  Handlers,
+  Context extends McpToolContext = McpToolContext,
+> extends McpApplicationBase<Context> {
   readonly kind?: "native";
   readonly handlers: Handlers;
 }
 
-export type McpApplication<Handlers> = NativeMcpApplication<Handlers>;
+export type McpApplication<
+  Handlers,
+  Context extends McpToolContext = McpToolContext,
+> = NativeMcpApplication<Handlers, Context>;
 
-export function defineMcpApplication<T extends McpApplication<any>>(application: T): T {
+export function defineMcpApplication<T extends McpApplication<any, any>>(application: T): T {
   return application;
 }

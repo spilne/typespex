@@ -1,14 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { McpServer } from "@modelcontextprotocol/server";
+import { createMcpServer, createSchema, type McpToolDefinition } from "@typespex/mcp-server";
 import {
-  createGeneratedMcpServer,
-  createTypeSpecSchema,
-  type GeneratedMcpTool,
-} from "@typespex/mcp-server";
-import {
-  createHttpBridgeServerApplication,
-  type HttpBridgeMcpApplication,
+  createMcpHttpBridgeApplication,
+  type McpHttpBridgeApplication,
   type HttpBridgeOperation,
 } from "../src/index.js";
 
@@ -22,7 +18,7 @@ afterEach(async () => {
 
 describe("HTTP bridge application", () => {
   test("plugs modeled success, error, and void results into the server core", async () => {
-    const schema = createTypeSpecSchema<{ value: string }>({
+    const schema = createSchema<{ value: string }>({
       schema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -32,9 +28,9 @@ describe("HTTP bridge application", () => {
       },
     });
     const tools = [
-      { name: "read", handler: "read", input: schema, success: schema, errors: schema },
-      { name: "empty", handler: "empty", input: schema, voidResult: true },
-    ] as const satisfies readonly GeneratedMcpTool[];
+      { name: "read", input: schema, success: schema, errors: schema },
+      { name: "empty", input: schema, voidResult: true },
+    ] as const satisfies readonly McpToolDefinition[];
     const operations = {
       read: {
         version: 1,
@@ -57,7 +53,7 @@ describe("HTTP bridge application", () => {
         servers: [{ url: "https://api.example.test", fullyDefaulted: true }],
       },
     } as const satisfies Readonly<Record<string, HttpBridgeOperation>>;
-    const application: HttpBridgeMcpApplication = {
+    const application: McpHttpBridgeApplication = {
       kind: "http-bridge",
       bridge: {
         fetch: (async (input: RequestInfo | URL) => {
@@ -68,10 +64,10 @@ describe("HTTP bridge application", () => {
         }) as typeof fetch,
       },
     };
-    const server = createGeneratedMcpServer(
+    const server = createMcpServer(
       { implementation: { name: "bridge", version: "1.0.0" } },
       tools,
-      createHttpBridgeServerApplication(operations, application),
+      createMcpHttpBridgeApplication(operations, application),
     );
     const client = await connect(server);
 

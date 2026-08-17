@@ -12,17 +12,17 @@ mock.module("@modelcontextprotocol/server/stdio", () => ({
 }));
 
 test("stdio wrapper delegates options and keeps diagnostics on stderr", async () => {
-  const { serveTypespexStdio } = await import("../src/index.js");
+  const { serveMcpStdio } = await import("../src/index.js");
   const onError = () => undefined;
   expect(
-    serveTypespexStdio((() => undefined) as unknown as McpServerFactory, {
+    serveMcpStdio((() => undefined) as unknown as McpServerFactory, {
       legacy: "reject",
       onError,
     }),
   ).toBe(handle);
   expect(receivedOptions).toEqual({ legacy: "reject", onerror: onError });
 
-  serveTypespexStdio((() => undefined) as unknown as McpServerFactory);
+  serveMcpStdio((() => undefined) as unknown as McpServerFactory);
   expect(receivedOptions?.onerror).toBeFunction();
   const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
   const error = new Error("stdio failure");

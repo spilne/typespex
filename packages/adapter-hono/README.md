@@ -5,11 +5,12 @@ middleware. Generated HTTP and MCP servers both satisfy the structural contract.
 
 ## Entry points
 
-- `@typespex/adapter-hono` exports `toHonoApp`, `toHonoMiddleware`, and its small
-  structural router, logger, and option types.
+- `@typespex/adapter-hono` exports `toHonoApp` and `toHonoMiddleware`. Both
+  accept the shared router contracts from `@typespex/http-server`.
 
 Use the app adapter for a standalone generated service or the middleware
 adapter to compose generated routes with an existing Hono application.
+Unexpected errors raised while routing flow through Hono's `onError` handler.
 
 ## Runtime requirements
 

@@ -296,14 +296,15 @@ describe("configurable date-time handler mappings", () => {
     expect(receivedParameters.offset.offset).toBe("+02:30");
 
     returnMalformedBody = true;
-    const malformed = await router.handle(
-      new Request("http://localhost/body", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(wirePayload),
-      }),
-    );
-    expect(malformed.status).toBe(500);
+    await expect(
+      router.handle(
+        new Request("http://localhost/body", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(wirePayload),
+        }),
+      ),
+    ).rejects.toThrow("$response.body.utc");
 
     const invalid = await router.handle(
       new Request("http://localhost/body", {
