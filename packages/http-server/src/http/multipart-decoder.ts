@@ -106,6 +106,7 @@ type MultipartSchemaMode = "form-data" | "tuple";
 
 const MULTIPART_BODY = Symbol("typespex.multipart.body");
 const MULTIPART_PART_KINDS: readonly MultipartPartKind[] = ["text", "binary", "json", "file"];
+const utf8Decoder = new TextDecoder();
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 type MultipartDecoderInput = Record<string, unknown> & {
@@ -631,7 +632,7 @@ function collectLegacyMultipartFields(body: ParsedMultipartBody): Record<string,
     const partValue =
       disposition.filename !== undefined
         ? createFile(part.body, disposition.filename, part.contentType ?? "")
-        : new TextDecoder().decode(part.body);
+        : utf8Decoder.decode(part.body);
     appendBodyField(value, disposition.name, partValue);
   }
   return value;
