@@ -76,6 +76,27 @@ describe("@typespex/mcp emitter", () => {
     expect(result.read("tools", "mcp-bun.ts")).toContain("@typespex/adapter-bun");
     expect(result.read("tools", "mcp-express.ts")).toContain("@typespex/adapter-express");
     expect(result.read("tools", "mcp-hono.ts")).toContain("@typespex/adapter-hono");
+    const launchers = [
+      ["mcp-stdio.ts", "@typespex/mcp-transport-stdio"],
+      ["mcp-node.ts", "node:http"],
+      ["mcp-bun.ts", "@typespex/adapter-bun"],
+      ["mcp-express.ts", "@typespex/adapter-express"],
+      ["mcp-hono.ts", "@typespex/adapter-hono"],
+    ] as const;
+    const launcherFiles = launchers.map(([fileName]) => fileName);
+    const launchersWithLateImports = launcherFiles.filter((fileName) => {
+      const source = result.read("tools", fileName);
+      const applicationOffset = source.indexOf("\nconst application:");
+      return applicationOffset < 0 || source.indexOf("\nimport ", applicationOffset) >= 0;
+    });
+    expect(launchersWithLateImports).toEqual([]);
+    const launchersWithChangedApplicationOrder = launchers.filter(([fileName, module]) => {
+      const source = result.read("tools", fileName);
+      const applicationImportOffset = source.indexOf("import applicationDefinition");
+      const launcherImportOffset = source.indexOf(module);
+      return applicationImportOffset < 0 || applicationImportOffset > launcherImportOffset;
+    });
+    expect(launchersWithChangedApplicationOrder).toEqual([]);
   });
 
   test("emits a complete HTTP bridge descriptor with inferred annotations", () => {
