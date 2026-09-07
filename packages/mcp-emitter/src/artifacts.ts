@@ -1,4 +1,8 @@
-import { COMPILER_PLAN_VERSION, type ArtifactPlan } from "@typespex/compiler-core/unstable";
+import {
+  COMPILER_PLAN_VERSION,
+  renderTypeScriptModule,
+  type ArtifactPlan,
+} from "@typespex/compiler-core/unstable";
 import type { McpLauncher } from "./lib.js";
 import { renderOperations } from "./render-operations.js";
 import { renderHttpBridge, renderLauncher, renderServer } from "./render-server.js";
@@ -9,7 +13,7 @@ export function createServerArtifacts(
   launchers: readonly McpLauncher[],
 ): ArtifactPlan[] {
   const artifacts: ArtifactPlan[] = [
-    artifact(server, "models", server.fileNames.models, server.planner.emitModels()),
+    artifact(server, "models", server.fileNames.models, renderTypeScriptModule(server.modelModule)),
     artifact(server, "mcp-operations", server.fileNames.operations, renderOperations(server)),
     artifact(server, "mcp-server", server.fileNames.server, renderServer(server, launchers)),
   ];

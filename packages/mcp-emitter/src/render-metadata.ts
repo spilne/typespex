@@ -1,8 +1,8 @@
-import type { McpServerMetadata, McpToolMetadata } from "@typespex/mcp";
+import type { McpIconOptions, McpServerMetadata, McpToolMetadata } from "@typespex/mcp";
 
 export function normalizeIcons(
   icons: McpServerMetadata["icons"] | McpToolMetadata["icons"],
-): unknown[] {
+): McpIconOptions[] {
   return (icons ?? []).map((icon) => ({
     src: String(icon.src),
     ...(icon.mimeType ? { mimeType: icon.mimeType } : {}),

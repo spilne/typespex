@@ -5,6 +5,7 @@ import { HttpTestLibrary } from "@typespec/http/testing";
 import {
   TypePlanner,
   isVoidType,
+  renderTypeScriptModule,
   type CompilerIssue,
   type TypeProjection,
 } from "../src/unstable.js";
@@ -49,6 +50,7 @@ describe("TypePlanner", () => {
     expect(plan.version).toBe(1);
     expect(plan.semanticType).toBe("Pet");
     expect(plan.wireType).toBe("Pet");
+    expect(plan.referencedTypes).toEqual(["Pet"]);
     expect(plan.codec).toBeUndefined();
     expect(planner.createTypePlans()).toEqual([
       {
@@ -60,7 +62,24 @@ describe("TypePlanner", () => {
       },
     ]);
     expect(planner.emittedTypeNames).toEqual(["Pet"]);
-    expect(planner.emitModels()).not.toContain("PetWire");
+    const modulePlan = planner.createModelModulePlan();
+    expect(renderTypeScriptModule(modulePlan)).toBe(planner.emitModels());
+    expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
+  });
+
+  test("records model references structurally while planning inline type expressions", async () => {
+    const program = await compile(`
+      model Pet { id: string; }
+      op inspect(Pet: string, literal: "Pet", nested: { value: Pet }): Pet;
+    `);
+    const inspect = operation(program.getGlobalNamespaceType(), "inspect");
+    const planner = new TypePlanner(program);
+
+    const input = planner.createWirePlan(inspect.parameters);
+    const output = planner.createWirePlan(inspect.returnType);
+
+    expect(input.referencedTypes).toEqual(["Pet"]);
+    expect(output.referencedTypes).toEqual(["Pet"]);
   });
 
   test("keeps unsafe numeric literals lossless across semantic and wire types", async () => {

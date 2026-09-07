@@ -1,15 +1,14 @@
 import { camelCase, typescriptString } from "@typespex/compiler-core/unstable";
 import type { HttpWireOperationPlan } from "@typespex/http-client";
 import type { McpLauncher } from "./lib.js";
-import { normalizeIcons } from "./render-metadata.js";
 import type { PlannedServer, PlannedTool } from "./types.js";
 
 export function renderServer(server: PlannedServer, launchers: readonly McpLauncher[]): string {
   const implementation = {
     name: server.plan.name,
-    version: server.metadata.version,
-    ...(server.metadata.icons ? { icons: normalizeIcons(server.metadata.icons) } : {}),
-    ...(server.metadata.websiteUrl ? { websiteUrl: String(server.metadata.websiteUrl) } : {}),
+    version: server.version,
+    ...(server.icons ? { icons: server.icons } : {}),
+    ...(server.websiteUrl ? { websiteUrl: server.websiteUrl } : {}),
   };
 
   const configuredApplicationType =
@@ -80,7 +79,7 @@ export function create${server.symbolName}McpServer(application: ${server.symbol
   return createMcpServer(
     {
       implementation: ${typescriptString(implementation)},
-      ${server.metadata.instructions ? `instructions: ${typescriptString(server.metadata.instructions)},` : ""}
+      ${server.instructions ? `instructions: ${typescriptString(server.instructions)},` : ""}
     },
     mcpTools,
     serverApplication,

@@ -1,6 +1,4 @@
-import { getDoc, getSummary } from "@typespec/compiler";
 import { typescriptString, type JsonWirePlan } from "@typespex/compiler-core/unstable";
-import { normalizeIcons } from "./render-metadata.js";
 import { renderSchemaDocument, renderSchemaReference } from "./render-schema-document.js";
 import type { PlannedServer, PlannedTool } from "./types.js";
 
@@ -9,14 +7,11 @@ export function renderOperations(server: PlannedServer): string {
 
   const tools = server.tools
     .map((tool) => {
-      const metadata = tool.metadata;
-      const description = getDoc(server.planner.program, tool.operation);
-      const title = metadata.title ?? getSummary(server.planner.program, tool.operation);
       const fields = [
         `name: ${typescriptString(tool.name)}`,
-        ...(title ? [`title: ${typescriptString(title)}`] : []),
-        ...(description ? [`description: ${typescriptString(description)}`] : []),
-        ...(metadata.icons ? [`icons: ${typescriptString(normalizeIcons(metadata.icons))}`] : []),
+        ...(tool.title ? [`title: ${typescriptString(tool.title)}`] : []),
+        ...(tool.description ? [`description: ${typescriptString(tool.description)}`] : []),
+        ...(tool.icons ? [`icons: ${typescriptString(tool.icons)}`] : []),
         ...(tool.annotations ? [`annotations: ${typescriptString(tool.annotations)}`] : []),
         `input: ${schemaReference(tool, "Input", tool.plan.input)}`,
         ...(tool.plan.success
@@ -34,12 +29,8 @@ export function renderOperations(server: PlannedServer): string {
 
   const referencedTypeNames = new Set(
     server.tools.flatMap((tool) =>
-      [tool.plan.input, tool.plan.success, tool.plan.errors].flatMap((plan) =>
-        plan
-          ? [plan.semanticType, plan.wireType].flatMap((expression) =>
-              referencedTypeIdentifiers(expression),
-            )
-          : [],
+      [tool.plan.input, tool.plan.success, tool.plan.errors].flatMap(
+        (plan) => plan?.referencedTypes ?? [],
       ),
     ),
   );
@@ -112,15 +103,4 @@ function emitSemanticAndWireAliases(
       ? ""
       : `\nexport type ${symbolName}${kind}Wire = ${plan.wireType};`;
   return `export type ${semanticName} = ${plan.semanticType};${wire}`;
-}
-
-function referencedTypeIdentifiers(expression: string): string[] {
-  const withoutStrings = expression.replace(/"(?:\\.|[^"\\])*"/g, (value) =>
-    " ".repeat(value.length),
-  );
-  return [...withoutStrings.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)].flatMap((match) => {
-    const identifier = match[0];
-    const offset = match.index + identifier.length;
-    return /^\s*\??\s*:/.test(withoutStrings.slice(offset)) ? [] : [identifier];
-  });
 }

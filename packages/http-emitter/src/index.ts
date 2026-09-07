@@ -21,6 +21,8 @@ import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
 import { reportUnsupportedLiterals } from "./report-unsupported-literals.js";
+import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
+import { buildServerEmission } from "./server-emission.js";
 import {
   formatGeneratedFiles,
   GeneratedFileFormatError,
@@ -70,13 +72,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
 
   // Render every service before writing anything. Some response diagnostics
   // are discovered while rendering, and an error must not leave partial output.
-  const files = emissionPlans.flatMap(({ ctx, httpOperations, layout }) =>
-    GENERATED_ARTIFACTS.map((artifact) => ({
-      fileName: generatedArtifactFileName(artifact, layout.fileNames),
-      outputDir: layout.outputDir,
-      raw: artifact.emit(ctx, httpOperations),
-    })),
-  );
+  const files = emissionPlans.flatMap(renderServiceArtifacts);
 
   if (program.hasError()) return;
 
@@ -115,20 +111,42 @@ interface ServiceEmissionPlan {
 interface GeneratedArtifactDefinition {
   readonly artifact: string;
   readonly fileNameKey: keyof GeneratedFileNames;
-  readonly emit: (ctx: EmitterCtx, httpOperations: HttpOperation[]) => string;
 }
 
 const GENERATED_ARTIFACTS: readonly GeneratedArtifactDefinition[] = [
-  { artifact: "models", fileNameKey: "models", emit: (ctx) => emitModels(ctx) },
-  { artifact: "server-hints", fileNameKey: "serverHints", emit: emitServerHints },
-  {
-    artifact: "server-operations",
-    fileNameKey: "serverOperations",
-    emit: emitServerOperations,
-  },
-  { artifact: "server", fileNameKey: "server", emit: emitServer },
-  { artifact: "server-router", fileNameKey: "serverRouter", emit: emitServerRouter },
+  { artifact: "models", fileNameKey: "models" },
+  { artifact: "server-hints", fileNameKey: "serverHints" },
+  { artifact: "server-operations", fileNameKey: "serverOperations" },
+  { artifact: "server", fileNameKey: "server" },
+  { artifact: "server-router", fileNameKey: "serverRouter" },
 ];
+
+function renderServiceArtifacts({
+  ctx,
+  httpOperations,
+  layout,
+}: ServiceEmissionPlan): Array<{ fileName: string; outputDir: string; raw: string }> {
+  const models = emitModels(ctx);
+  const serverHints = emitServerHints(ctx, httpOperations);
+  const serverEmission = buildServerEmission(ctx, httpOperations);
+  const serverOperations = emitServerOperations(ctx, httpOperations, serverEmission);
+  const completeServerEmission = {
+    ...serverEmission,
+    payloadTypeAliases: getPayloadTypeAliasDeclarations(ctx),
+  };
+  const content: Record<keyof GeneratedFileNames, string> = {
+    models,
+    serverHints,
+    serverOperations,
+    server: emitServer(ctx, completeServerEmission),
+    serverRouter: emitServerRouter(ctx, completeServerEmission),
+  };
+  return GENERATED_ARTIFACTS.map((artifact) => ({
+    fileName: generatedArtifactFileName(artifact, layout.fileNames),
+    outputDir: layout.outputDir,
+    raw: content[artifact.fileNameKey],
+  }));
+}
 
 function reportDuplicateOutputPaths(
   context: EmitContext<TypespexEmitterOptions>,
