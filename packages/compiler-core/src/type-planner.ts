@@ -260,7 +260,7 @@ export class TypePlanner {
       ...(codecDocumentRequiresTransform(codecDocument) ? { codec: codecDocument } : {}),
       semanticType,
       wireType,
-      referencedTypes: [...referencedTypes],
+      referencedTypes: [...referencedTypes].sort(),
     };
   }
 

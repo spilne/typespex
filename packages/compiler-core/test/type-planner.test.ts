@@ -67,10 +67,16 @@ describe("TypePlanner", () => {
     expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
   });
 
-  test("records model references structurally while planning inline type expressions", async () => {
+  test("records model references structurally in canonical order", async () => {
     const program = await compile(`
       model Pet { id: string; }
-      op inspect(Pet: string, literal: "Pet", nested: { value: Pet }): Pet;
+      model Zebra { id: string; }
+      model Alpha { id: string; }
+      op inspect(
+        Pet: string,
+        literal: "Pet",
+        nested: { pet: Pet, zebra: Zebra, alpha: Alpha },
+      ): Pet;
     `);
     const inspect = operation(program.getGlobalNamespaceType(), "inspect");
     const planner = new TypePlanner(program);
@@ -78,7 +84,7 @@ describe("TypePlanner", () => {
     const input = planner.createWirePlan(inspect.parameters);
     const output = planner.createWirePlan(inspect.returnType);
 
-    expect(input.referencedTypes).toEqual(["Pet"]);
+    expect(input.referencedTypes).toEqual(["Alpha", "Pet", "Zebra"]);
     expect(output.referencedTypes).toEqual(["Pet"]);
   });
 
