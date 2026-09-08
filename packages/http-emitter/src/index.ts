@@ -21,7 +21,6 @@ import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
 import { reportUnsupportedLiterals } from "./report-unsupported-literals.js";
-import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
 import { buildServerEmission } from "./server-emission.js";
 import {
   formatGeneratedFiles,
@@ -130,16 +129,12 @@ function renderServiceArtifacts({
   const serverHints = emitServerHints(ctx, httpOperations);
   const serverEmission = buildServerEmission(ctx, httpOperations);
   const serverOperations = emitServerOperations(ctx, httpOperations, serverEmission);
-  const completeServerEmission = {
-    ...serverEmission,
-    payloadTypeAliases: getPayloadTypeAliasDeclarations(ctx),
-  };
   const content: Record<keyof GeneratedFileNames, string> = {
     models,
     serverHints,
     serverOperations,
-    server: emitServer(ctx, completeServerEmission),
-    serverRouter: emitServerRouter(ctx, completeServerEmission),
+    server: emitServer(ctx, serverEmission),
+    serverRouter: emitServerRouter(ctx, serverEmission),
   };
   return GENERATED_ARTIFACTS.map((artifact) => ({
     fileName: generatedArtifactFileName(artifact, layout.fileNames),

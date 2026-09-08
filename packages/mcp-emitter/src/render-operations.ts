@@ -27,16 +27,7 @@ export function renderOperations(server: PlannedServer): string {
     })
     .join(",\n");
 
-  const referencedTypeNames = new Set(
-    server.tools.flatMap((tool) =>
-      [tool.plan.input, tool.plan.success, tool.plan.errors].flatMap(
-        (plan) => plan?.referencedTypes ?? [],
-      ),
-    ),
-  );
-  const modelTypes = [
-    ...new Set(server.plan.types.flatMap((type) => [type.semanticType, type.wireType])),
-  ].filter((type) => referencedTypeNames.has(type));
+  const modelTypes = collectModelTypesForImport(server);
   const modelImport =
     modelTypes.length > 0
       ? `import type { ${modelTypes.join(", ")} } from "./${server.fileNames.models}.js";`
@@ -70,6 +61,27 @@ export const mcpTools = [
 ${tools}
 ] as const satisfies readonly McpToolDefinition[];
 `;
+}
+
+function collectModelTypesForImport(server: PlannedServer): string[] {
+  const availableModelTypes = [
+    ...new Set(server.plan.types.flatMap((type) => [type.semanticType, type.wireType])),
+  ];
+  const wirePlans = server.tools.flatMap((tool) =>
+    [tool.plan.input, tool.plan.success, tool.plan.errors].filter(
+      (plan): plan is JsonWirePlan => plan !== undefined,
+    ),
+  );
+
+  // Version 1 plans predate structural reference metadata. Importing every
+  // planned model is a safe compatibility fallback that avoids parsing
+  // rendered TypeScript expressions to reconstruct compiler information.
+  if (wirePlans.some((plan) => plan.referencedTypes === undefined)) {
+    return availableModelTypes;
+  }
+
+  const referencedTypeNames = new Set(wirePlans.flatMap((plan) => plan.referencedTypes ?? []));
+  return availableModelTypes.filter((type) => referencedTypeNames.has(type));
 }
 
 function schemaReference(
