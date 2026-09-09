@@ -25,6 +25,9 @@ jobs:
 
       # This advisory affects UUID v3/v5/v6 buffer writes. The locked UUID is
       # reached only by the private benchmark's hyperid dependency, which uses v4.
+      # GHSA-2q42-4q24-7rgv requires @typespec/openapi3's unsafe {version}
+      # output path. We neither install nor invoke that emitter, and no patched
+      # TypeSpec release exists yet.
       - name: Audit dependencies
         run: bun run audit:dependencies
 

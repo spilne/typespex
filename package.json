@@ -7,7 +7,7 @@
     "bench"
   ],
   "scripts": {
-    "audit:dependencies": "bun audit --audit-level=moderate --ignore=GHSA-w5hq-g745-h8pq",
+    "audit:dependencies": "bun audit --audit-level=moderate --ignore=GHSA-w5hq-g745-h8pq --ignore=GHSA-2q42-4q24-7rgv",
     "bench:http": "./bench/run-bench.sh",
     "bench:matchers": "bun run build && bun run bench/bench-matchers.ts",
     "build": "bun run --filter @typespex/codec build && bun run --filter @typespex/mcp-server build && bun run --filter '*' build",
