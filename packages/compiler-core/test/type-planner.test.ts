@@ -63,7 +63,7 @@ describe("TypePlanner", () => {
     ]);
     expect(planner.emittedTypeNames).toEqual(["Pet"]);
     const modulePlan = planner.createModelModulePlan();
-    expect(renderTypeScriptModule(modulePlan)).toBe(planner.emitModels());
+    expect(modulePlan.declarations).toHaveLength(1);
     expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
   });
 
@@ -104,7 +104,7 @@ describe("TypePlanner", () => {
     expect(plan.wireType).toBe("ExactValuesWire");
     expect(JSON.stringify(plan.schema)).toContain('"const":"9007199254740993"');
     expect(JSON.stringify(plan.codec)).toContain('"kind":"bigint-literal-string"');
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain(
       'export type ExactValues = 9007199254740993n | "1.234567890123456789";',
     );
@@ -134,7 +134,7 @@ describe("TypePlanner", () => {
     planner.prepare([declaredPetInput]);
     const declaredName = planner.getGeneratedName(declaredPetInput);
     expect(declaredName).not.toBe("PetInput");
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models.match(/export interface PetInput\b/g)).toHaveLength(1);
     expect(models).toContain(`export interface ${declaredName}`);
   });
@@ -329,7 +329,7 @@ describe("TypePlanner", () => {
       }).semanticType,
     ).toBe("EverythingInput");
 
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain('import type { Temporal } from "@js-temporal/polyfill"');
     expect(models).toContain("export interface Everything");
     expect(models).toContain("export interface EverythingInput");
@@ -450,7 +450,9 @@ describe("TypePlanner", () => {
     planner.createWirePlan(values);
     expect(issues.filter((issue) => issue.code === "unsafe-number")).toHaveLength(2);
     expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(3);
-    expect(planner.emitModels()).toContain("export type UnknownScalar = unknown");
+    expect(renderTypeScriptModule(planner.createModelModulePlan())).toContain(
+      "export type UnknownScalar = unknown",
+    );
   });
 
   test("reports unserializable defaults independently for properties with the same name", async () => {
@@ -472,6 +474,40 @@ describe("TypePlanner", () => {
     );
     expect(issues.map((issue) => issue.message)).toContain(
       "Default value for Second.createdAt cannot be represented on the JSON wire.",
+    );
+  });
+});
+
+describe("renderTypeScriptModule", () => {
+  test("renders every module section with stable spacing", () => {
+    expect(renderTypeScriptModule({ banner: "// Banner", imports: [], declarations: [] })).toBe(
+      "// Banner\n",
+    );
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: ['import type { Pet } from "./pet.js";'],
+        declarations: [],
+      }),
+    ).toBe('// Banner\nimport type { Pet } from "./pet.js";\n\n');
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [],
+        declarations: ["export interface Pet {}"],
+      }),
+    ).toBe("// Banner\nexport interface Pet {}\n");
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [
+          'import type { Pet } from "./pet.js";',
+          'import type { Owner } from "./owner.js";',
+        ],
+        declarations: ["export interface Pet {}", "export interface Owner {}"],
+      }),
+    ).toBe(
+      '// Banner\nimport type { Pet } from "./pet.js";\nimport type { Owner } from "./owner.js";\n\nexport interface Pet {}\n\nexport interface Owner {}\n',
     );
   });
 });

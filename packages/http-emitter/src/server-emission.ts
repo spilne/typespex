@@ -21,6 +21,10 @@ import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
 export interface ServerEmission {
   readonly serviceName: string;
   readonly modelImports: readonly string[];
+  /**
+   * Complete snapshot for the handler signatures below. Building the groups
+   * materializes every input and result type before this snapshot is captured.
+   */
   readonly payloadTypeAliases: readonly string[];
   readonly groups: readonly ServerEmissionGroup[];
 }

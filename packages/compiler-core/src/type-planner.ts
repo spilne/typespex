@@ -264,7 +264,7 @@ export class TypePlanner {
     };
   }
 
-  /** Every type exported by {@link emitModels}, including protocol visibility projections. */
+  /** Every type exported by {@link createModelModulePlan}, including protocol visibility projections. */
   get emittedTypeNames(): readonly string[] {
     this.ensureNamesPrepared();
     const names: string[] = [];
@@ -335,6 +335,7 @@ export class TypePlanner {
     };
   }
 
+  /** @deprecated Render {@link createModelModulePlan} with {@link renderTypeScriptModule}. */
   emitModels(): string {
     return renderTypeScriptModule(this.createModelModulePlan());
   }
@@ -2093,9 +2094,10 @@ export class TypePlanner {
 }
 
 export function renderTypeScriptModule(plan: TypeScriptModulePlan): string {
-  const sections = [plan.imports.join("\n"), plan.declarations.join("\n\n")].filter(Boolean);
-  const body = sections.join("\n\n");
-  return `${plan.banner}\n${body}${body ? "\n" : ""}`;
+  let source = `${plan.banner}\n`;
+  if (plan.imports.length > 0) source += `${plan.imports.join("\n")}\n\n`;
+  if (plan.declarations.length > 0) source += `${plan.declarations.join("\n\n")}\n`;
+  return source;
 }
 
 export function isVoidType(type: Type): boolean {

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { EmitContext } from "@typespec/compiler";
+import { createTestHost, createTestRunner } from "@typespec/compiler/testing";
+import { HttpTestLibrary } from "@typespec/http/testing";
 import {
   COMPILER_PLAN_VERSION,
   type JsonWirePlan,
@@ -6,9 +9,74 @@ import {
   type ServicePlan,
 } from "@typespex/compiler-core/unstable";
 import { createServerArtifacts } from "../src/artifacts.js";
+import type { McpEmitterOptions } from "../src/lib.js";
+import { loadBridgePlanningContext, planServer } from "../src/planning.js";
 import type { PlannedServer, PlannedTool } from "../src/types.js";
 
 describe("MCP planning boundary", () => {
+  test("renders a real planned HTTP bridge repeatably after cloning", async () => {
+    const host = await createTestHost({ libraries: [HttpTestLibrary] });
+    const runner = await createTestRunner(host);
+    const [, diagnostics] = await runner.compileAndDiagnose(`
+      using TypeSpec.Http;
+
+      model Pet { id: string; name: string; }
+
+      @service(#{ title: "Pet API" })
+      @server("https://api.example.test")
+      namespace PetApi {
+        @get @route("/pets/{id}")
+        op getPet(@path id: string, @query verbose?: boolean): Pet;
+      }
+    `);
+    expect(
+      diagnostics
+        .filter((diagnostic) => diagnostic.severity === "error")
+        .map((diagnostic) => diagnostic.message),
+    ).toEqual([]);
+
+    const namespace = runner.program.getGlobalNamespaceType().namespaces.get("PetApi");
+    const operation = namespace?.operations.get("getPet");
+    if (!namespace || !operation) throw new Error("Expected the PetApi.getPet operation.");
+
+    const context: EmitContext<McpEmitterOptions> = {
+      program: runner.program,
+      emitterOutputDir: "generated",
+      options: { mode: ["native", "http-bridge"], launchers: [] },
+      perf: {
+        startTimer: () => ({ end: () => 0 }),
+        time: (_label, callback) => callback(),
+        timeAsync: (_label, callback) => callback(),
+        report: () => {},
+      },
+    };
+    const bridge = await loadBridgePlanningContext(context);
+    if (!bridge) throw new Error("Expected HTTP bridge planning support.");
+
+    const server = planServer(
+      context,
+      { namespace, version: "1.0.0" },
+      [{ operation }],
+      { native: true, httpBridge: true },
+      bridge,
+      undefined,
+    );
+    expect(server.tools[0]?.http).toBeDefined();
+
+    const cloned = structuredClone(server);
+    const originalArtifacts = createServerArtifacts(server, []);
+    const firstCloneArtifacts = createServerArtifacts(cloned, []);
+    const secondCloneArtifacts = createServerArtifacts(cloned, []);
+    const httpBridge = firstCloneArtifacts.find((artifact) =>
+      artifact.artifact.endsWith(".mcp-http-bridge"),
+    );
+
+    expect(firstCloneArtifacts).toEqual(originalArtifacts);
+    expect(secondCloneArtifacts).toEqual(firstCloneArtifacts);
+    expect(httpBridge?.content).toContain('"method":"GET"');
+    expect(httpBridge?.content).toContain('"path":"/pets/{id}"');
+  });
+
   test("renders repeatably from a cloned data-only plan", () => {
     const input: JsonWirePlan = {
       version: COMPILER_PLAN_VERSION,
