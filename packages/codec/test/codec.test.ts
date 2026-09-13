@@ -59,6 +59,38 @@ describe("protocol-neutral value codec", () => {
     });
   });
 
+  test("preserves nested duplicate-name and missing-property issues in both directions", async () => {
+    const codec = createValueCodec({
+      root: {
+        kind: "array",
+        item: {
+          kind: "object",
+          properties: {
+            first: { wireName: "same", codec: { kind: "identity" } },
+            second: { wireName: "same", codec: { kind: "identity" } },
+            third: { wireName: "other", codec: { kind: "identity" } },
+          },
+        },
+      },
+    });
+    const duplicate = {
+      path: [0, "same"],
+      message: 'Declared properties "first" and "second" share the same wire name.',
+    };
+    expect(await codec.decode([{ same: "value" }])).toEqual({
+      ok: false,
+      issues: [duplicate, { path: [0, "other"], message: "Required property is missing." }],
+    });
+    expect(await codec.encode([{ first: "value" }])).toEqual({
+      ok: false,
+      issues: [
+        duplicate,
+        { path: [0, "second"], message: "Required property is missing." },
+        { path: [0, "third"], message: "Required property is missing." },
+      ],
+    });
+  });
+
   test("applies encoded names, defaults, dates, bytes, and lossless integers", async () => {
     const codec = createValueCodec<{
       count: bigint;

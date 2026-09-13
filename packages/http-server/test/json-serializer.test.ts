@@ -90,6 +90,26 @@ describe("JsonSerializers", () => {
     expect(Object.getPrototypeOf(serialized)).toBeNull();
   });
 
+  test("preserves prototype-sensitive declared wire names and record keys", () => {
+    const model = JsonSerializers.object<{ value: string }>([
+      { property: "value", wireName: "__proto__", serializer: JsonSerializers.identity() },
+    ]);
+    const record = JsonSerializers.record(JsonSerializers.identity<string>());
+    for (const output of [
+      model.serialize({ value: "safe" }),
+      record.serialize(JSON.parse('{"__proto__":"safe"}')),
+    ]) {
+      expect(Object.getPrototypeOf(output)).toBeNull();
+      expect(Object.getOwnPropertyDescriptor(output, "__proto__")).toEqual({
+        value: "safe",
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      expect(stringifyJson(output)).toBe('{"__proto__":"safe"}');
+    }
+  });
+
   test("serializes modeled own properties from class instances", () => {
     class ProfileValue implements Profile {
       constructor(readonly displayName: string) {}
