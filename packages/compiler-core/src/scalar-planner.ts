@@ -11,6 +11,8 @@ import type { ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema } from "./plans.js";
 import {
   getEffectiveScalarEncoding,
+  getNumericBoundIssue,
+  getNumericBounds,
   getScalarEncodingIssue,
   getScalarIntrinsicName,
   isJsonSafeIntegerRange,
@@ -123,6 +125,11 @@ export class ScalarPlanner {
   }
 
   schema(scalar: Scalar, encodingTarget: ModelProperty | Scalar): JsonSchema {
+    const boundIssue = getNumericBoundIssue(this.program, scalar, encodingTarget);
+    if (boundIssue) {
+      this.options.report("unsupported-type", boundIssue, encodingTarget);
+      return false;
+    }
     const intrinsic = getScalarIntrinsicName(this.program, scalar);
     const declaredEncode = getEffectiveScalarEncoding(this.program, scalar, encodingTarget)?.data;
     if (
@@ -255,6 +262,28 @@ export class ScalarPlanner {
   }
 
   codec(scalar: Scalar, encodingTarget: ModelProperty | Scalar): ValueCodecSpec {
+    const codec = this.unconstrainedCodec(scalar, encodingTarget);
+    const bounds = getNumericBounds(this.program, scalar, encodingTarget);
+    if (Object.keys(bounds).length === 0) return codec;
+    const wireType = this.wireType(scalar, encodingTarget);
+    // Ordinary JSON numbers use JSON Schema bounds. String encodings and bounds
+    // outside its exact number representation need an additional runtime check.
+    if (
+      wireType !== "string" &&
+      Object.values(bounds).every((value) => value.asNumber() !== null)
+    ) {
+      return codec;
+    }
+    const numericConstraints = Object.fromEntries(
+      Object.entries(bounds).map(([key, value]) => [key, value.toString()]),
+    );
+    return Object.keys(numericConstraints).length > 0 ? { ...codec, numericConstraints } : codec;
+  }
+
+  private unconstrainedCodec(
+    scalar: Scalar,
+    encodingTarget: ModelProperty | Scalar,
+  ): ValueCodecSpec {
     const intrinsic = getScalarIntrinsicName(this.program, scalar);
     const declaredEncode = getEffectiveScalarEncoding(this.program, scalar, encodingTarget)?.data;
     const encode = this.options.canonicalJsonWire ? undefined : declaredEncode;
@@ -296,7 +325,7 @@ export class ScalarPlanner {
     const dateTimeCodec = this.dateTimeCodec(intrinsic);
     if (dateTimeCodec) return dateTimeCodec;
     if (scalar.baseScalar && !this.program.checker.isStdType(scalar)) {
-      return this.codec(scalar.baseScalar, encodingTarget);
+      return this.unconstrainedCodec(scalar.baseScalar, encodingTarget);
     }
     if (intrinsic === "string" || intrinsic === "url") {
       return { kind: "primitive", type: "string" };

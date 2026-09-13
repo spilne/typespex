@@ -4,6 +4,11 @@ Protocol-neutral codecs used by TypeSpex-generated applications to convert betwe
 
 The package owns encoded names, defaults, dates, bytes, files, and lossless numeric transforms. It has no HTTP, MCP, CLI, framework, or transport behavior.
 
+Generated numeric codecs can carry exact decimal bounds in `numericConstraints`. They check both
+wire and semantic values during conversion, including string encodings that JSON Schema numeric
+keywords cannot validate. Comparisons preserve integer and decimal precision without expanding
+large exponents.
+
 ## Entry points
 
 - `@typespex/codec` exports codec plan types, `createValueCodec`, `bytesToBase64`, and the

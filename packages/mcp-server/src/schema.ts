@@ -36,8 +36,25 @@ export function createSchema<Wire = unknown, Semantic = Wire>(
   definition: SchemaDefinition,
 ): Schema<Wire, Semantic> {
   const schema = normalizeJsonSchema(definition.schema);
-  const wire = lazyJsonSchema<Wire>(schema);
+  const jsonWire = lazyJsonSchema<Wire>(schema);
   const codec = definition.codec ? createValueCodec<Semantic>(definition.codec) : undefined;
+  const wire: StandardSchemaWithJSON<Wire, Wire> = codec
+    ? {
+        "~standard": {
+          ...jsonWire["~standard"],
+          async validate(value: unknown): Promise<StandardSchemaV1.Result<Wire>> {
+            const validated = await jsonWire["~standard"].validate(value);
+            if (validated.issues) return validated;
+            // Some semantic bounds cannot be expressed for JSON strings. Run
+            // the codec checks while preserving the original wire value.
+            const decoded = await codec.decode(validated.value);
+            return decoded.ok
+              ? validated
+              : { issues: decoded.issues.map(codecIssueToStandardIssue) };
+          },
+        },
+      }
+    : jsonWire;
   const projectWireValue = codec ? undefined : createWireProjector(schema);
   const input: StandardSchemaWithJSON<Wire, Semantic> = {
     "~standard": {
@@ -45,7 +62,7 @@ export function createSchema<Wire = unknown, Semantic = Wire>(
       vendor: "typespex",
       jsonSchema: jsonSchemaConverter(schema),
       async validate(value: unknown): Promise<StandardSchemaV1.Result<Semantic>> {
-        const validated = await wire["~standard"].validate(value);
+        const validated = await jsonWire["~standard"].validate(value);
         if (validated.issues) return validated;
         if (!codec) return { value: validated.value as unknown as Semantic };
         const decoded = await codec.decode(validated.value);

@@ -20,6 +20,11 @@ metadata to reject native streams and plan supported HTTP JSONL streams.
 Generated applications using `datetime-mode: temporal` must install `@js-temporal/polyfill` unless
 they provide a compatible `globalThis.Temporal` implementation.
 
+Numeric contracts retain intrinsic, inherited, and property bounds when encoded as strings.
+Generated runtime checks enforce these bounds for tool inputs, native outputs, and HTTP bridge
+outputs. If TypeSpec resolves a numeric decorator literal with lost precision, generation reports
+a diagnostic instead of emitting an incorrect bound.
+
 ## License
 
 MIT

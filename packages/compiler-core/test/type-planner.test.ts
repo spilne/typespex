@@ -192,7 +192,11 @@ describe("TypePlanner", () => {
             next: { wireName: "next", codec: { kind: "ref", name: "Node" }, optional: true },
             count: {
               wireName: "count",
-              codec: { kind: "number-string", integer: true },
+              codec: {
+                kind: "number-string",
+                integer: true,
+                numericConstraints: { minimum: "-2147483648", maximum: "2147483647" },
+              },
               optional: true,
               hasDefault: true,
               defaultValue: "7",

@@ -10,6 +10,145 @@ beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
+  test("enforces intrinsic, inherited, and property bounds on encoded numeric values", async () => {
+    const result = compileFixture(
+      "numeric-bounds",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        @mcpServer(#{ version: "1.0.0" }) namespace Numbers {
+          @encode(string) @minValue(2) @maxValue(8) scalar CountBase extends int32;
+          scalar Count extends CountBase;
+          @tool op count(@minValue(3) @maxValue(7) value: Count): Count;
+          @tool op small(@encode(string) value: int8): { @encode(string) value: int8; };
+          @tool op unsigned(@encode(string) value: uint64): { @encode(string) value: uint64; };
+          @minValue(2) @maxValue(8) scalar NativeBase extends int32;
+          scalar Native extends NativeBase;
+          @tool op native(value: Native): Native;
+        }
+      `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/numbers/mcp-operations.ts`);
+    const [count, small, unsigned, native] = mcpTools;
+    expect(await count.input.input["~standard"].validate({ value: "3" })).toEqual({
+      value: { value: 3 },
+    });
+    for (const value of ["2", "8", "9999"]) {
+      expect((await count.input.input["~standard"].validate({ value })).issues).toBeDefined();
+    }
+    expect(await count.success.encode(8)).toEqual({ ok: true, value: "8" });
+    expect((await count.success.encode(9, { validate: false })).ok).toBe(false);
+    for (const value of [-129, 128]) {
+      expect(
+        (await small.input.input["~standard"].validate({ value: String(value) })).issues,
+      ).toBeDefined();
+      expect((await small.success.encode({ value }, { validate: false })).ok).toBe(false);
+    }
+    const maximum = 18446744073709551615n;
+    expect(await unsigned.input.input["~standard"].validate({ value: String(maximum) })).toEqual({
+      value: { value: maximum },
+    });
+    expect(await unsigned.success.encode({ value: maximum })).toEqual({
+      ok: true,
+      value: { value: String(maximum) },
+    });
+    for (const value of [-1n, maximum + 1n]) {
+      expect(
+        (await unsigned.input.input["~standard"].validate({ value: String(value) })).issues,
+      ).toBeDefined();
+      expect((await unsigned.success.encode({ value }, { validate: false })).ok).toBe(false);
+      expect((await unsigned.success.validateWire({ value: String(value) })).ok).toBe(false);
+    }
+    expect(await native.input.input["~standard"].validate({ value: 2 })).toEqual({
+      value: { value: 2 },
+    });
+    expect((await native.input.input["~standard"].validate({ value: 9 })).issues).toBeDefined();
+    expect((await native.success.encode(9)).ok).toBe(false);
+  });
+
+  test("preserves exact decimal bounds without another wire transform", async () => {
+    const result = compileFixture(
+      "decimal-bounds",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Decimals {
+        @encode(string) @minValueExclusive(1.000000000000000001) @maxValue(2.000000000000000003)
+        scalar Money extends decimal;
+        @tool op money(value: Money): Money;
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/decimals/mcp-operations.ts`);
+    const money = mcpTools[0];
+    for (const value of ["1.000000000000000002", "2.000000000000000003"]) {
+      expect(await money.input.input["~standard"].validate({ value })).toEqual({
+        value: { value },
+      });
+      expect(await money.success.encode(value)).toEqual({ ok: true, value });
+      expect(await money.success.validateWire(value)).toEqual({ ok: true, value });
+    }
+    for (const value of [
+      "1.000000000000000001",
+      "2.000000000000000004",
+      "1e99999999999999999999",
+    ]) {
+      expect((await money.input.input["~standard"].validate({ value })).issues).toBeDefined();
+      expect((await money.success.encode(value, { validate: false })).ok).toBe(false);
+      expect((await money.success.wire["~standard"].validate(value)).issues).toBeDefined();
+    }
+  });
+
+  test("diagnoses numeric literal precision lost before emitter planning", () => {
+    const result = compileFixtureWithDiagnostics(
+      "decimal-literal-collision",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace DecimalCollision {
+        @encode(string) @minValueExclusive(1.000000000000000001) @maxValue(1.000000000000000003)
+        scalar Money extends decimal;
+        @tool op money(value: Money): Money;
+      }
+    `,
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "precision was lost before TypeSpex planning",
+    );
+  });
+
+  test("validates encoded numeric bounds on canonical HTTP bridge outputs", async () => {
+    const result = compileFixture(
+      "bridge-numeric-bounds",
+      `
+        import "@typespec/http";
+        import "@typespex/mcp";
+        using TypeSpec.Http;
+        using TypeSpex.Mcp;
+        @service @server("https://api.example.test")
+        @mcpServer(#{ version: "1.0.0" }) namespace BridgeNumbers {
+          model Values {
+            @encode(string) @minValue(1) @maxValue(10) count: int32;
+            @encode(string) large: uint64;
+          }
+          @tool @post @route("/values") op echo(@body value: Values): Values;
+        }
+      `,
+      `    mode: [http-bridge]\n    launchers: []\n`,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/bridge-numbers/mcp-operations.ts`);
+    const success = mcpTools[0].success;
+    const valid = { count: 10, large: "18446744073709551615" };
+    expect(await success.validateWire(valid)).toEqual({ ok: true, value: valid });
+    for (const value of [
+      { ...valid, count: 11 },
+      { ...valid, large: "18446744073709551616" },
+    ]) {
+      expect((await success.validateWire(value)).ok).toBe(false);
+      expect((await success.wire["~standard"].validate(value)).issues).toBeDefined();
+    }
+  });
+
   test("keeps recursive projections and mixed records usable by typed consumers", async () => {
     const result = compileFixture(
       "recursive-record-types",
