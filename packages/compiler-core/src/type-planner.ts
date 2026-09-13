@@ -11,7 +11,6 @@ import {
   getMinLength,
   getMinValueAsNumeric,
   getMinValueExclusiveAsNumeric,
-  getNamespaceFullName,
   getPatternData,
   getSummary,
   isArrayModelType,
@@ -30,12 +29,7 @@ import {
   type Value,
 } from "@typespec/compiler";
 import type { ObjectPropertyCodecSpec, ValueCodecDocument, ValueCodecSpec } from "@typespex/codec";
-import {
-  pascalCase,
-  typescriptIdentifier,
-  typescriptProperty,
-  typescriptString,
-} from "./naming.js";
+import { typescriptProperty, typescriptString } from "./naming.js";
 import {
   COMPILER_PLAN_VERSION,
   type CompilerIssue,
@@ -45,6 +39,7 @@ import {
   type TypePlan,
 } from "./plans.js";
 import { ScalarPlanner } from "./scalar-planner.js";
+import { TypeRegistry, type NamedType } from "./type-registry.js";
 
 export interface TypePlannerOptions {
   readonly datetimeMode?: "string" | "date" | "temporal";
@@ -70,7 +65,6 @@ export interface WirePlanOptions {
   readonly projection?: TypeProjection;
 }
 
-type NamedType = Model | Scalar | Enum | Union;
 type SchemaObject = Record<string, unknown>;
 
 interface DocumentState {
@@ -89,13 +83,8 @@ interface RegisteredProjection extends TypeProjection {
 /** Protocol-neutral TypeSpec type, JSON Schema, and wire-codec planner. */
 export class TypePlanner {
   private readonly scalars: ScalarPlanner;
-  private readonly namedTypes: NamedType[] = [];
-  private readonly includedTypes = new Set<NamedType>();
-  private readonly expandedTypes = new Set<NamedType>();
-  private readonly generatedNames = new Map<NamedType, string>();
-  private readonly generatedWireNames = new Map<NamedType, string>();
+  private readonly types: TypeRegistry;
   private readonly projections = new Map<string, RegisteredProjection>();
-  private readonly projectionNames = new Set<string>();
   private readonly wireTransformCache = new Map<NamedType, boolean>();
   private readonly projectedWireTransformCache = new Map<
     RegisteredProjection,
@@ -103,7 +92,6 @@ export class TypePlanner {
   >();
   private readonly reportedIssues = new WeakMap<object, Set<string>>();
   private referencedTypeNames: Set<string> | undefined;
-  private namesPrepared = false;
 
   constructor(
     readonly program: Program,
@@ -114,55 +102,59 @@ export class TypePlanner {
       canonicalJsonWire: options.canonicalJsonWire,
       report: (code, message, target) => this.report(code, message, target),
     });
+    this.types = new TypeRegistry(program, {
+      streamElementTypes: options.streamElementTypes,
+      nativeStreamTypes: options.nativeStreamTypes,
+      typeSubstitutions: options.typeSubstitutions,
+      report: (code, message, target) => this.report(code, message, target),
+    });
   }
 
   /** Collect every declaration reachable from the supplied roots and assign deterministic names. */
   prepare(rootTypes: readonly Type[]): void {
-    for (const type of rootTypes) this.visitType(type);
-    this.assignGeneratedNames();
+    if (this.types.prepare(rootTypes)) {
+      this.wireTransformCache.clear();
+      this.projectedWireTransformCache.clear();
+    }
   }
 
   get declarations(): readonly NamedType[] {
-    this.ensureNamesPrepared();
-    return this.namedTypes;
+    return this.types.declarations;
   }
 
   getGeneratedName(type: NamedType): string {
-    this.ensureNamesPrepared();
-    const name = this.generatedNames.get(type);
-    if (!name) throw new Error(`Type ${type.name || type.kind} was not prepared for generation.`);
-    return name;
+    return this.types.getName(type);
   }
 
   getGeneratedWireName(type: NamedType): string {
-    this.ensureNamesPrepared();
-    const semanticName = this.generatedNames.get(type);
-    if (!semanticName) {
-      throw new Error(`Type ${type.name || type.kind} was not prepared for generation.`);
-    }
+    const semanticName = this.types.getName(type);
     if (!this.typeRequiresWireTransform(type)) return semanticName;
-    const name = this.generatedWireNames.get(type);
-    if (!name) throw new Error(`Type ${type.name || type.kind} was not prepared for generation.`);
-    return name;
+    return this.types.getWireName(type);
   }
 
   typeToTs(type: Type): string {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) return this.typeToTs(substituted);
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) return "File";
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isFile(type)) return "File";
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           return element ? `readonly ${this.typeToTs(element)}[]` : "never";
         }
-        if (this.isNamedUserType(type)) return this.typeReference(this.getGeneratedName(type));
+        if (this.types.isUserDefined(type)) {
+          return this.typeReference(this.getGeneratedName(type));
+        }
         return this.modelExpressionToTs(type);
       case "Scalar":
-        if (this.isNamedUserType(type)) return this.typeReference(this.getGeneratedName(type));
+        if (this.types.isUserDefined(type)) {
+          return this.typeReference(this.getGeneratedName(type));
+        }
         return this.scalars.semanticType(type);
       case "Enum":
-        if (this.isNamedUserType(type)) return this.typeReference(this.getGeneratedName(type));
+        if (this.types.isUserDefined(type)) {
+          return this.typeReference(this.getGeneratedName(type));
+        }
         return (
           [...type.members.values()].map((member) => this.enumMemberToTs(member)).join(" | ") ||
           "never"
@@ -170,7 +162,9 @@ export class TypePlanner {
       case "EnumMember":
         return this.enumMemberToTs(type);
       case "Union":
-        if (this.isNamedUserType(type)) return this.typeReference(this.getGeneratedName(type));
+        if (this.types.isUserDefined(type)) {
+          return this.typeReference(this.getGeneratedName(type));
+        }
         return (
           this.unionVariants(type)
             .map((variant) => this.typeToTs(variant))
@@ -273,9 +267,8 @@ export class TypePlanner {
 
   /** Every type exported by {@link createModelModulePlan}, including protocol visibility projections. */
   get emittedTypeNames(): readonly string[] {
-    this.ensureNamesPrepared();
     const names: string[] = [];
-    for (const type of this.namedTypes) {
+    for (const type of this.types.declarations) {
       const semanticName = this.getGeneratedName(type);
       const wireName = this.getGeneratedWireName(type);
       names.push(semanticName);
@@ -294,9 +287,8 @@ export class TypePlanner {
 
   /** Data-only type index consumed by protocol emitter plans. */
   createTypePlans(): readonly TypePlan[] {
-    this.ensureNamesPrepared();
     return [
-      ...this.namedTypes.map((type) => ({
+      ...this.types.declarations.map((type) => ({
         version: COMPILER_PLAN_VERSION,
         key: this.getGeneratedName(type),
         name: this.getGeneratedName(type),
@@ -319,9 +311,8 @@ export class TypePlanner {
   }
 
   createModelModulePlan(): TypeScriptModulePlan {
-    this.ensureNamesPrepared();
     const declarations = [
-      ...this.namedTypes.flatMap((type) => [
+      ...this.types.declarations.flatMap((type) => [
         this.emitNamedType(type),
         this.emitNamedWireType(type),
       ]),
@@ -363,7 +354,7 @@ export class TypePlanner {
     const properties = [...walkPropertiesInherited(type)]
       .filter(projection.propertyFilter)
       .map((property) => this.emitProjectedModelProperty(property, projection));
-    const additional = this.modelIndexer(type)?.value;
+    const additional = this.types.indexer(type)?.value;
     if (additional) {
       const object = `{ ${properties.join("; ")} }`;
       return `${documentation}export type ${name} = ${object} & Record<string, ${this.projectedTypeToTs(additional, projection)}>;`;
@@ -394,7 +385,7 @@ export class TypePlanner {
         const wireName = resolveEncodedName(this.program, property, "application/json");
         return `${typescriptProperty(wireName)}${optional}: ${this.projectedWireTypeToTs(property.type, projection, property)}`;
       });
-    const additional = this.modelIndexer(type)?.value;
+    const additional = this.types.indexer(type)?.value;
     if (additional) {
       const object = `{ ${properties.join("; ")} }`;
       return `export type ${name} = ${object} & Record<string, ${this.projectedWireTypeToTs(additional, projection)}>;`;
@@ -422,7 +413,7 @@ export class TypePlanner {
         const properties = [...walkPropertiesInherited(type)].map((property) =>
           this.emitModelProperty(property),
         );
-        const additional = this.modelIndexer(type)?.value;
+        const additional = this.types.indexer(type)?.value;
         if (additional) {
           const object = `{ ${properties.join("; ")} }`;
           return `${documentation}export type ${name} = ${object} & Record<string, ${this.typeToTs(additional)}>;`;
@@ -458,7 +449,7 @@ export class TypePlanner {
           const wireName = resolveEncodedName(this.program, property, "application/json");
           return `${typescriptProperty(wireName)}${optional}: ${this.wireTypeToTs(property.type, property)}`;
         });
-        const additional = this.modelIndexer(type)?.value;
+        const additional = this.types.indexer(type)?.value;
         if (additional) {
           const object = `{ ${properties.join("; ")} }`;
           return `export type ${name} = ${object} & Record<string, ${this.wireTypeToTs(additional)}>;`;
@@ -512,7 +503,7 @@ export class TypePlanner {
     });
     let expression =
       properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.modelIndexer(model)?.value;
+    const additional = this.types.indexer(model)?.value;
     if (additional) {
       const indexer = `Record<string, ${this.typeToTs(additional)}>`;
       expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
@@ -534,20 +525,20 @@ export class TypePlanner {
   }
 
   private collectProjectionTypes(type: Type, projection: RegisteredProjection): void {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) {
       this.collectProjectionTypes(substituted, projection);
       return;
     }
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) return;
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isFile(type)) return;
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           if (element) this.collectProjectionTypes(element, projection);
           return;
         }
-        if (this.isNamedUserType(type)) {
+        if (this.types.isUserDefined(type)) {
           if (!this.projectionChangesType(type, projection)) return;
           if (projection.types.has(type)) return;
           projection.types.add(type);
@@ -562,11 +553,11 @@ export class TypePlanner {
             this.collectProjectionTypes(property.type, projection);
           }
         }
-        const additional = this.modelIndexer(type)?.value;
+        const additional = this.types.indexer(type)?.value;
         if (additional) this.collectProjectionTypes(additional, projection);
         return;
       case "Union":
-        if (this.isNamedUserType(type)) {
+        if (this.types.isUserDefined(type)) {
           if (!this.projectionChangesType(type, projection)) return;
           if (projection.types.has(type)) return;
           projection.types.add(type);
@@ -593,7 +584,7 @@ export class TypePlanner {
     projection: RegisteredProjection,
     visiting = new Set<Type>(),
   ): boolean {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) {
       return this.projectionChangesType(substituted, projection, visiting);
     }
@@ -604,9 +595,9 @@ export class TypePlanner {
     let changed = false;
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) break;
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isFile(type)) break;
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           changed = element ? this.projectionChangesType(element, projection, visiting) : false;
           break;
         }
@@ -624,7 +615,7 @@ export class TypePlanner {
             break;
           }
         }
-        const additional = this.modelIndexer(type)?.value;
+        const additional = this.types.indexer(type)?.value;
         if (!changed && additional) {
           changed = this.projectionChangesType(additional, projection, visiting);
         }
@@ -652,27 +643,8 @@ export class TypePlanner {
   private getProjectionTypeName(type: Model | Union, projection: RegisteredProjection): string {
     const existing = projection.names.get(type);
     if (existing) return existing;
-    const baseName = typescriptIdentifier(
-      `${this.getGeneratedName(type)}${pascalCase(projection.key)}`,
-      "ProjectedType",
-    );
-    let name = baseName;
-    let suffix = 2;
-    const originalNames = new Set([
-      ...this.generatedNames.values(),
-      ...this.generatedWireNames.values(),
-    ]);
-    while (
-      originalNames.has(name) ||
-      originalNames.has(`${name}Wire`) ||
-      this.projectionNames.has(name) ||
-      this.projectionNames.has(`${name}Wire`)
-    ) {
-      name = `${baseName}${suffix++}`;
-    }
+    const name = this.types.reserveProjectionName(type, projection.key);
     projection.names.set(type, name);
-    this.projectionNames.add(name);
-    this.projectionNames.add(`${name}Wire`);
     return name;
   }
 
@@ -682,16 +654,16 @@ export class TypePlanner {
   }
 
   private projectedTypeToTs(type: Type, projection: RegisteredProjection): string {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) return this.projectedTypeToTs(substituted, projection);
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) return "File";
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isFile(type)) return "File";
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           return element ? `readonly ${this.projectedTypeToTs(element, projection)}[]` : "never";
         }
-        if (this.isNamedUserType(type)) {
+        if (this.types.isUserDefined(type)) {
           if (!this.projectionChangesType(type, projection)) return this.typeToTs(type);
           this.collectProjectionTypes(type, projection);
           return this.typeReference(this.getProjectionTypeName(type, projection));
@@ -701,7 +673,7 @@ export class TypePlanner {
         }
         return this.projectedModelExpressionToTs(type, projection);
       case "Union":
-        if (this.isNamedUserType(type)) {
+        if (this.types.isUserDefined(type)) {
           if (!this.projectionChangesType(type, projection)) return this.typeToTs(type);
           this.collectProjectionTypes(type, projection);
           return this.typeReference(this.getProjectionTypeName(type, projection));
@@ -724,7 +696,7 @@ export class TypePlanner {
   }
 
   private wireTypeToTs(type: Type, encodingTarget?: ModelProperty | Scalar): string {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) return this.wireTypeToTs(substituted, encodingTarget);
     const useSiteScalarEncoding =
       type.kind === "Scalar" &&
@@ -734,18 +706,18 @@ export class TypePlanner {
     if (
       !useSiteScalarEncoding &&
       isNamedType(type) &&
-      this.isNamedUserType(type) &&
-      !(type.kind === "Model" && (this.isFileModel(type) || this.isStreamModel(type)))
+      this.types.isUserDefined(type) &&
+      !(type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type)))
     ) {
       return this.typeReference(this.getGeneratedWireName(type));
     }
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) {
+        if (this.types.isFile(type)) {
           return `{ name: string; mediaType?: string; data: string }`;
         }
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           return element ? `readonly ${this.wireTypeToTs(element)}[]` : "never";
         }
         if (isArrayModelType(this.program, type)) {
@@ -798,17 +770,17 @@ export class TypePlanner {
     projection: RegisteredProjection,
     encodingTarget?: ModelProperty | Scalar,
   ): string {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) {
       return this.projectedWireTypeToTs(substituted, projection, encodingTarget);
     }
     if (type.kind === "Model") {
-      if (this.isFileModel(type)) return `{ name: string; mediaType?: string; data: string }`;
-      if (this.isStreamModel(type)) {
-        const element = this.options.streamElementTypes?.get(type);
+      if (this.types.isFile(type)) return `{ name: string; mediaType?: string; data: string }`;
+      if (this.types.isStream(type)) {
+        const element = this.types.streamElement(type);
         return element ? `readonly ${this.projectedWireTypeToTs(element, projection)}[]` : "never";
       }
-      if (this.isNamedUserType(type)) {
+      if (this.types.isUserDefined(type)) {
         if (!this.projectionChangesType(type, projection)) {
           return this.typeReference(this.getGeneratedWireName(type));
         }
@@ -820,7 +792,7 @@ export class TypePlanner {
       }
       return this.projectedWireModelExpressionToTs(type, projection);
     }
-    if (type.kind === "Union" && this.isNamedUserType(type)) {
+    if (type.kind === "Union" && this.types.isUserDefined(type)) {
       if (!this.projectionChangesType(type, projection)) {
         return this.typeReference(this.getGeneratedWireName(type));
       }
@@ -856,7 +828,7 @@ export class TypePlanner {
     });
     let expression =
       properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.modelIndexer(model)?.value;
+    const additional = this.types.indexer(model)?.value;
     if (additional) {
       const indexer = `Record<string, ${this.wireTypeToTs(additional)}>`;
       expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
@@ -874,7 +846,7 @@ export class TypePlanner {
       });
     let expression =
       properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.modelIndexer(model)?.value;
+    const additional = this.types.indexer(model)?.value;
     if (additional) {
       const indexer = `Record<string, ${this.projectedWireTypeToTs(additional, projection)}>`;
       expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
@@ -891,7 +863,7 @@ export class TypePlanner {
       });
     let expression =
       properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.modelIndexer(model)?.value;
+    const additional = this.types.indexer(model)?.value;
     if (additional) {
       const indexer = `Record<string, ${this.projectedTypeToTs(additional, projection)}>`;
       expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
@@ -906,7 +878,7 @@ export class TypePlanner {
     inlineNamed = false,
     propertyFilter?: (property: ModelProperty) => boolean,
   ): JsonSchema {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) {
       return this.schemaForType(substituted, state, encodingTarget, inlineNamed, propertyFilter);
     }
@@ -916,13 +888,13 @@ export class TypePlanner {
       encodingTarget !== type &&
       getEncode(this.program, encodingTarget) !== undefined;
     const protocolModel =
-      type.kind === "Model" && (this.isFileModel(type) || this.isStreamModel(type));
+      type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
       !inlineNamed &&
       !useSiteScalarEncoding &&
       !protocolModel &&
       isNamedType(type) &&
-      this.isNamedUserType(type)
+      this.types.isUserDefined(type)
     ) {
       this.ensureSchemaDefinition(type, state, propertyFilter);
       const reference = { $ref: `#/$defs/${this.getGeneratedName(type)}` };
@@ -1012,8 +984,8 @@ export class TypePlanner {
     state: DocumentState,
     propertyFilter?: (property: ModelProperty) => boolean,
   ): JsonSchema {
-    if (this.isStreamModel(model)) {
-      const element = this.options.streamElementTypes?.get(model);
+    if (this.types.isStream(model)) {
+      const element = this.types.streamElement(model);
       if (element) {
         return {
           type: "array",
@@ -1027,7 +999,7 @@ export class TypePlanner {
       );
       return false;
     }
-    if (this.isFileModel(model)) {
+    if (this.types.isFile(model)) {
       return {
         type: "object",
         properties: {
@@ -1078,9 +1050,9 @@ export class TypePlanner {
       type: "object",
       properties,
       ...(required.length > 0 ? { required } : {}),
-      additionalProperties: this.modelIndexer(model)?.value
+      additionalProperties: this.types.indexer(model)?.value
         ? this.schemaForType(
-            this.modelIndexer(model)!.value,
+            this.types.indexer(model)!.value,
             state,
             undefined,
             false,
@@ -1097,7 +1069,7 @@ export class TypePlanner {
     inlineNamed = false,
     propertyFilter?: (property: ModelProperty) => boolean,
   ): ValueCodecSpec {
-    const substituted = this.substituteType(type);
+    const substituted = this.types.substitute(type);
     if (substituted !== type) {
       return this.codecForType(substituted, state, encodingTarget, inlineNamed, propertyFilter);
     }
@@ -1107,13 +1079,13 @@ export class TypePlanner {
       encodingTarget !== type &&
       getEncode(this.program, encodingTarget) !== undefined;
     const protocolModel =
-      type.kind === "Model" && (this.isFileModel(type) || this.isStreamModel(type));
+      type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
       !inlineNamed &&
       !useSiteScalarEncoding &&
       !protocolModel &&
       isNamedType(type) &&
-      this.isNamedUserType(type)
+      this.types.isUserDefined(type)
     ) {
       this.ensureCodecDefinition(type, state, propertyFilter);
       return { kind: "ref", name: this.getGeneratedName(type) };
@@ -1121,9 +1093,9 @@ export class TypePlanner {
 
     switch (type.kind) {
       case "Model":
-        if (this.isFileModel(type)) return { kind: "file" };
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
+        if (this.types.isFile(type)) return { kind: "file" };
+        if (this.types.isStream(type)) {
+          const element = this.types.streamElement(type);
           return element
             ? {
                 kind: "array",
@@ -1218,10 +1190,10 @@ export class TypePlanner {
     return {
       kind: "object",
       properties,
-      ...(this.modelIndexer(model)?.value
+      ...(this.types.indexer(model)?.value
         ? {
             additionalProperties: this.codecForType(
-              this.modelIndexer(model)!.value,
+              this.types.indexer(model)!.value,
               state,
               undefined,
               false,
@@ -1382,7 +1354,7 @@ export class TypePlanner {
         const definitions = new Map(
           [...walkPropertiesInherited(resolvedTarget)].map((property) => [property.name, property]),
         );
-        const additional = this.modelIndexer(resolvedTarget)?.value;
+        const additional = this.types.indexer(resolvedTarget)?.value;
         return Object.fromEntries(
           [...value.properties.values()].map((property) => {
             const definition = definitions.get(property.name);
@@ -1424,166 +1396,6 @@ export class TypePlanner {
   private propertyDisplayName(property: ModelProperty): string {
     const modelName = property.model?.name;
     return modelName ? `${modelName}.${property.name}` : property.name;
-  }
-
-  private visitType(type: Type): void {
-    const substituted = this.substituteType(type);
-    if (substituted !== type) {
-      this.visitType(substituted);
-      return;
-    }
-    switch (type.kind) {
-      case "Model":
-        if (this.isStreamModel(type)) {
-          const element = this.options.streamElementTypes?.get(type);
-          if (element) {
-            this.visitType(element);
-            return;
-          }
-          this.report(
-            "unsupported-stream",
-            "Streams cannot be represented by this JSON wire plan.",
-            type,
-          );
-          return;
-        }
-        if (this.isFileModel(type)) return;
-        if (this.isNamedUserType(type)) this.addNamedType(type);
-        if (this.expandedTypes.has(type)) return;
-        this.expandedTypes.add(type);
-        if (isArrayModelType(this.program, type)) {
-          this.visitType(type.indexer.value);
-          return;
-        }
-        if (type.baseModel) this.visitType(type.baseModel);
-        for (const property of type.properties.values()) this.visitType(property.type);
-        const additional = this.modelIndexer(type)?.value;
-        if (additional) this.visitType(additional);
-        return;
-      case "Scalar":
-        if (this.isNamedUserType(type)) this.addNamedType(type);
-        if (type.baseScalar) this.visitType(type.baseScalar);
-        return;
-      case "Enum":
-        if (this.isNamedUserType(type)) this.addNamedType(type);
-        return;
-      case "Union":
-        if (this.isNamedUserType(type)) this.addNamedType(type);
-        if (this.expandedTypes.has(type)) return;
-        this.expandedTypes.add(type);
-        for (const variant of type.variants.values()) this.visitType(variant.type);
-        return;
-      case "UnionVariant":
-      case "ModelProperty":
-        this.visitType(type.type);
-        return;
-      case "Tuple":
-        for (const item of type.values) this.visitType(item);
-        return;
-      default:
-        return;
-    }
-  }
-
-  private addNamedType(type: NamedType): void {
-    if (this.includedTypes.has(type)) return;
-    this.includedTypes.add(type);
-    this.namedTypes.push(type);
-    this.wireTransformCache.clear();
-    this.projectedWireTransformCache.clear();
-    this.namesPrepared = false;
-  }
-
-  private substituteType(type: Type): Type {
-    return type.kind === "Model" ? (this.options.typeSubstitutions?.get(type) ?? type) : type;
-  }
-
-  private assignGeneratedNames(): void {
-    if (this.namesPrepared) return;
-    this.generatedNames.clear();
-    this.generatedWireNames.clear();
-    const used = new Set(this.projectionNames);
-    for (const type of this.namedTypes) {
-      const base = typescriptIdentifier(pascalCase(type.name || type.kind), "Value");
-      let candidate = base;
-      if (used.has(candidate)) {
-        const namespace = type.namespace ? getNamespaceFullName(type.namespace) : "";
-        candidate = typescriptIdentifier(`${pascalCase(namespace)}${base}`, base);
-      }
-      let suffix = 2;
-      const initial = candidate;
-      while (used.has(candidate)) candidate = `${initial}${suffix++}`;
-      used.add(candidate);
-      this.generatedNames.set(type, candidate);
-    }
-    const usedNames = new Set(used);
-    for (const type of this.namedTypes) {
-      const semanticName = this.generatedNames.get(type)!;
-      const base = `${semanticName}Wire`;
-      let candidate = base;
-      let suffix = 2;
-      while (usedNames.has(candidate)) candidate = `${base}${suffix++}`;
-      usedNames.add(candidate);
-      this.generatedWireNames.set(type, candidate);
-    }
-    this.namesPrepared = true;
-  }
-
-  private ensureNamesPrepared(): void {
-    if (!this.namesPrepared) this.assignGeneratedNames();
-  }
-
-  private isNamedUserType(type: NamedType): boolean {
-    if (!type.name || this.isTypeSpecNamespace(type.namespace)) return false;
-    return true;
-  }
-
-  private isTypeSpecNamespace(namespace: NamedType["namespace"]): boolean {
-    let current = namespace;
-    while (current) {
-      if (current.name === "TypeSpec") return true;
-      current = current.namespace;
-    }
-    return false;
-  }
-
-  private isFileModel(model: Model): boolean {
-    let current: Model | undefined = model;
-    while (current) {
-      const namespace = current.namespace ? getNamespaceFullName(current.namespace) : "";
-      if (current.name === "File" && (namespace === "TypeSpec" || namespace === "TypeSpec.Http")) {
-        return true;
-      }
-      current = current.baseModel;
-    }
-    return false;
-  }
-
-  private modelIndexer(model: Model): Model["indexer"] | undefined {
-    let current: Model | undefined = model;
-    while (current) {
-      if (current.indexer) return current.indexer;
-      current = current.baseModel;
-    }
-    return undefined;
-  }
-
-  private isStreamModel(model: Model): boolean {
-    if (this.options.streamElementTypes?.has(model) || this.options.nativeStreamTypes?.has(model)) {
-      return true;
-    }
-    let current: Model | undefined = model;
-    while (current) {
-      const namespace = current.namespace ? getNamespaceFullName(current.namespace) : "";
-      if (
-        current.name === "Stream" &&
-        (namespace.includes("Streams") || namespace === "TypeSpec")
-      ) {
-        return true;
-      }
-      current = current.baseModel;
-    }
-    return false;
   }
 
   private enumMemberValue(member: EnumMember): string | number {
