@@ -3,6 +3,34 @@ import { Temporal } from "@js-temporal/polyfill";
 import { createValueCodec } from "../src/index.js";
 
 describe("protocol-neutral value codec", () => {
+  test("preserves visible names that overlap excluded aliases and excludes prototype keys", async () => {
+    for (const [property, wireName] of [
+      ["visible", "secret"],
+      ["wireSecret", "public"],
+    ]) {
+      const codec = createValueCodec<Record<string, string>>({
+        root: {
+          kind: "object",
+          properties: {
+            [property!]: { wireName: wireName!, codec: { kind: "primitive", type: "string" } },
+          },
+          excludedProperties: { secret: "wireSecret", ["__proto__"]: "hiddenProto" },
+          additionalProperties: { kind: "primitive", type: "string" },
+        },
+      });
+      expect(
+        await codec.encode({ [property!]: "visible", secret: "private", ["__proto__"]: "private" }),
+      ).toEqual({ ok: true, value: { [wireName!]: "visible" } });
+      expect(await codec.decode({ [wireName!]: "visible" })).toEqual({
+        ok: true,
+        value: { [property!]: "visible" },
+      });
+      expect((await codec.decode({ [wireName!]: "visible", ["__proto__"]: "private" })).ok).toBe(
+        false,
+      );
+    }
+  });
+
   test("keeps excluded semantic and wire names out of open objects", async () => {
     const codec = createValueCodec<Record<string, string>>({
       root: {

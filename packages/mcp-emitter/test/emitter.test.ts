@@ -29,13 +29,27 @@ describe("@typespex/mcp emitter", () => {
           ...Record<string>;
         }
         model Envelope { profile: Profile; renamed: Renamed; children: Profile[]; }
+        model InheritedProfile extends Profile {}
         @tool @parameterVisibility(Lifecycle.Read) @returnTypeVisibility(Lifecycle.Read)
         op read(value: Envelope): Envelope;
+        @tool @parameterVisibility(Lifecycle.Read) @returnTypeVisibility(Lifecycle.Read)
+        op onlyExclusions(value: InheritedProfile): InheritedProfile;
       }
     `,
     );
     const { mcpTools } = await import(`${result.outputDir}/visible/mcp-operations.ts`);
     const tool = mcpTools[0];
+    const onlyExclusions = mcpTools[1];
+    expect(
+      await onlyExclusions.success.encode({ name: "Ada", secret: "private", extra: "public" }),
+    ).toEqual({ ok: true, value: { name: "Ada", extra: "public" } });
+    expect(
+      (
+        await onlyExclusions.input.input["~standard"].validate({
+          value: { name: "Ada", secret: "private" },
+        })
+      ).issues,
+    ).toBeDefined();
     const semantic = {
       profile: { name: "Ada", secret: "private", extra: "public" },
       renamed: { name: "Ada", secret: "private", wireSecret: "private", extra: "public" },
