@@ -1,3 +1,7 @@
+import { numericConstraintIssue, type NumericConstraints } from "./numeric-constraints.js";
+
+export type { NumericConstraints } from "./numeric-constraints.js";
+export { compareNumericStrings, numericConstraintIssue } from "./numeric-constraints.js";
 export { bytesToBase64 } from "./base64.js";
 export {
   ScalarEncodings,
@@ -17,7 +21,7 @@ export type CodecResult<T> =
 
 export type DateTimeRepresentation = "string" | "date" | "temporal";
 
-export type ValueCodecSpec =
+export type ValueCodecSpec = (
   | { readonly kind: "identity" }
   | { readonly kind: "primitive"; readonly type: "string" | "number" | "boolean" | "null" }
   | { readonly kind: "literal"; readonly value: string | number | boolean | null }
@@ -50,7 +54,10 @@ export type ValueCodecSpec =
     }
   | { readonly kind: "union"; readonly variants: readonly ValueCodecSpec[] }
   | { readonly kind: "ref"; readonly name: string }
-  | { readonly kind: "file" };
+  | { readonly kind: "file" }
+) & {
+  readonly numericConstraints?: NumericConstraints;
+};
 
 export interface ObjectPropertyCodecSpec {
   readonly wireName: string;
@@ -91,6 +98,21 @@ export function createValueCodec<T>(document: ValueCodecDocument): ValueCodec<T>
 }
 
 async function decodeValue(
+  spec: ValueCodecSpec,
+  input: unknown,
+  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  path: readonly (string | number)[],
+  depth: number,
+): Promise<CodecResult<unknown>> {
+  const issue = numericConstraintIssue(input, spec.numericConstraints);
+  if (issue) return failure(path, issue);
+  const result = await decodeUncheckedValue(spec, input, definitions, path, depth);
+  if (!result.ok) return result;
+  const semanticIssue = numericConstraintIssue(result.value, spec.numericConstraints);
+  return semanticIssue ? failure(path, semanticIssue) : result;
+}
+
+async function decodeUncheckedValue(
   spec: ValueCodecSpec,
   input: unknown,
   definitions: Readonly<Record<string, ValueCodecSpec>>,
@@ -250,6 +272,21 @@ async function decodeValue(
 }
 
 async function encodeValue(
+  spec: ValueCodecSpec,
+  value: unknown,
+  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  path: readonly (string | number)[],
+  depth: number,
+): Promise<CodecResult<unknown>> {
+  const issue = numericConstraintIssue(value, spec.numericConstraints);
+  if (issue) return failure(path, issue);
+  const result = await encodeUncheckedValue(spec, value, definitions, path, depth);
+  if (!result.ok) return result;
+  const wireIssue = numericConstraintIssue(result.value, spec.numericConstraints);
+  return wireIssue ? failure(path, wireIssue) : result;
+}
+
+async function encodeUncheckedValue(
   spec: ValueCodecSpec,
   value: unknown,
   definitions: Readonly<Record<string, ValueCodecSpec>>,

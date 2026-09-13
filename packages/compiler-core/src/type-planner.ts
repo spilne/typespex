@@ -25,6 +25,7 @@ import {
   type TypePlan,
 } from "./plans.js";
 import { ScalarPlanner } from "./scalar-planner.js";
+import { hasNumericBounds } from "./scalar-policy.js";
 import { isNamedType, TypeRegistry, type NamedType } from "./type-registry.js";
 
 export interface TypePlannerOptions {
@@ -653,7 +654,8 @@ export class TypePlanner {
       type.kind === "Scalar" &&
       encodingTarget !== undefined &&
       encodingTarget !== type &&
-      getEncode(this.program, encodingTarget) !== undefined;
+      (getEncode(this.program, encodingTarget) !== undefined ||
+        hasNumericBounds(this.program, encodingTarget));
     if (
       !useSiteScalarEncoding &&
       isNamedType(type) &&

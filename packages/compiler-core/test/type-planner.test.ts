@@ -41,6 +41,27 @@ function operation(container: Namespace, name: string): Operation {
 }
 
 describe("TypePlanner", () => {
+  test("keeps native numeric schemas concise while preserving declared and intrinsic bounds", async () => {
+    const program = await compile(`
+      @minValue(1) @maxValue(10) scalar Count extends float64;
+      model Values { count: Count; native: float64; small: float32; }
+    `);
+    const planner = new TypePlanner(program);
+    const wire = planner.createWirePlan(model(program.getGlobalNamespaceType(), "Values"));
+    const schema = wire.schema as { $defs: Record<string, unknown> };
+    expect(schema.$defs.Count).toEqual({ type: "number", minimum: 1, maximum: 10 });
+    expect(schema.$defs.Values).toEqual({
+      type: "object",
+      properties: {
+        count: { $ref: "#/$defs/Count" },
+        native: { type: "number" },
+        small: { type: "number", minimum: -3.4e38, maximum: 3.4e38 },
+      },
+      required: ["count", "native", "small"],
+      additionalProperties: false,
+    });
+  });
+
   test("bounds work for shared type graphs with and without cycles", async () => {
     for (const cyclic of [false, true]) {
       const depth = 30;
@@ -192,7 +213,11 @@ describe("TypePlanner", () => {
             next: { wireName: "next", codec: { kind: "ref", name: "Node" }, optional: true },
             count: {
               wireName: "count",
-              codec: { kind: "number-string", integer: true },
+              codec: {
+                kind: "number-string",
+                integer: true,
+                numericConstraints: { minimum: "-2147483648", maximum: "2147483647" },
+              },
               optional: true,
               hasDefault: true,
               defaultValue: "7",
