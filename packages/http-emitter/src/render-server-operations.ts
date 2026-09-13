@@ -1,48 +1,12 @@
-import type { EmitterCtx } from "./ctx.js";
 import { addTemporalImport } from "./datetime-mode.js";
-import type { HttpOperation } from "@typespec/http";
-import { emitResultResponseEncoder } from "./server-response-encoder.js";
-import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
-import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
-import {
-  type InputDecoderEntry,
-  type DecoderEmission,
-  emitDecoder,
-  getServerInputDecoderImports,
-} from "./server-input-decoders.js";
-import type { ServerEmission } from "./server-emission.js";
+import { type InputDecoderEntry } from "./server-input-decoders.js";
+import type { ServerPlan } from "./server-plan.js";
 import { tsLiteral, tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
 import type { RoutePattern } from "./uri-template.js";
-import { getXmlCodecDeclarations } from "./xml-wire-codecs.js";
 
-export function emitServerOperations(
-  ctx: EmitterCtx,
-  httpOperations: HttpOperation[],
-  emission: ServerEmission,
-): string {
-  const responseEncoders = new Map<HttpOperation, string>();
-  for (const group of emission.groups) {
-    for (const operation of group.operations) {
-      responseEncoders.set(
-        operation.httpOperation,
-        emitResultResponseEncoder(ctx, operation.httpOperation, operation.resultType),
-      );
-    }
-  }
-  const inputDecoders = new Map<HttpOperation, DecoderEmission>();
-  for (const group of emission.groups) {
-    const inputsName = `${group.exportName}Input`;
-    for (const operation of group.operations) {
-      inputDecoders.set(
-        operation.httpOperation,
-        emitDecoder(ctx, operation.httpOperation, inputsName, operation.propertyName),
-      );
-    }
-  }
-  const xmlCodecDeclarations = getXmlCodecDeclarations(ctx);
-  const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
-  const payloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
-  const inputDecoderText = [...inputDecoders.values()]
+export function renderServerOperations(plan: ServerPlan): string {
+  const inputDecoderText = plan.groups
+    .flatMap((group) => group.operations.map((operation) => operation.inputDecoder))
     .flatMap((decoder) => [
       decoder.decodeExpression,
       ...decoder.inputEntries.flatMap((entry) => entry.lines),
@@ -50,16 +14,20 @@ export function emitServerOperations(
     ])
     .join("\n");
   const usesJsonSerializers =
-    jsonSerializerDeclarations.length > 0 ||
-    xmlCodecDeclarations.some((declaration) => declaration.includes("JsonSerializers.")) ||
+    plan.jsonSerializerDeclarations.length > 0 ||
+    plan.xmlCodecDeclarations.some((declaration) => declaration.includes("JsonSerializers.")) ||
     inputDecoderText.includes("JsonSerializers.") ||
-    [...responseEncoders.values()].some((encoder) => encoder.includes("JsonSerializers."));
+    plan.groups.some((group) =>
+      group.operations.some((operation) => operation.responseEncoder.includes("JsonSerializers.")),
+    );
   const usesXmlCodecs =
-    xmlCodecDeclarations.length > 0 ||
+    plan.xmlCodecDeclarations.length > 0 ||
     inputDecoderText.includes("XmlCodecs.") ||
-    [...responseEncoders.values()].some((encoder) => encoder.includes("XmlCodecs."));
-  const usesStringifyJson = [...responseEncoders.values()].some((encoder) =>
-    encoder.includes("stringifyJson("),
+    plan.groups.some((group) =>
+      group.operations.some((operation) => operation.responseEncoder.includes("XmlCodecs.")),
+    );
+  const usesStringifyJson = plan.groups.some((group) =>
+    group.operations.some((operation) => operation.responseEncoder.includes("stringifyJson(")),
   );
   const lines: string[] = [];
 
@@ -69,8 +37,8 @@ export function emitServerOperations(
 
   // --- Imports (multi-line) ---
   const runtimeTypes = ["Decoder", "ServerOperation"];
-  if (jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
-  if (xmlCodecDeclarations.length > 0) runtimeTypes.push("XmlCodec");
+  if (plan.jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
+  if (plan.xmlCodecDeclarations.length > 0) runtimeTypes.push("XmlCodec");
   lines.push(`import type { ${runtimeTypes.join(", ")} } from "@typespex/http-server";`);
   lines.push("import {");
   lines.push("  Either,");
@@ -80,40 +48,40 @@ export function emitServerOperations(
   if (usesJsonSerializers) lines.push("  JsonSerializers,");
   if (usesXmlCodecs) lines.push("  XmlCodecs,");
   if (usesStringifyJson) lines.push("  stringifyJson,");
-  for (const name of getServerInputDecoderImports(ctx, httpOperations)) {
+  for (const name of plan.inputDecoderImports) {
     lines.push(`  ${name},`);
   }
   lines.push('} from "@typespex/http-server";');
-  lines.push(`import * as ServerHints from "./${ctx.fileNames.serverHints}.js";`);
-  if (emission.modelImports.length > 0) {
+  lines.push(`import * as ServerHints from "./${plan.fileNames.serverHints}.js";`);
+  if (plan.modelImports.length > 0) {
     lines.push(
-      `import type { ${emission.modelImports.join(", ")} } from "./${ctx.fileNames.models}.js";`,
+      `import type { ${plan.modelImports.join(", ")} } from "./${plan.fileNames.models}.js";`,
     );
   }
   lines.push("");
-  if (payloadTypeAliases.length > 0) {
-    lines.push(...payloadTypeAliases);
+  if (plan.payloadTypeAliases.length > 0) {
+    lines.push(...plan.payloadTypeAliases);
     lines.push("");
   }
-  if (jsonSerializerDeclarations.length > 0) {
-    lines.push(...jsonSerializerDeclarations);
+  if (plan.jsonSerializerDeclarations.length > 0) {
+    lines.push(...plan.jsonSerializerDeclarations);
     lines.push("");
   }
-  if (xmlCodecDeclarations.length > 0) {
-    lines.push(...xmlCodecDeclarations);
+  if (plan.xmlCodecDeclarations.length > 0) {
+    lines.push(...plan.xmlCodecDeclarations);
     lines.push("");
   }
 
   // --- Input decoders + Operations per group ---
   const emittedHoisted = new Set<string>();
-  for (const group of emission.groups) {
+  for (const group of plan.groups) {
     const inputsName = `${group.exportName}Input`;
     const outputsName = `${group.exportName}Output`;
     const allEntries: InputDecoderEntry[] = [];
 
     const allHoisted = new Set<string>();
     for (const operation of group.operations) {
-      const decoder = inputDecoders.get(operation.httpOperation)!;
+      const decoder = operation.inputDecoder;
       allEntries.push(...decoder.inputEntries);
       for (const declaration of decoder.hoistedDecoders) {
         if (!emittedHoisted.has(declaration)) allHoisted.add(declaration);
@@ -142,9 +110,7 @@ export function emitServerOperations(
     // Emit grouped output encoders object
     lines.push(`const ${outputsName} = {`);
     for (const operation of group.operations) {
-      lines.push(
-        `  ${tsObjectKey(operation.propertyName)}: ${responseEncoders.get(operation.httpOperation)!},`,
-      );
+      lines.push(`  ${tsObjectKey(operation.propertyName)}: ${operation.responseEncoder},`);
     }
     lines.push("};");
     lines.push("");
@@ -153,10 +119,10 @@ export function emitServerOperations(
     lines.push(`export const ${group.exportName}Operations = {`);
 
     for (const operation of group.operations) {
-      const decoder = inputDecoders.get(operation.httpOperation)!;
+      const decoder = operation.inputDecoder;
 
       lines.push(`  ${tsObjectKey(operation.propertyName)}: {`);
-      emitEndpoint(lines, emission.serviceName, operation);
+      emitEndpoint(lines, plan.serviceName, operation);
 
       // decodeInput — expression-body arrow, async only when body is involved
       const asyncPrefix = decoder.isAsync ? "async " : "";
@@ -260,7 +226,6 @@ function emitResultEncoderLine(
   operation: {
     propertyName: string;
     resultType: string;
-    httpOperation: HttpOperation;
   },
   outputsName: string,
 ): void {

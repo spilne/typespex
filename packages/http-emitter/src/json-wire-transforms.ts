@@ -27,25 +27,9 @@ import { isTypeSpecNamespaceModel } from "./type-reference.js";
 import { numericLiteralExpression } from "./numeric-literals.js";
 import { stringLiteralExpression } from "./string-template-literals.js";
 import { tsIdentifier, tsLiteral, tsObjectKey } from "./typescript-names.js";
+import type { JsonPlanningState, JsonSerializerEntry } from "./planning-state.js";
 
 const JSON_MEDIA_TYPE = "application/json";
-
-interface JsonSerializerEmission {
-  readonly name: string;
-  readonly type: Model | Union;
-  readonly projection?: PayloadProjection;
-  readonly encodingContext: ScalarEncodingContext;
-  declaration?: string;
-  building?: boolean;
-}
-
-interface JsonWireState {
-  readonly changes: Map<Type, Map<string, boolean>>;
-  readonly serializers: Map<Model | Union, Map<string, JsonSerializerEmission>>;
-  readonly usedNames: Set<string>;
-}
-
-const states = new WeakMap<EmitterCtx, JsonWireState>();
 
 /** Handler-facing property names remain stable; this resolves only the JSON wire spelling. */
 export function getJsonPropertyWireName(ctx: EmitterCtx, property: ModelProperty): string {
@@ -246,7 +230,7 @@ export function getJsonWireSerializerDeclarations(ctx: EmitterCtx): readonly str
   return [...state.serializers.values()]
     .flatMap((byProjection) => [...byProjection.values()])
     .filter(
-      (serializer): serializer is JsonSerializerEmission & { declaration: string } =>
+      (serializer): serializer is JsonSerializerEntry & { declaration: string } =>
         serializer.declaration !== undefined,
     )
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -615,7 +599,7 @@ function getOrCreateSerializer(
   type: Model | Union,
   projection?: PayloadProjection,
   encodingContext: ScalarEncodingContext = "value",
-): JsonSerializerEmission {
+): JsonSerializerEntry {
   const state = getState(ctx);
   let byProjection = state.serializers.get(type);
   if (!byProjection) {
@@ -639,7 +623,7 @@ function getOrCreateSerializer(
   }
   state.usedNames.add(name);
 
-  const serializer: JsonSerializerEmission = {
+  const serializer: JsonSerializerEntry = {
     name,
     type,
     projection,
@@ -649,7 +633,7 @@ function getOrCreateSerializer(
   return serializer;
 }
 
-function nextPendingSerializer(state: JsonWireState): JsonSerializerEmission | undefined {
+function nextPendingSerializer(state: JsonPlanningState): JsonSerializerEntry | undefined {
   for (const byProjection of state.serializers.values()) {
     for (const serializer of byProjection.values()) {
       if (!serializer.declaration && !serializer.building) return serializer;
@@ -728,14 +712,6 @@ function nonNullUnionVariants(union: Union): Type[] | undefined {
   return nonNull.length < variants.length ? nonNull : undefined;
 }
 
-function getState(ctx: EmitterCtx): JsonWireState {
-  let state = states.get(ctx);
-  if (state) return state;
-  state = {
-    changes: new Map(),
-    serializers: new Map(),
-    usedNames: new Set(ctx.typeNames.values()),
-  };
-  states.set(ctx, state);
-  return state;
+function getState(ctx: EmitterCtx): JsonPlanningState {
+  return ctx.planningState.json;
 }

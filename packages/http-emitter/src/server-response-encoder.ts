@@ -29,7 +29,7 @@ import { unsupportedXmlTypeReason } from "./xml-metadata.js";
 import { emitXmlCodec } from "./xml-wire-codecs.js";
 
 /** Response encoder expression used in generated result encoder objects. */
-export function emitResultResponseEncoder(
+export function buildResponseEncoder(
   ctx: EmitterCtx,
   op: HttpOperation,
   resultType: string,
