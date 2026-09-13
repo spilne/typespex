@@ -151,12 +151,41 @@ function rewriteSchemaReferences(value: unknown, names: ReadonlyMap<string, stri
   if (Array.isArray(value)) return value.map((item) => rewriteSchemaReferences(item, names));
   if (!isSchemaRecord(value)) return value;
   return Object.fromEntries(
-    Object.entries(value).map(([name, item]) => [
-      name,
-      (name === "$ref" || name === "$dynamicRef") && typeof item === "string"
-        ? rewriteLocalSchemaReference(item, names)
-        : rewriteSchemaReferences(item, names),
-    ]),
+    Object.entries(value).map(([name, item]) => {
+      switch (name) {
+        case "$ref":
+        case "$dynamicRef":
+        case "$recursiveRef":
+          return [name, typeof item === "string" ? rewriteLocalSchemaReference(item, names) : item];
+        case "$defs":
+        case "definitions":
+        case "properties":
+        case "patternProperties":
+        case "dependentSchemas":
+        case "dependencies":
+          return [name, mapRecord(item, (schema) => rewriteSchemaReferences(schema, names))];
+        case "allOf":
+        case "anyOf":
+        case "oneOf":
+        case "prefixItems":
+        case "items":
+        case "additionalItems":
+        case "contains":
+        case "additionalProperties":
+        case "unevaluatedProperties":
+        case "unevaluatedItems":
+        case "propertyNames":
+        case "not":
+        case "if":
+        case "then":
+        case "else":
+        case "contentSchema":
+          return [name, rewriteSchemaReferences(item, names)];
+        default:
+          // Defaults, constants, examples, and extension values are data, not schemas.
+          return [name, item];
+      }
+    }),
   );
 }
 
@@ -178,16 +207,51 @@ function rewriteLocalSchemaReference(
 }
 
 function rewriteCodecReferences(value: unknown, names: ReadonlyMap<string, string>): unknown {
-  if (Array.isArray(value)) return value.map((item) => rewriteCodecReferences(item, names));
   if (!isSchemaRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([name, item]) => [
-      name,
-      value.kind === "ref" && name === "name" && typeof item === "string"
-        ? (names.get(item) ?? item)
-        : rewriteCodecReferences(item, names),
-    ]),
-  );
+  switch (value.kind) {
+    case "ref":
+      return {
+        ...value,
+        name: typeof value.name === "string" ? (names.get(value.name) ?? value.name) : value.name,
+      };
+    case "array":
+      return { ...value, item: rewriteCodecReferences(value.item, names) };
+    case "tuple":
+      return {
+        ...value,
+        items: Array.isArray(value.items)
+          ? value.items.map((item) => rewriteCodecReferences(item, names))
+          : value.items,
+      };
+    case "union":
+      return {
+        ...value,
+        variants: Array.isArray(value.variants)
+          ? value.variants.map((item) => rewriteCodecReferences(item, names))
+          : value.variants,
+      };
+    case "object":
+      return {
+        ...value,
+        properties: mapRecord(value.properties, (property) =>
+          isSchemaRecord(property)
+            ? { ...property, codec: rewriteCodecReferences(property.codec, names) }
+            : property,
+        ),
+        ...(value.additionalProperties === undefined
+          ? {}
+          : {
+              additionalProperties: rewriteCodecReferences(value.additionalProperties, names),
+            }),
+      };
+    default:
+      return value;
+  }
+}
+
+function mapRecord(value: unknown, map: (value: unknown) => unknown): unknown {
+  if (!isSchemaRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, map(item)]));
 }
 
 function decodeJsonPointerToken(token: string): string {

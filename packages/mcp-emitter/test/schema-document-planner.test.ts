@@ -71,6 +71,50 @@ describe("schema document planning", () => {
     });
   });
 
+  test("does not rewrite reference-shaped default and annotation data", () => {
+    const value = { $ref: "#/$defs/Value", kind: "ref", name: "Value" };
+    const schema = (type: string) => ({
+      $ref: "#/$defs/Value",
+      $defs: { Value: { type } },
+      default: value,
+      const: value,
+      enum: [value],
+      examples: [value],
+      "x-metadata": value,
+    });
+    const codec = (type: "string" | "number") => ({
+      root: { kind: "ref", name: "Value" } as const,
+      definitions: {
+        Value: {
+          kind: "object" as const,
+          properties: {
+            payload: {
+              wireName: "payload",
+              codec: { kind: "primitive" as const, type },
+              defaultValue: value,
+              hasDefault: true,
+            },
+          },
+        },
+      },
+    });
+    const document = planSchemaDocument([
+      tool("First", schema("string"), codec("string")),
+      tool("Second", schema("number"), codec("number")),
+    ]);
+    expect(document.schemas.SecondInput).toEqual({
+      $ref: "#/$defs/ValueForSecondInput",
+      default: value,
+      const: value,
+      enum: [value],
+      examples: [value],
+      "x-metadata": value,
+    });
+    expect(document.codecDefinitions?.ValueForSecondInput).toMatchObject({
+      properties: { payload: { defaultValue: value } },
+    });
+  });
+
   test("plans codec references separately from schema names", () => {
     const document = planSchemaDocument([
       tool("First", true, {
