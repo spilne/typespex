@@ -308,7 +308,7 @@ describe("HTTP union conversion", () => {
     }
   });
   test("does not let an ambiguous field hide another field's invalid value", () => {
-    const nullable = (kind: "number" | "string"): HttpWireValuePlan => ({
+    const nullable = (kind: "boolean" | "number" | "string"): HttpWireValuePlan => ({
       kind: "union",
       variants: [
         { kind: "object", properties: { id: { sourceName: "id", value: { kind } } } },
@@ -336,7 +336,7 @@ describe("HTTP union conversion", () => {
         properties: Object.fromEntries(
           names.map((name) => [
             name,
-            { sourceName: name, value: name === "count" ? count : nullable("number") },
+            { sourceName: name, value: name === "count" ? count : nullable("boolean") },
           ]),
         ),
       };
