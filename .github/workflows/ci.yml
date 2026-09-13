@@ -211,6 +211,10 @@ jobs:
 
       - name: Install aligned MCP compiler dependencies
         run: |
+          # Both emitters consume compiler-core and must use its TypeSpec version.
+          bun add --cwd packages/http-emitter --dev --exact \
+            "@typespec/compiler@$TYPESPEC_VERSION" \
+            "@typespec/http@$TYPESPEC_VERSION"
           bun add --cwd packages/compiler-core --dev --exact \
             "@typespec/compiler@$TYPESPEC_VERSION"
           bun add --cwd packages/mcp --dev --exact \
@@ -223,7 +227,7 @@ jobs:
             "@typespec/compiler@$TYPESPEC_VERSION" \
             "@typespec/http@$TYPESPEC_VERSION"
 
-          for directory in packages/compiler-core packages/mcp packages/mcp-emitter example; do
+          for directory in packages/http-emitter packages/compiler-core packages/mcp packages/mcp-emitter example; do
             actual="$(node -p "require('./$directory/node_modules/@typespec/compiler/package.json').version")"
             test "$actual" = "$TYPESPEC_VERSION"
           done
