@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { buildEmitter, cleanupFixtures, compileFixture } from "./compile-fixture.js";
 
 afterAll(cleanupFixtures);
-beforeAll(buildEmitter);
+beforeAll(buildEmitter, 120_000);
 
 const petstoreSpec = `
 import "@typespec/http";

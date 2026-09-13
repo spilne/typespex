@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { buildEmitter, cleanupFixtures, compileFixture } from "./compile-fixture.js";
 
 afterAll(cleanupFixtures);
-beforeAll(buildEmitter);
+beforeAll(buildEmitter, 120_000);
 
 const selfRecursiveUnionSpec = `
 import "@typespec/http";

@@ -10,7 +10,7 @@ import {
 import { getBodyMediaKinds } from "../src/body-media-kinds.js";
 
 afterAll(cleanupFixtures);
-beforeAll(buildEmitter);
+beforeAll(buildEmitter, 120_000);
 
 const xmlSpec = `
 import "@typespec/http";

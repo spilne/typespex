@@ -7,7 +7,7 @@ import {
 } from "./compile-fixture.js";
 
 afterAll(cleanupFixtures);
-beforeAll(buildEmitter);
+beforeAll(buildEmitter, 120_000);
 
 function emittedRoutePattern(source: string, path: string): unknown {
   return emittedRouteProperty(source, path, "routePattern:");

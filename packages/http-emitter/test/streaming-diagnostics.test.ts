@@ -7,7 +7,7 @@ import {
 } from "./compile-fixture.js";
 
 afterAll(cleanupFixtures);
-beforeAll(buildEmitter);
+beforeAll(buildEmitter, 120_000);
 
 describe("typed stream diagnostics", () => {
   test("emits typed JSONL request handlers and item decoders", async () => {

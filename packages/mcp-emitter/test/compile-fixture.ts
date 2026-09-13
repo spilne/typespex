@@ -1,11 +1,11 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { buildFixturePackages } from "../../../scripts/test-support/package-builds.js";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const compilerCli = resolve(repoRoot, "example/node_modules/@typespec/compiler/cmd/tsp.js");
 const tempDirs: string[] = [];
-let built = false;
 
 export interface CompileResult {
   readonly outputDir: string;
@@ -41,7 +41,6 @@ function compile(
   options: string,
   expectFailure: boolean,
 ): CompileResult {
-  ensureBuilt();
   const directory = mkdtempSync(join(repoRoot, `example/tmp-mcp-${name}-`));
   tempDirs.push(directory);
   const outputDir = join(directory, "generated");
@@ -82,29 +81,11 @@ function compile(
   };
 }
 
-function ensureBuilt(): void {
-  if (built) return;
-  for (const packageName of [
-    "@typespex/codec",
-    "@typespex/http-client",
-    "@typespex/compiler-core",
-    "@typespex/mcp",
-    "@typespex/mcp-server",
-    "@typespex/mcp-http-bridge",
-    "@typespex/mcp-transport-http",
-    "@typespex/mcp-transport-stdio",
-    "@typespex/mcp-emitter",
-  ]) {
-    const process = Bun.spawnSync(["bun", "run", "--filter", packageName, "build"], {
-      cwd: repoRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (process.exitCode !== 0) {
-      throw new Error(
-        `Failed to build ${packageName}:\n${process.stdout.toString()}\n${process.stderr.toString()}`,
-      );
-    }
-  }
-  built = true;
+export function buildEmitter(): void {
+  buildFixturePackages(repoRoot, [
+    "mcp-emitter",
+    "mcp-http-bridge",
+    "mcp-transport-http",
+    "mcp-transport-stdio",
+  ]);
 }
