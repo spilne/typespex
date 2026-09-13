@@ -1231,6 +1231,55 @@ describe("body decoder content-type validation", () => {
 });
 
 describe("content-type body dispatch", () => {
+  test("uses the replay request's media type after optional-body probing", async () => {
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    const request = new Request("http://localhost/body", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+        },
+      }),
+    });
+    const result = decodeBody(
+      request,
+      { json: Decoders.string, text: Decoders.string },
+      {
+        optional: true,
+        contentTypes: ["application/json", "text/plain"],
+        maxRequestBodyBytes: false,
+      },
+    );
+    request.headers.set("content-type", "text/plain");
+    bodyController.enqueue(new TextEncoder().encode("plain text"));
+    bodyController.close();
+    expect(await result).toEqual(Either.right("plain text"));
+  });
+
+  test("keeps unexpected decoder failures outside the JSON parsing error boundary", async () => {
+    const failure = new Error("Custom decoder failed");
+    const decoder = Decoders.string.validate({
+      validate() {
+        throw failure;
+      },
+    });
+    for (const decodeRequest of [
+      (request: Request) => decodeBody(request, { json: decoder }),
+      (request: Request) => decodeJsonBody(request, decoder),
+    ]) {
+      await expect(
+        decodeRequest(
+          new Request("http://localhost/body", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: '"value"',
+          }),
+        ),
+      ).rejects.toBe(failure);
+    }
+  });
+
   const jsonPayload = Decoders.object<{ count: number; enabled: boolean }>({
     count: Decoders.strictInteger,
     enabled: Decoders.strictBoolean,

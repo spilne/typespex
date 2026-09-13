@@ -135,7 +135,10 @@ export async function decodeBody<A>(
     return Either.left(ctError);
   }
 
-  const kind = selectBodyMediaKind(decoders, bodyRequest.headers.get("content-type"));
+  const kind =
+    bodyRequest === request
+      ? initialKind
+      : selectBodyMediaKind(decoders, bodyRequest.headers.get("content-type"));
   const decoder = decoders[kind];
   if (!decoder) {
     abandonProbedBody?.();
@@ -149,14 +152,7 @@ export async function decodeBody<A>(
 
   const parser = BODY_PARSERS[kind];
   try {
-    return await decodeParsedBody(
-      bodyRequest,
-      decoder,
-      { ...options, root },
-      parser.parse,
-      parser.failureMessage,
-      true,
-    );
+    return await decodeParsedBody(bodyRequest, decoder, { ...options, root }, parser, true);
   } finally {
     abandonProbedBody?.();
   }
@@ -330,13 +326,7 @@ export async function decodeJsonBody<A>(
   }
 
   try {
-    return await decodeParsedBody(
-      bodyRequest,
-      decoder,
-      { ...options, root },
-      parseJsonBody,
-      "Body must contain valid JSON.",
-    );
+    return await decodeParsedBody(bodyRequest, decoder, { ...options, root }, BODY_PARSERS.json);
   } finally {
     abandonProbedBody?.();
   }
@@ -500,13 +490,7 @@ export function decodeFormBody<A>(
   decoder: Decoder<A>,
   options: BodyDecodeOptions = {},
 ): Promise<EitherT<BodyDecodeError, A>> {
-  return decodeParsedBody(
-    request,
-    decoder,
-    options,
-    parseFormBody,
-    "Body must contain valid form data.",
-  );
+  return decodeParsedBody(request, decoder, options, BODY_PARSERS.form);
 }
 
 /** Parses and validates a MIME multipart body. */
@@ -515,21 +499,14 @@ export function decodeMultipartBody<A>(
   decoder: Decoder<A>,
   options: BodyDecodeOptions = {},
 ): Promise<EitherT<BodyDecodeError, A>> {
-  return decodeParsedBody(
-    request,
-    decoder,
-    options,
-    parseMultipartBody,
-    "Body must contain valid multipart MIME data.",
-  );
+  return decodeParsedBody(request, decoder, options, BODY_PARSERS.multipart);
 }
 
 async function decodeParsedBody<A>(
   request: Request,
   decoder: Decoder<A>,
   options: BodyDecodeOptions,
-  parse: (request: Request, options: BodyDecodeOptions) => Promise<unknown>,
-  parseFailureMessage: string,
+  parser: BodyParser,
   contentTypeChecked = false,
 ): Promise<EitherT<BodyDecodeError, A>> {
   const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
@@ -548,14 +525,15 @@ async function decodeParsedBody<A>(
 
   let value: unknown;
   try {
-    value = await parse(request, options);
+    value = await parser.read(request, options);
+    if (parser.transform) value = parser.transform(value);
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) return Either.left(error);
     return Either.left(
       new ValidationError([
         {
           path: root,
-          message: error instanceof MultipartSyntaxError ? error.message : parseFailureMessage,
+          message: error instanceof MultipartSyntaxError ? error.message : parser.failureMessage,
         },
       ]),
     );
@@ -575,25 +553,12 @@ function requestForBodyDecoding(
   }
 }
 
-async function parseJsonBody(request: Request): Promise<unknown> {
-  return parseJsonText(await request.text());
-}
-
-function parseTextBody(request: Request): Promise<string> {
+function readTextBody(request: Request): Promise<string> {
   return request.text();
 }
 
-async function parseXmlBody(request: Request): Promise<unknown> {
-  return parseXmlDocument(await request.text());
-}
-
-async function parseBinaryBody(request: Request): Promise<Uint8Array> {
-  return new Uint8Array(await request.arrayBuffer());
-}
-
-async function parseFormBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
-  return collectBodyFields(new URLSearchParams(text));
+function readBinaryBody(request: Request): Promise<ArrayBuffer> {
+  return request.arrayBuffer();
 }
 
 async function parseFileBody(request: Request): Promise<File> {
@@ -601,25 +566,40 @@ async function parseFileBody(request: Request): Promise<File> {
   return createFile(new Uint8Array(await request.arrayBuffer()), "", contentType);
 }
 
-const BODY_PARSERS: Readonly<
-  Record<
-    BodyMediaKind,
-    {
-      readonly parse: (request: Request, options: BodyDecodeOptions) => Promise<unknown>;
-      readonly failureMessage: string;
-    }
-  >
-> = {
-  json: { parse: parseJsonBody, failureMessage: "Body must contain valid JSON." },
-  xml: { parse: parseXmlBody, failureMessage: "Body must contain valid XML." },
-  form: { parse: parseFormBody, failureMessage: "Body must contain valid form data." },
+interface BodyParser {
+  readonly read: (request: Request, options: BodyDecodeOptions) => Promise<unknown>;
+  // Transform buffered input inside the shared error boundary, without another promise.
+  readonly transform?: (value: unknown) => unknown;
+  readonly failureMessage: string;
+}
+
+const BODY_PARSERS: Readonly<Record<BodyMediaKind, BodyParser>> = {
+  json: {
+    read: readTextBody,
+    transform: (value) => parseJsonText(value as string),
+    failureMessage: "Body must contain valid JSON.",
+  },
+  xml: {
+    read: readTextBody,
+    transform: (value) => parseXmlDocument(value as string),
+    failureMessage: "Body must contain valid XML.",
+  },
+  form: {
+    read: readTextBody,
+    transform: (value) => collectBodyFields(new URLSearchParams(value as string)),
+    failureMessage: "Body must contain valid form data.",
+  },
   multipart: {
-    parse: parseMultipartBody,
+    read: parseMultipartBody,
     failureMessage: "Body must contain valid multipart MIME data.",
   },
-  file: { parse: parseFileBody, failureMessage: "Body must contain valid file content." },
-  text: { parse: parseTextBody, failureMessage: "Body must contain valid text." },
-  binary: { parse: parseBinaryBody, failureMessage: "Body must contain valid binary data." },
+  file: { read: parseFileBody, failureMessage: "Body must contain valid file content." },
+  text: { read: readTextBody, failureMessage: "Body must contain valid text." },
+  binary: {
+    read: readBinaryBody,
+    transform: (value) => new Uint8Array(value as ArrayBuffer),
+    failureMessage: "Body must contain valid binary data.",
+  },
 };
 
 function bodyMediaKind(contentType: string | null): BodyMediaKind {
