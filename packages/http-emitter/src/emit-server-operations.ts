@@ -10,13 +10,16 @@ import {
   emitDecoder,
   getServerInputDecoderImports,
 } from "./server-input-decoders.js";
-import { buildServerEmission } from "./server-emission.js";
+import type { ServerEmission } from "./server-emission.js";
 import { tsLiteral, tsObjectKey, tsPropertyAccess } from "./typescript-names.js";
 import type { RoutePattern } from "./uri-template.js";
 import { getXmlCodecDeclarations } from "./xml-wire-codecs.js";
 
-export function emitServerOperations(ctx: EmitterCtx, httpOperations: HttpOperation[]): string {
-  const emission = buildServerEmission(ctx, httpOperations);
+export function emitServerOperations(
+  ctx: EmitterCtx,
+  httpOperations: HttpOperation[],
+  emission: ServerEmission,
+): string {
   const responseEncoders = new Map<HttpOperation, string>();
   for (const group of emission.groups) {
     for (const operation of group.operations) {

@@ -5,6 +5,7 @@ import { HttpTestLibrary } from "@typespec/http/testing";
 import {
   TypePlanner,
   isVoidType,
+  renderTypeScriptModule,
   type CompilerIssue,
   type TypeProjection,
 } from "../src/unstable.js";
@@ -49,6 +50,7 @@ describe("TypePlanner", () => {
     expect(plan.version).toBe(1);
     expect(plan.semanticType).toBe("Pet");
     expect(plan.wireType).toBe("Pet");
+    expect(plan.referencedTypes).toEqual(["Pet"]);
     expect(plan.codec).toBeUndefined();
     expect(planner.createTypePlans()).toEqual([
       {
@@ -60,7 +62,30 @@ describe("TypePlanner", () => {
       },
     ]);
     expect(planner.emittedTypeNames).toEqual(["Pet"]);
-    expect(planner.emitModels()).not.toContain("PetWire");
+    const modulePlan = planner.createModelModulePlan();
+    expect(modulePlan.declarations).toHaveLength(1);
+    expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
+  });
+
+  test("records model references structurally in canonical order", async () => {
+    const program = await compile(`
+      model Pet { id: string; }
+      model Zebra { id: string; }
+      model Alpha { id: string; }
+      op inspect(
+        Pet: string,
+        literal: "Pet",
+        nested: { pet: Pet, zebra: Zebra, alpha: Alpha },
+      ): Pet;
+    `);
+    const inspect = operation(program.getGlobalNamespaceType(), "inspect");
+    const planner = new TypePlanner(program);
+
+    const input = planner.createWirePlan(inspect.parameters);
+    const output = planner.createWirePlan(inspect.returnType);
+
+    expect(input.referencedTypes).toEqual(["Alpha", "Pet", "Zebra"]);
+    expect(output.referencedTypes).toEqual(["Pet"]);
   });
 
   test("keeps unsafe numeric literals lossless across semantic and wire types", async () => {
@@ -79,7 +104,7 @@ describe("TypePlanner", () => {
     expect(plan.wireType).toBe("ExactValuesWire");
     expect(JSON.stringify(plan.schema)).toContain('"const":"9007199254740993"');
     expect(JSON.stringify(plan.codec)).toContain('"kind":"bigint-literal-string"');
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain(
       'export type ExactValues = 9007199254740993n | "1.234567890123456789";',
     );
@@ -109,7 +134,7 @@ describe("TypePlanner", () => {
     planner.prepare([declaredPetInput]);
     const declaredName = planner.getGeneratedName(declaredPetInput);
     expect(declaredName).not.toBe("PetInput");
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models.match(/export interface PetInput\b/g)).toHaveLength(1);
     expect(models).toContain(`export interface ${declaredName}`);
   });
@@ -304,7 +329,7 @@ describe("TypePlanner", () => {
       }).semanticType,
     ).toBe("EverythingInput");
 
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain('import type { Temporal } from "@js-temporal/polyfill"');
     expect(models).toContain("export interface Everything");
     expect(models).toContain("export interface EverythingInput");
@@ -425,7 +450,9 @@ describe("TypePlanner", () => {
     planner.createWirePlan(values);
     expect(issues.filter((issue) => issue.code === "unsafe-number")).toHaveLength(2);
     expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(3);
-    expect(planner.emitModels()).toContain("export type UnknownScalar = unknown");
+    expect(renderTypeScriptModule(planner.createModelModulePlan())).toContain(
+      "export type UnknownScalar = unknown",
+    );
   });
 
   test("reports unserializable defaults independently for properties with the same name", async () => {
@@ -447,6 +474,40 @@ describe("TypePlanner", () => {
     );
     expect(issues.map((issue) => issue.message)).toContain(
       "Default value for Second.createdAt cannot be represented on the JSON wire.",
+    );
+  });
+});
+
+describe("renderTypeScriptModule", () => {
+  test("renders every module section with stable spacing", () => {
+    expect(renderTypeScriptModule({ banner: "// Banner", imports: [], declarations: [] })).toBe(
+      "// Banner\n",
+    );
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: ['import type { Pet } from "./pet.js";'],
+        declarations: [],
+      }),
+    ).toBe('// Banner\nimport type { Pet } from "./pet.js";\n\n');
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [],
+        declarations: ["export interface Pet {}"],
+      }),
+    ).toBe("// Banner\nexport interface Pet {}\n");
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [
+          'import type { Pet } from "./pet.js";',
+          'import type { Owner } from "./owner.js";',
+        ],
+        declarations: ["export interface Pet {}", "export interface Owner {}"],
+      }),
+    ).toBe(
+      '// Banner\nimport type { Pet } from "./pet.js";\nimport type { Owner } from "./owner.js";\n\nexport interface Pet {}\n\nexport interface Owner {}\n',
     );
   });
 });

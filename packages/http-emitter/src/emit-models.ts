@@ -63,9 +63,6 @@ function emitModel(ctx: EmitterCtx, model: Model, lines: string[]): void {
   // their declared fields and their explicit indexer carry distinct semantics.
   if (isArrayModelType(ctx.program, model) || isPureRecordModel(model)) return;
 
-  if (ctx.emittedModels.has(model)) return;
-  ctx.emittedModels.add(model);
-
   const props = [...model.properties.values()];
   const baseModel = getBaseModelReference(ctx, model);
   const modelName = getGeneratedTypeName(ctx, model, "Model");
@@ -178,8 +175,6 @@ function shouldEmitBaseModel(ctx: EmitterCtx, model: Model): boolean {
 
 function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {
   if (!enumType.name) return;
-  if (ctx.emittedModels.has(enumType)) return;
-  ctx.emittedModels.add(enumType);
 
   const members = [...enumType.members.values()];
   const memberTypes = members
@@ -193,8 +188,6 @@ function emitEnum(ctx: EmitterCtx, enumType: Enum, lines: string[]): void {
 function emitScalar(ctx: EmitterCtx, scalar: Scalar, lines: string[]): void {
   if (!scalar.name || scalar.namespace?.name === "TypeSpec") return;
   if (!isTemplateDeclaration(scalar) && !hasGeneratedTypeNameCollision(ctx, scalar)) return;
-  if (ctx.emittedModels.has(scalar)) return;
-  ctx.emittedModels.add(scalar);
 
   const scalarName = getGeneratedTypeName(ctx, scalar, "Scalar");
   const typeParams = templateParametersToTs(ctx, scalar);
@@ -205,8 +198,6 @@ function emitScalar(ctx: EmitterCtx, scalar: Scalar, lines: string[]): void {
 
 function emitUnion(ctx: EmitterCtx, union: Union, lines: string[]): void {
   if (!union.name) return;
-  if (ctx.emittedModels.has(union)) return;
-  ctx.emittedModels.add(union);
 
   const typeParams = templateParametersToTs(ctx, union);
   const discriminated = resolveDiscriminatedUnion(ctx.program, union);

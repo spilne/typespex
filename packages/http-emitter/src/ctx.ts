@@ -1,4 +1,4 @@
-import type { Namespace, Program, Type } from "@typespec/compiler";
+import type { Namespace, Program } from "@typespec/compiler";
 import type { HttpService } from "@typespec/http";
 import type { TypespexEmitterOptions } from "./lib.js";
 import { collectEmittedNamedTypes, getNamedTypeKey, type EmittedNamedType } from "./named-types.js";
@@ -53,8 +53,6 @@ export interface EmitterCtx {
   serviceName: string;
   options: TypespexEmitterOptions;
   fileNames: GeneratedFileNames;
-  /** Track which named types have been emitted to avoid duplicates. */
-  emittedModels: Set<Type>;
   /** Named declarations emitted for this service, including external dependencies. */
   namedTypes: readonly EmittedNamedType[];
   /** Generated export names keyed by the semantic identity of a named type. */
@@ -95,7 +93,6 @@ export function createEmitterContext(
     serviceName,
     options,
     fileNames,
-    emittedModels: new Set(),
     namedTypes,
     typeNames: createTypeNames(
       service,

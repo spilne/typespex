@@ -1,9 +1,11 @@
 import {
   EmptyVisibilityProvider,
+  getDoc,
   getNamespaceFullName,
   getParameterVisibilityFilter,
   getReturnTypeVisibilityFilter,
   getService,
+  getSummary,
   isErrorModel,
   isVisible,
   type EmitContext,
@@ -26,6 +28,7 @@ import {
 import type { McpServerMetadata, McpToolMetadata } from "@typespex/mcp";
 import { analyzeBridgeStreams, createHttpWireOperationPlan } from "./http-planner.js";
 import { $lib, type McpEmitterOptions, type McpMode } from "./lib.js";
+import { normalizeIcons } from "./render-metadata.js";
 import { schemasDefinitelyDisjoint } from "./schema-analysis.js";
 import type { BridgePlanningContext, PlannedServer, PlannedTool, ResolvedModes } from "./types.js";
 
@@ -234,12 +237,15 @@ export function planServer(
       ...(successPlan ? { success: successPlan } : {}),
       ...(errorPlan ? { errors: errorPlan } : {}),
     };
+    const title = tool.title ?? getSummary(context.program, tool.operation);
+    const description = getDoc(context.program, tool.operation);
     return {
       plan: operationPlan,
-      metadata: tool,
-      operation: tool.operation,
       name: toolName,
       symbolName: toolSymbol,
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(tool.icons ? { icons: normalizeIcons(tool.icons) } : {}),
       allowsVoid,
       annotations: mergeToolAnnotations(tool.annotations, httpOperation?.verb),
       ...(http ? { http } : {}),
@@ -271,13 +277,15 @@ export function planServer(
   };
   return {
     plan: servicePlan,
-    metadata,
-    name,
+    modelModule: planner.createModelModulePlan(),
     symbolName,
     outputDir,
     fileNames,
-    planner,
     tools: plannedTools,
+    version: metadata.version,
+    ...(metadata.instructions ? { instructions: metadata.instructions } : {}),
+    ...(metadata.icons ? { icons: normalizeIcons(metadata.icons) } : {}),
+    ...(metadata.websiteUrl ? { websiteUrl: String(metadata.websiteUrl) } : {}),
     applicationModule: context.options["application-module"]?.replaceAll(
       "{service}",
       kebabCase(metadata.namespace.name || name),
