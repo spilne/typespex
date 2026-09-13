@@ -45,6 +45,8 @@ export type ValueCodecSpec =
       readonly kind: "object";
       readonly properties: Readonly<Record<string, ObjectPropertyCodecSpec>>;
       readonly additionalProperties?: ValueCodecSpec | true;
+      /** Semantic-to-wire names excluded from this projection, even in open objects. */
+      readonly excludedProperties?: Readonly<Record<string, string>>;
     }
   | { readonly kind: "union"; readonly variants: readonly ValueCodecSpec[] }
   | { readonly kind: "ref"; readonly name: string }
@@ -378,6 +380,7 @@ async function decodeObject(
   if (!isPlainObject(input)) return failure(path, "Expected a plain object.");
   const output: Record<string, unknown> = {};
   const { properties, semanticNames, wireNames, issues } = inspectObjectProperties(spec, path);
+  const excludedWireNames = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
   for (const [propertyName, property] of properties) {
     if (!Object.prototype.hasOwnProperty.call(input, property.wireName)) {
@@ -413,6 +416,13 @@ async function decodeObject(
 
   for (const [wireName, wireValue] of Object.entries(input)) {
     if (wireNames.has(wireName)) continue;
+    if (excludedWireNames.has(wireName)) {
+      issues.push({
+        path: [...path, wireName],
+        message: "Property is excluded from this projection.",
+      });
+      continue;
+    }
     if (spec.additionalProperties === undefined) continue;
     if (semanticNames.has(wireName)) {
       issues.push({
@@ -449,6 +459,7 @@ async function encodeObject(
   if (!isPlainObject(value)) return failure(path, "Expected a plain object.");
   const output: Record<string, unknown> = {};
   const { properties, semanticNames, wireNames, issues } = inspectObjectProperties(spec, path);
+  const excludedProperties = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
   for (const [propertyName, property] of properties) {
     if (
@@ -473,6 +484,7 @@ async function encodeObject(
 
   for (const [propertyName, propertyValue] of Object.entries(value)) {
     if (semanticNames.has(propertyName)) continue;
+    if (excludedProperties.has(propertyName)) continue;
     if (spec.additionalProperties === undefined) continue;
     if (wireNames.has(propertyName)) {
       issues.push({

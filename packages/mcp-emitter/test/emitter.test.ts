@@ -10,6 +10,74 @@ beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
+  test("preserves visibility in open, renamed, and nested models", async () => {
+    const result = compileFixture(
+      "open-visibility",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Visible {
+        model Profile {
+          name: string;
+          @visibility(Lifecycle.Create) secret: string;
+          ...Record<string>;
+        }
+        model Renamed {
+          @encodedName("application/json", "wireName") name: string;
+          @visibility(Lifecycle.Create)
+          @encodedName("application/json", "wireSecret") secret: string;
+          ...Record<string>;
+        }
+        model Envelope { profile: Profile; renamed: Renamed; children: Profile[]; }
+        model InheritedProfile extends Profile {}
+        @tool @parameterVisibility(Lifecycle.Read) @returnTypeVisibility(Lifecycle.Read)
+        op read(value: Envelope): Envelope;
+        @tool @parameterVisibility(Lifecycle.Read) @returnTypeVisibility(Lifecycle.Read)
+        op onlyExclusions(value: InheritedProfile): InheritedProfile;
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/visible/mcp-operations.ts`);
+    const tool = mcpTools[0];
+    const onlyExclusions = mcpTools[1];
+    expect(
+      await onlyExclusions.success.encode({ name: "Ada", secret: "private", extra: "public" }),
+    ).toEqual({ ok: true, value: { name: "Ada", extra: "public" } });
+    expect(
+      (
+        await onlyExclusions.input.input["~standard"].validate({
+          value: { name: "Ada", secret: "private" },
+        })
+      ).issues,
+    ).toBeDefined();
+    const semantic = {
+      profile: { name: "Ada", secret: "private", extra: "public" },
+      renamed: { name: "Ada", secret: "private", wireSecret: "private", extra: "public" },
+      children: [{ name: "Child", secret: "private", extra: "public" }],
+    };
+    const wire = {
+      profile: { name: "Ada", extra: "public" },
+      renamed: { wireName: "Ada", extra: "public" },
+      children: [{ name: "Child", extra: "public" }],
+    };
+    expect(await tool.success.encode(semantic)).toEqual({ ok: true, value: wire });
+    expect(await tool.input.input["~standard"].validate({ value: wire })).toEqual({
+      value: {
+        value: { ...wire, renamed: { name: "Ada", extra: "public" } },
+      },
+    });
+    for (const [target, key] of [
+      ["profile", "secret"],
+      ["renamed", "secret"],
+      ["renamed", "wireSecret"],
+    ] as const) {
+      const invalid = { ...wire, [target]: { ...wire[target], [key]: "private" } };
+      expect(
+        (await tool.input.input["~standard"].validate({ value: invalid })).issues,
+      ).toBeDefined();
+    }
+  });
+
   test("defaults to library-only output and emits only explicit tools", () => {
     const result = compileFixture(
       "native",
