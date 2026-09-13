@@ -220,6 +220,7 @@ export class JsonPlanner {
   }
 
   private modelSchema(model: Model, state: DocumentState): JsonSchema {
+    const { propertyFilter } = state;
     if (this.types.isStream(model)) {
       const element = this.types.streamElement(model);
       if (element) {
@@ -260,7 +261,7 @@ export class JsonPlanner {
     >;
     const required: string[] = [];
     for (const property of walkPropertiesInherited(model)) {
-      if (state.propertyFilter && !state.propertyFilter(property)) continue;
+      if (propertyFilter && !propertyFilter(property)) continue;
       const wireName = resolveEncodedName(this.program, property, "application/json");
       let propertySchema = this.schemaForType(property.type, state, property, false);
       const defaultValue = this.propertyDefaultValue(property);
@@ -389,12 +390,13 @@ export class JsonPlanner {
   }
 
   private objectCodec(model: Model, state: DocumentState): ValueCodecSpec {
+    const { propertyFilter } = state;
     const properties: Record<string, ObjectPropertyCodecSpec> = Object.create(null) as Record<
       string,
       ObjectPropertyCodecSpec
     >;
     for (const property of walkPropertiesInherited(model)) {
-      if (state.propertyFilter && !state.propertyFilter(property)) continue;
+      if (propertyFilter && !propertyFilter(property)) continue;
       const defaultValue = this.propertyDefaultValue(property);
       properties[property.name] = {
         wireName: resolveEncodedName(this.program, property, "application/json"),
