@@ -14,6 +14,54 @@ const rich: ValueCodecSpec = {
 };
 
 describe("union conversion", () => {
+  test("compares nested array and tuple results independently of property order", async () => {
+    if (rich.kind !== "object") throw new Error("Expected object fixture");
+    const reordered: ValueCodecSpec = {
+      ...rich,
+      properties: Object.fromEntries(Object.entries(rich.properties).reverse()),
+    };
+    const codec = createValueCodec({
+      root: {
+        kind: "union",
+        variants: [
+          { kind: "array", item: rich },
+          { kind: "tuple", items: [reordered] },
+        ],
+      },
+    });
+    const wire = [{ value: "v", data: "AQI=" }];
+    const semantic = [{ value: "v", data: new Uint8Array([1, 2]) }];
+    expect(await codec.decode(wire)).toEqual({ ok: true, value: semantic });
+    expect(await codec.encode(semantic)).toEqual({ ok: true, value: wire });
+    expect(await codec.decode([...wire, ...wire])).toEqual({
+      ok: true,
+      value: [...semantic, ...semantic],
+    });
+  });
+
+  test("rejects ambiguous property renames and defaults on otherwise matching inputs", async () => {
+    for (const defaulted of [false, true]) {
+      const codec = createValueCodec({
+        root: {
+          kind: "union",
+          variants: ["first", "second"].map((name) => ({
+            kind: "object",
+            properties: {
+              [name]: {
+                wireName: "value",
+                codec: { kind: "primitive", type: "string" },
+                ...(defaulted ? { hasDefault: true, defaultValue: "default" } : {}),
+              },
+            },
+          })),
+        },
+      });
+      const result = await codec.decode(defaulted ? {} : { value: "v" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.issues[0]?.message).toContain("incompatible conversions");
+    }
+  });
+
   test("preserves richer objects through references in either branch order", async () => {
     for (const names of [
       ["Plain", "Rich"],
