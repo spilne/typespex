@@ -6,6 +6,10 @@ The package is published so independently installed emitters can share one compi
 
 Import compiler-author APIs from `@typespex/compiler-core/unstable`.
 
+That entry point lists its exports explicitly; implementation planners and registries are private.
+Each JSON document owns its projection filter and recursive schema/codec state. Transform caches
+belong to JSON planning and are invalidated when type preparation discovers more declarations.
+
 ## Entry points
 
 - `@typespex/compiler-core` exposes the compiler plan-format version.

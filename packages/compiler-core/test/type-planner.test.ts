@@ -127,6 +127,52 @@ describe("TypePlanner", () => {
     expect(planner.createWirePlan(node)).toEqual(full);
   });
 
+  test("keeps nested recursive projections and transform caches isolated", async () => {
+    const program = await compile(`
+      model Node { next?: Node; @encode(string) count: int32 = 7; }
+      model Outer { node: Node; nodes: Node[]; pair: [Node, Node]; choice: Node | string; extra: Record<Node>; }
+      model Other { id: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const outer = model(global, "Outer");
+    const planner = new TypePlanner(program);
+    const input: TypeProjection = {
+      key: "input",
+      propertyFilter: (property) => property.name !== "count",
+    };
+    const leaf: TypeProjection = {
+      key: "leaf",
+      propertyFilter: (property) => property.name !== "next",
+    };
+
+    const projected = planner.createWirePlan(outer, { projection: input });
+    expect(projected.semanticType).toBe("OuterInput");
+    expect(projected.wireType).toBe("OuterInput");
+    expect(projected.codec).toBeUndefined();
+    expect(JSON.stringify(projected.schema)).not.toContain('"count"');
+    expect(projected.schema).toMatchObject({
+      $defs: { Node: { properties: { next: { $ref: "#/$defs/Node" } } } },
+    });
+
+    const full = planner.createWirePlan(outer);
+    expect(full.wireType).toBe("OuterWire");
+    expect(full.codec).toBeDefined();
+    expect(full.schema).toMatchObject({
+      $defs: { Node: { properties: { count: { type: "string", default: "7" } } } },
+    });
+    const leaves = planner.createWirePlan(outer, { projection: leaf });
+    expect(leaves.codec).toBeDefined();
+    expect(JSON.stringify(leaves.schema)).not.toContain('"next"');
+    expect(leaves.schema).toMatchObject({
+      $defs: { Node: { properties: { count: { type: "string", default: "7" } } } },
+    });
+
+    planner.prepare([model(global, "Other")]);
+    expect(planner.createWirePlan(outer, { projection: leaf })).toEqual(leaves);
+    expect(planner.createWirePlan(outer, { projection: input })).toEqual(projected);
+    expect(planner.createWirePlan(outer)).toEqual(full);
+  });
+
   test("records model references structurally in canonical order", async () => {
     const program = await compile(`
       model Pet { id: string; }
