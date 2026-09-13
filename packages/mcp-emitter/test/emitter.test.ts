@@ -10,6 +10,51 @@ beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
+  test("normalizes TypeSpec numeric literal spellings before checking bound precision", async () => {
+    const result = compileFixture(
+      "numeric-literal-spellings",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Literals {
+        @encode(string) @minValue(0b1) @maxValue(0xFF) scalar Byte extends int32;
+        @minValue(007) @maxValue(010) scalar Count extends int32;
+        @minValue(00.5) scalar Fraction extends float64;
+        @tool op check(value: Byte, count: Count, fraction: Fraction): Byte;
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/literals/mcp-operations.ts`);
+    const tool = mcpTools[0];
+    const valid = { value: "255", count: 7, fraction: 0.5 };
+    expect(await tool.input.input["~standard"].validate(valid)).toEqual({
+      value: { ...valid, value: 255 },
+    });
+    for (const invalid of [
+      { ...valid, value: "256" },
+      { ...valid, count: 6 },
+      { ...valid, fraction: 0.4 },
+    ])
+      expect((await tool.input.input["~standard"].validate(invalid)).issues).toBeDefined();
+    expect(await tool.success.encode(255)).toEqual({ ok: true, value: "255" });
+
+    const collision = compileFixtureWithDiagnostics(
+      "hex-literal-collision",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Collision {
+        @encode(string) @minValue(9007199254740992) @maxValue(0x20000000000001)
+        scalar Large extends int64;
+        @tool op check(value: Large): Large;
+      }
+    `,
+    );
+    expect(`${collision.stdout}${collision.stderr}`).toContain(
+      "precision was lost before TypeSpex planning",
+    );
+  });
+
   test("intersects zero-adjacent bounds on encoded and native scalars", async () => {
     const result = compileFixture(
       "zero-adjacent-bounds",

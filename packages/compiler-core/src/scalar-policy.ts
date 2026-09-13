@@ -77,7 +77,10 @@ export function getNumericBoundIssue(
         if (
           resolved &&
           compareNumericStrings(resolved.toString(), bound.toString()) === 0 &&
-          compareNumericStrings(resolved.toString(), argument.node.valueAsString) !== 0
+          compareNumericStrings(
+            resolved.toString(),
+            Numeric(argument.node.valueAsString).toString(),
+          ) !== 0
         ) {
           return `TypeSpec resolved the numeric bound ${argument.node.valueAsString} as ${resolved.toString()}. Its precision was lost before TypeSpex planning; this bound cannot be emitted safely.`;
         }
