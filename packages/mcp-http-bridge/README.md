@@ -6,6 +6,10 @@ It owns upstream URL resolution, authentication alternatives, request serializat
 classification, redirects, limits, and JSONL collection. It contains no MCP transport or framework
 adapter code.
 
+HTTP union conversions preserve the matching variant's fields and reject incompatible alternative
+conversions. Discriminated variants avoid ambiguous coercions. Additional properties cannot
+overwrite declared fields when HTTP and MCP property names differ.
+
 ## Entry points
 
 - `@typespex/mcp-http-bridge` exports bridge applications, providers, operation descriptors, and

@@ -6,6 +6,11 @@ It owns MCP service discovery, tool diagnostics, JSON Schema generation, applica
 and optional launcher emission. Library-only generation is the default; launchers are selected
 explicitly.
 
+Union inputs and outputs retain fields from the matching variant, including encoded properties.
+If multiple variants would produce different results, conversion reports an ambiguity; add a
+discriminator to distinguish those alternatives. Property encodings and numeric bounds also apply
+through nullable unions, such as `@encode(string) value: int32 | null`.
+
 ## Entry points
 
 - `@typespex/mcp-emitter` exports the TypeSpec emitter and its options.

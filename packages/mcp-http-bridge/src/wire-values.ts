@@ -1,21 +1,124 @@
-import { ScalarEncodings } from "@typespex/codec";
+import { ScalarEncodings, jsonValuesEqual } from "@typespex/codec";
 import type { HttpWireValuePlan } from "@typespex/http-client";
 import { McpToolError } from "@typespex/mcp-server";
 import { asFileRecord, decodeBase64, encodeBase64 } from "./binary.js";
 import { isRecord } from "./value-paths.js";
 
+type Definitions = ReadonlyMap<string, HttpWireValuePlan>;
+type WireCache = WeakMap<object, Map<HttpWireValuePlan, unknown>>;
+interface WireContext {
+  readonly definitions: Definitions;
+  readonly strictObjects?: boolean;
+  readonly depth: number;
+  readonly completed: Map<Definitions, readonly [WireCache, WireCache]>;
+  readonly active: Map<
+    Definitions,
+    readonly [WeakMap<object, Set<HttpWireValuePlan>>, WeakMap<object, Set<HttpWireValuePlan>>]
+  >;
+}
+type Convert = (value: unknown, plan: HttpWireValuePlan, context: WireContext) => unknown;
+
+function rootContext(definitions: Definitions): WireContext {
+  return { definitions, depth: 0, completed: new Map(), active: new Map() };
+}
+
 export function decodeHttpWireValue(
   value: unknown,
   plan: HttpWireValuePlan,
-  definitions: ReadonlyMap<string, HttpWireValuePlan> = new Map(),
+  definitions: Definitions = new Map(),
 ): unknown {
+  return decodeValue(value, plan, rootContext(definitions));
+}
+
+export function encodeHttpWireValue(
+  value: unknown,
+  plan: HttpWireValuePlan,
+  definitions: Definitions = new Map(),
+): unknown {
+  return encodeValue(value, plan, rootContext(definitions));
+}
+
+function decodeValue(value: unknown, plan: HttpWireValuePlan, context: WireContext): unknown {
+  return cachedConversion(value, plan, context, decodeUncheckedValue);
+}
+
+function encodeValue(value: unknown, plan: HttpWireValuePlan, context: WireContext): unknown {
+  return cachedConversion(value, plan, context, encodeUncheckedValue);
+}
+
+function cachedConversion(
+  value: unknown,
+  plan: HttpWireValuePlan,
+  context: WireContext,
+  convert: Convert,
+): unknown {
+  if (context.depth > 256) throw new McpToolError("HTTP wire conversion nesting limit exceeded.");
+  const next = { ...context, depth: context.depth + 1 };
+  if (value === null || typeof value !== "object") return convert(value, plan, next);
+  let caches = context.completed.get(context.definitions);
+  if (!caches)
+    context.completed.set(context.definitions, (caches = [new WeakMap(), new WeakMap()]));
+  let active = context.active.get(context.definitions);
+  if (!active) context.active.set(context.definitions, (active = [new WeakMap(), new WeakMap()]));
+  const mode = context.strictObjects ? 1 : 0;
+  const previous = caches[mode].get(value);
+  if (previous?.has(plan)) return previous.get(plan);
+  const pending = active[mode].get(value) ?? new Set<HttpWireValuePlan>();
+  if (pending.has(plan)) throw new McpToolError("Cyclic values cannot be converted as HTTP JSON.");
+  pending.add(plan);
+  active[mode].set(value, pending);
+  try {
+    const result = convert(value, plan, next);
+    const completed = caches[mode].get(value) ?? new Map<HttpWireValuePlan, unknown>();
+    completed.set(plan, result);
+    caches[mode].set(value, completed);
+    return result;
+  } finally {
+    pending.delete(plan);
+  }
+}
+
+function convertUnion(
+  value: unknown,
+  plan: Extract<HttpWireValuePlan, { kind: "union" }>,
+  context: WireContext,
+  convert: Convert,
+): unknown {
+  for (const strictObjects of context.strictObjects ? [true] : [true, false]) {
+    let match: { value: unknown } | undefined;
+    for (const variant of plan.variants) {
+      let candidate: unknown;
+      try {
+        candidate = convert(value, variant, { ...context, strictObjects });
+      } catch (error) {
+        if (!(error instanceof McpToolError)) throw error;
+        continue;
+      }
+      if (match && !jsonValuesEqual(match.value, candidate)) {
+        throw new McpToolError(
+          "Value matches multiple HTTP union branches with incompatible conversions.",
+        );
+      }
+      match = { value: candidate };
+    }
+    if (match) return match.value;
+  }
+  throw new McpToolError("Value is outside the declared HTTP union.");
+}
+
+function decodeUncheckedValue(
+  value: unknown,
+  plan: HttpWireValuePlan,
+  context: WireContext,
+): unknown {
+  const definitions = context.definitions;
   switch (plan.kind) {
     case "identity":
       return value;
     case "definition": {
       const nested = new Map(definitions);
       nested.set(plan.name, plan.value);
-      return decodeHttpWireValue(value, plan.value, nested);
+      return decodeValue(value, plan.value, { ...context, definitions: nested });
     }
     case "ref": {
       const referenced = definitions.get(plan.name);
@@ -24,7 +127,7 @@ export function decodeHttpWireValue(
           `Unknown HTTP wire transform reference ${JSON.stringify(plan.name)}.`,
         );
       }
-      return decodeHttpWireValue(value, referenced, definitions);
+      return decodeValue(value, referenced, context);
     }
     case "string":
       if (typeof value === "string") return value;
@@ -54,19 +157,19 @@ export function decodeHttpWireValue(
     case "scalar-encoding":
       return decodeHttpScalarEncoding(value, plan.encoding);
     case "literal": {
-      const converted = decodeHttpWireValue(value, literalValuePlan(plan.value), definitions);
+      const converted = decodeValue(value, literalValuePlan(plan.value), context);
       if (Object.is(converted, plan.value)) return converted;
       throw new McpToolError("Upstream returned an unexpected HTTP literal value.");
     }
     case "array": {
       const values = Array.isArray(value) ? value : [value];
-      return values.map((item) => decodeHttpWireValue(item, plan.item, definitions));
+      return values.map((item) => decodeValue(item, plan.item, context));
     }
     case "tuple":
       if (!Array.isArray(value) || value.length !== plan.items.length) {
         throw new McpToolError(`Upstream returned an HTTP tuple with the wrong length.`);
       }
-      return plan.items.map((item, index) => decodeHttpWireValue(value[index], item, definitions));
+      return plan.items.map((item, index) => decodeValue(value[index], item, context));
     case "object": {
       if (!isRecord(value)) throw new McpToolError("Upstream returned a non-object HTTP value.");
       const output: Record<string, unknown> = Object.create(null);
@@ -81,31 +184,28 @@ export function decodeHttpWireValue(
           }
           continue;
         }
-        output[targetName] = decodeHttpWireValue(
-          value[property.sourceName],
-          property.value,
-          definitions,
-        );
+        output[targetName] = decodeValue(value[property.sourceName], property.value, context);
+      }
+      if (
+        context.strictObjects &&
+        !plan.additional &&
+        Object.keys(value).some((name) => !known.has(name))
+      ) {
+        throw new McpToolError("Property is not declared by this HTTP union branch.");
       }
       if (plan.additional) {
         for (const [name, item] of Object.entries(value)) {
           if (!known.has(name)) {
-            output[name] = decodeHttpWireValue(item, plan.additional, definitions);
+            if (Object.hasOwn(output, name))
+              throw new McpToolError("Additional HTTP property collides with a declared property.");
+            output[name] = decodeValue(item, plan.additional, context);
           }
         }
       }
       return output;
     }
-    case "union": {
-      for (const variant of plan.variants) {
-        try {
-          return decodeHttpWireValue(value, variant, definitions);
-        } catch (error) {
-          if (!(error instanceof McpToolError)) throw error;
-        }
-      }
-      throw new McpToolError("Upstream returned a value outside the declared HTTP union.");
-    }
+    case "union":
+      return convertUnion(value, plan, context, decodeValue);
     case "file-json": {
       if (!isRecord(value)) throw new McpToolError("Upstream returned a non-object JSON file.");
       const contents = value[plan.contentsSource];
@@ -129,18 +229,19 @@ export function decodeHttpWireValue(
   }
 }
 
-export function encodeHttpWireValue(
+function encodeUncheckedValue(
   value: unknown,
   plan: HttpWireValuePlan,
-  definitions: ReadonlyMap<string, HttpWireValuePlan> = new Map(),
+  context: WireContext,
 ): unknown {
+  const definitions = context.definitions;
   switch (plan.kind) {
     case "identity":
       return value;
     case "definition": {
       const nested = new Map(definitions);
       nested.set(plan.name, plan.value);
-      return encodeHttpWireValue(value, plan.value, nested);
+      return encodeValue(value, plan.value, { ...context, definitions: nested });
     }
     case "ref": {
       const referenced = definitions.get(plan.name);
@@ -149,7 +250,7 @@ export function encodeHttpWireValue(
           `Unknown HTTP wire transform reference ${JSON.stringify(plan.name)}.`,
         );
       }
-      return encodeHttpWireValue(value, referenced, definitions);
+      return encodeValue(value, referenced, context);
     }
     case "string":
       if (typeof value === "string") return value;
@@ -176,12 +277,12 @@ export function encodeHttpWireValue(
       throw new McpToolError("Expected the declared HTTP request literal.");
     case "array":
       if (!Array.isArray(value)) throw new McpToolError("Expected an HTTP request array.");
-      return value.map((item) => encodeHttpWireValue(item, plan.item, definitions));
+      return value.map((item) => encodeValue(item, plan.item, context));
     case "tuple":
       if (!Array.isArray(value) || value.length !== plan.items.length) {
         throw new McpToolError("Expected an HTTP request tuple with the declared length.");
       }
-      return plan.items.map((item, index) => encodeHttpWireValue(value[index], item, definitions));
+      return plan.items.map((item, index) => encodeValue(value[index], item, context));
     case "object": {
       if (!isRecord(value)) throw new McpToolError("Expected an HTTP request object.");
       const output: Record<string, unknown> = Object.create(null);
@@ -194,30 +295,28 @@ export function encodeHttpWireValue(
           }
           continue;
         }
-        output[property.sourceName] = encodeHttpWireValue(
-          value[targetName],
-          property.value,
-          definitions,
-        );
+        output[property.sourceName] = encodeValue(value[targetName], property.value, context);
+      }
+      if (
+        context.strictObjects &&
+        !plan.additional &&
+        Object.keys(value).some((name) => !known.has(name))
+      ) {
+        throw new McpToolError("Property is not declared by this HTTP union branch.");
       }
       if (plan.additional) {
         for (const [name, item] of Object.entries(value)) {
           if (!known.has(name)) {
-            output[name] = encodeHttpWireValue(item, plan.additional, definitions);
+            if (Object.hasOwn(output, name))
+              throw new McpToolError("Additional HTTP property collides with a declared property.");
+            output[name] = encodeValue(item, plan.additional, context);
           }
         }
       }
       return output;
     }
     case "union":
-      for (const variant of plan.variants) {
-        try {
-          return encodeHttpWireValue(value, variant, definitions);
-        } catch (error) {
-          if (!(error instanceof McpToolError)) throw error;
-        }
-      }
-      throw new McpToolError("HTTP request value is outside the declared union.");
+      return convertUnion(value, plan, context, encodeValue);
     case "file-json": {
       const file = asFileRecord(value);
       const output: Record<string, unknown> = Object.create(null);

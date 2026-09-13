@@ -58,6 +58,137 @@ describe("@typespex/mcp emitter", () => {
     );
   });
 
+  test("preserves generated union values and selects schema-constrained branches", async () => {
+    const result = compileFixture(
+      "union-values",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Choices {
+        model Plain { value: string; }
+        model WithBytes { value: string; data: bytes; }
+        model WithText { value: string; data: string; }
+        @pattern("^a") scalar AText extends string;
+        @pattern("^b") scalar BText extends string;
+        model A { @encodedName("application/json", "value") a: AText; }
+        model B { @encodedName("application/json", "value") b: BText; }
+        @tool op forward(input: Plain | WithBytes): Plain | WithBytes;
+        @tool op reverse(input: WithBytes | Plain): WithBytes | Plain;
+        @tool op identity(input: Plain | WithText): Plain | WithText;
+        @tool op constrained(input: A | B): A | B;
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/choices/mcp-operations.ts`);
+    const semantic = { value: "v", data: new Uint8Array([1, 2]) };
+    const wire = { value: "v", data: "AQI=" };
+    for (const name of ["forward", "reverse"]) {
+      const tool = mcpTools.find((tool: { name: string }) => tool.name === name);
+      expect(await tool.input.input["~standard"].validate({ input: wire })).toEqual({
+        value: { input: semantic },
+      });
+      expect(await tool.success.encode(semantic)).toEqual({ ok: true, value: wire });
+      expect((await tool.success.encode({ ...semantic, extra: true })).ok).toBe(false);
+    }
+    const identity = mcpTools.find((tool: { name: string }) => tool.name === "identity");
+    expect(await identity.success.encode(wire)).toEqual({ ok: true, value: wire });
+    const constrained = mcpTools.find((tool: { name: string }) => tool.name === "constrained");
+    expect(
+      await constrained.input.input["~standard"].validate({ input: { value: "bee" } }),
+    ).toEqual({ value: { input: { b: "bee" } } });
+    expect(await constrained.success.encode({ b: "bee" })).toEqual({
+      ok: true,
+      value: { value: "bee" },
+    });
+    expect((await constrained.success.encode({ a: "bee" })).ok).toBe(false);
+  });
+
+  test("propagates property bounds and encodings through nullable union branches", async () => {
+    const result = compileFixture(
+      "nullable-numerics",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace Nullable {
+        @encode(string) scalar Count extends int32;
+        union MaybeCount { Count, null }
+        @tool op narrow(@minValue(1) @maxValue(3) value: MaybeCount): void;
+        @tool op convert(@encode(string) value: int32 | null): { @encode(string) value: int32 | null; };
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/nullable/mcp-operations.ts`);
+    const [narrow, convert] = mcpTools;
+    for (const value of [null, "1", "3"]) {
+      expect(await narrow.input.input["~standard"].validate({ value })).toEqual({
+        value: { value: value === null ? null : Number(value) },
+      });
+    }
+    for (const value of ["0", "4"])
+      expect((await narrow.input.input["~standard"].validate({ value })).issues).toBeDefined();
+    expect(await convert.input.input["~standard"].validate({ value: "2" })).toEqual({
+      value: { value: 2 },
+    });
+    expect(await convert.success.encode({ value: 2 })).toEqual({ ok: true, value: { value: "2" } });
+    expect(await convert.success.encode({ value: null })).toEqual({
+      ok: true,
+      value: { value: null },
+    });
+    result.typecheck(`
+      import type { ConvertInput, ConvertInputWire } from "./generated/@typespex/mcp-emitter/nullable/mcp-operations.js";
+      const input: ConvertInput = { value: 2 };
+      const wire: ConvertInputWire = { value: "2" };
+      const nullable: ConvertInputWire = { value: null };
+      void [input, wire, nullable];
+    `);
+  });
+
+  test("round-trips generated HTTP bridge unions without dropping richer fields", async () => {
+    const result = compileFixture(
+      "bridge-union-values",
+      `
+      import "@typespec/http";
+      import "@typespex/mcp";
+      using TypeSpec.Http;
+      using TypeSpex.Mcp;
+      @service @server("https://api.example.test")
+      @mcpServer(#{ version: "1.0.0" }) namespace BridgeChoices {
+        model Plain { value: string; }
+        model WithBytes { value: string; @encode("base64url") data: bytes; }
+        model Payload { choice: Plain | WithBytes; @encode(string) count: int32 | null; }
+        @tool @post @route("/echo") op echo(@body input: Payload): Payload;
+      }
+    `,
+      `    mode: [http-bridge]\n    launchers: []\n`,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/bridge-choices/mcp-operations.ts`);
+    const { mcpHttpBridgeOperations } = await import(
+      `${result.outputDir}/bridge-choices/mcp-http-bridge.ts`
+    );
+    const { executeHttpBridgeTool } = await import("../../mcp-http-bridge/src/index.js");
+    const canonical = { choice: { value: "v", data: "AQI=" }, count: 2 };
+    const http = { choice: { value: "v", data: "AQI" }, count: "2" };
+    const response = await executeHttpBridgeTool(
+      mcpHttpBridgeOperations.echo,
+      { input: canonical },
+      {
+        requestId: 1,
+        signal: new AbortController().signal,
+      },
+      {
+        fetch: (async (input, init) => {
+          expect(await new Request(input, init).json()).toEqual(http);
+          return Response.json(http);
+        }) as typeof fetch,
+      },
+    );
+    expect(response).toEqual({ kind: "success", status: 200, value: canonical });
+    expect(await mcpTools[0].success.validateWire(canonical)).toEqual({
+      ok: true,
+      value: canonical,
+    });
+  });
+
   test("intersects zero-adjacent bounds on encoded and native scalars", async () => {
     const result = compileFixture(
       "zero-adjacent-bounds",

@@ -9,6 +9,17 @@ wire and semantic values during conversion, including string encodings that JSON
 keywords cannot validate. Comparisons preserve integer and decimal precision without expanding
 large exponents.
 
+Union conversion prefers branches that preserve the supplied object fields. If matching branches
+produce different semantic or wire values, conversion reports an ambiguity instead of dropping
+fields according to declaration order. Use a discriminator when alternatives have incompatible
+interpretations. Equivalent alternatives remain valid, including bytes, dates, and files.
+
+A union branch can carry a `wireSchema` fragment. Pass `validateWire` in `createValueCodec` options
+to resolve and validate those fragments against their containing JSON Schema document; the MCP
+runtime supplies this callback automatically. Standalone codecs without a callback only check
+structure and supported scalar constraints. The codec's `validateWire` method preserves valid wire
+values without requiring a unique semantic interpretation; `decode` still requires one.
+
 ## Entry points
 
 - `@typespex/codec` exports codec plan types, `createValueCodec`, `bytesToBase64`, and the

@@ -13,6 +13,7 @@ import {
   type ModelProperty,
   type Program,
   type Scalar,
+  type Type,
 } from "@typespec/compiler";
 import { SyntaxKind } from "@typespec/compiler/ast";
 import { compareNumericStrings, type NumericConstraints } from "@typespex/codec";
@@ -102,6 +103,20 @@ function normalizeNumericLiteral(text: string): string {
 
 export function hasNumericBounds(program: Program, target: ModelProperty | Scalar): boolean {
   return Object.values(numericBoundGetters).some((get) => get(program, target) !== undefined);
+}
+
+/** Scalar options on a union property apply to its scalar alternatives at that use site. */
+export function hasUseSiteValueOverrides(
+  program: Program,
+  type: Type,
+  target?: ModelProperty | Scalar,
+): boolean {
+  return (
+    (type.kind === "Scalar" || type.kind === "Union") &&
+    target !== undefined &&
+    target !== type &&
+    (getEncode(program, target) !== undefined || hasNumericBounds(program, target))
+  );
 }
 
 /** Intersect intrinsic, inherited, and property bounds without rounding them. */
