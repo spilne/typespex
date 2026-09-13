@@ -132,8 +132,8 @@ function convertUnion(
         } catch (error) {
           if (!(error instanceof McpToolError)) throw error;
           if (error instanceof UnionConversionError) {
-            if (error.reason === "ambiguous" || error.reason === "invalid-value") fatal = error;
-            else {
+            if (error.reason === "ambiguous") fatal = error;
+            else if (error.reason !== "invalid-value") {
               if (error.reason === "projection" || mismatch?.reason !== "projection")
                 mismatch = error;
               continue;

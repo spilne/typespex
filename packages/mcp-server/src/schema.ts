@@ -372,7 +372,7 @@ async function projectUncheckedValue(
           if (!(error instanceof WireProjectionError)) throw error;
           if (error.reason === "projection" || projectionError?.reason !== "projection")
             projectionError = error;
-          if (error.reason === "ambiguous" || error.reason === "invalid-value") fatal = error;
+          if (error.reason === "ambiguous") fatal = error;
           else if (
             error.reason !== "shape" &&
             error.reason !== "projection" &&

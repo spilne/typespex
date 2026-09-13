@@ -763,7 +763,7 @@ async function convertUnion(
 }
 
 function isFatalUnionIssue(issue: CodecIssue): boolean {
-  return issue.code === "ambiguous-union" || issue.code === "invalid-union-value";
+  return issue.code === "ambiguous-union";
 }
 
 function matchesContainer(

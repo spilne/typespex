@@ -317,4 +317,43 @@ describe("union conversion", () => {
       });
     }
   });
+  test("lets exact siblings match after nullable and named union value failures", async () => {
+    const object = (type: "number" | "string" | "boolean"): ValueCodecSpec => ({
+      kind: "object",
+      properties: {
+        id: { wireName: "id", codec: { kind: "primitive", type } },
+        payload: { wireName: "payload", codec: { kind: "bytes" } },
+      },
+    });
+    const nullable = (variant: ValueCodecSpec): ValueCodecSpec => ({
+      kind: "object",
+      properties: {
+        item: {
+          wireName: "item",
+          codec: { kind: "union", variants: [variant, { kind: "primitive", type: "null" }] },
+        },
+      },
+    });
+    for (const grouped of [false, true]) {
+      const bad: ValueCodecSpec = grouped
+        ? { kind: "ref", name: "Pet" }
+        : nullable(object("number"));
+      const good = grouped ? object("string") : nullable(object("string"));
+      const semantic = { id: "r1", payload: new Uint8Array([1, 2]) };
+      const wire = { id: "r1", payload: "AQI=" };
+      for (const variants of [
+        [bad, good],
+        [good, bad],
+      ]) {
+        const codec = createValueCodec({
+          root: { kind: "union", variants },
+          definitions: { Pet: { kind: "union", variants: [object("number"), object("boolean")] } },
+        });
+        const input = grouped ? wire : { item: wire };
+        const output = grouped ? semantic : { item: semantic };
+        expect(await codec.decode(input)).toEqual({ ok: true, value: output });
+        expect(await codec.encode(output)).toEqual({ ok: true, value: input });
+      }
+    }
+  });
 });

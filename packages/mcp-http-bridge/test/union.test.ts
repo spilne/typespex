@@ -274,4 +274,37 @@ describe("HTTP union conversion", () => {
         expect(convert(input, plan)).toEqual({ value: "v", child: { value: "leaf" } });
     }
   });
+  test("lets exact siblings match after nullable and named union value failures", () => {
+    const object = (kind: "number" | "string" | "boolean"): HttpWireValuePlan => ({
+      kind: "object",
+      properties: { id: { sourceName: "id", value: { kind } } },
+    });
+    const nullable = (variant: HttpWireValuePlan): HttpWireValuePlan => ({
+      kind: "object",
+      properties: {
+        item: {
+          sourceName: "item",
+          value: { kind: "union", variants: [variant, { kind: "null" }] },
+        },
+      },
+    });
+    for (const grouped of [false, true]) {
+      const bad: HttpWireValuePlan = grouped
+        ? { kind: "ref", name: "Pet" }
+        : nullable(object("number"));
+      const good = grouped ? object("string") : nullable(object("boolean"));
+      const value = grouped ? { id: "r1" } : { item: { id: true } };
+      for (const variants of [
+        [bad, good],
+        [good, bad],
+      ]) {
+        const definitions = new Map<string, HttpWireValuePlan>([
+          ["Pet", { kind: "union", variants: [object("number"), object("boolean")] }],
+        ]);
+        const plan: HttpWireValuePlan = { kind: "union", variants };
+        expect(decodeHttpWireValue(value, plan, definitions)).toEqual(value);
+        expect(encodeHttpWireValue(value, plan, definitions)).toEqual(value);
+      }
+    }
+  });
 });

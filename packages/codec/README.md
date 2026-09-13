@@ -19,7 +19,9 @@ Temporal mode for date-like strings, and object variants that supply different d
 same omitted property. A wider handler object also fails when removing its extra fields would
 produce different valid projections. Wrap overlapping scalars in objects with distinct literal
 discriminators, or return the precise declared object shape. A nested conversion failure never
-falls back to dropping that declared field. Defaults are decoded independently for each item.
+falls back to dropping that declared field when a branch covers the supplied fields. If no exact
+branch accepts those declared values, conversion can fail even when dropping fields into a different
+shape would validate. Defaults are decoded independently for each item.
 
 A union branch can carry a `wireSchema` fragment. Pass `validateWire` in `createValueCodec` options
 to resolve and validate those fragments against their containing JSON Schema document; the MCP

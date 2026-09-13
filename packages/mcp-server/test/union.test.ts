@@ -185,4 +185,32 @@ describe("union schemas", () => {
       });
     }
   });
+  test("lets exact siblings match after nullable and named union value failures", async () => {
+    const object = (type: string) => ({
+      type: "object",
+      properties: { id: { type } },
+      required: ["id"],
+      additionalProperties: false,
+    });
+    const nullable = (variant: object) => ({
+      type: "object",
+      properties: { item: { anyOf: [variant, { type: "null" }] } },
+      required: ["item"],
+      additionalProperties: false,
+    });
+    for (const grouped of [false, true]) {
+      const bad = grouped ? { $ref: "#/$defs/Pet" } : nullable(object("number"));
+      const good = grouped ? object("string") : nullable(object("string"));
+      const value = grouped ? { id: "r1" } : { item: { id: "r1" } };
+      for (const anyOf of [
+        [bad, good],
+        [good, bad],
+      ]) {
+        const schema = createSchema({
+          schema: { anyOf, $defs: { Pet: { anyOf: [object("number"), object("boolean")] } } },
+        });
+        expect(await schema.encode(value)).toEqual({ ok: true, value });
+      }
+    }
+  });
 });
