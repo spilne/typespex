@@ -245,3 +245,9 @@ export class TypeRegistry {
     return false;
   }
 }
+
+export function isNamedType(type: Type): type is NamedType {
+  return (
+    type.kind === "Model" || type.kind === "Scalar" || type.kind === "Enum" || type.kind === "Union"
+  );
+}

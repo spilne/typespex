@@ -67,6 +67,66 @@ describe("TypePlanner", () => {
     expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
   });
 
+  test("isolates recursive JSON documents across projections and incremental preparation", async () => {
+    const program = await compile(`
+      model Node { next?: Node; @encode(string) count: int32 = 7; }
+      model Other { label: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const node = model(global, "Node");
+    const planner = new TypePlanner(program);
+    const projection: TypeProjection = {
+      key: "input",
+      propertyFilter: (property) => property.name !== "count",
+    };
+
+    const projected = planner.createWirePlan(node, { projection });
+    expect(projected.semanticType).toBe("NodeInput");
+    expect(projected.wireType).toBe("NodeInput");
+    expect(projected.codec).toBeUndefined();
+    expect(projected.schema).toEqual({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $ref: "#/$defs/Node",
+      $defs: {
+        Node: {
+          type: "object",
+          properties: { next: { $ref: "#/$defs/Node" } },
+          additionalProperties: false,
+        },
+      },
+    });
+
+    const full = planner.createWirePlan(node);
+    expect(full.wireType).toBe("NodeWire");
+    expect(full.codec).toEqual({
+      root: { kind: "ref", name: "Node" },
+      definitions: {
+        Node: {
+          kind: "object",
+          properties: {
+            next: { wireName: "next", codec: { kind: "ref", name: "Node" }, optional: true },
+            count: {
+              wireName: "count",
+              codec: { kind: "number-string", integer: true },
+              optional: true,
+              hasDefault: true,
+              defaultValue: "7",
+            },
+          },
+        },
+      },
+    });
+    expect(full.schema).toMatchObject({
+      $defs: { Node: { properties: { count: { type: "string", default: "7" } } } },
+    });
+
+    const other = planner.createWirePlan(model(global, "Other"));
+    expect(other.codec).toBeUndefined();
+    expect(other.schema).not.toHaveProperty("$defs.Node");
+    expect(planner.createWirePlan(node, { projection })).toEqual(projected);
+    expect(planner.createWirePlan(node)).toEqual(full);
+  });
+
   test("records model references structurally in canonical order", async () => {
     const program = await compile(`
       model Pet { id: string; }
