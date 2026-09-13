@@ -15,6 +15,7 @@ import type { CompilerIssue } from "./plans.js";
 export type NamedType = Model | Scalar | Enum | Union;
 
 interface TypeRegistryOptions {
+  readonly reservedNames?: readonly string[];
   readonly streamElementTypes?: ReadonlyMap<Model, Type>;
   readonly nativeStreamTypes?: ReadonlySet<Model>;
   readonly typeSubstitutions?: ReadonlyMap<Model, Type>;
@@ -28,14 +29,16 @@ export class TypeRegistry {
   private readonly expandedTypes = new Set<NamedType>();
   private readonly semanticNames = new Map<NamedType, string>();
   private readonly wireNames = new Map<NamedType, string>();
-  private readonly reservedNames = new Set<string>();
+  private readonly reservedNames: Set<string>;
   private occupiedNames = new Set<string>();
   private namesPrepared = false;
 
   constructor(
     private readonly program: Program,
     private readonly options: TypeRegistryOptions,
-  ) {}
+  ) {
+    this.reservedNames = new Set(options.reservedNames);
+  }
 
   /** Collect reachable declarations, returning whether the declaration set changed. */
   prepare(rootTypes: readonly Type[]): boolean {
@@ -201,10 +204,15 @@ export class TypeRegistry {
 
   private assignNames(): void {
     if (this.namesPrepared) return;
-    this.semanticNames.clear();
-    this.wireNames.clear();
-    const used = new Set(this.reservedNames);
+    // Plans already handed to consumers retain their names when later roots
+    // introduce declarations that would otherwise take an existing wire alias.
+    const used = new Set([
+      ...this.reservedNames,
+      ...this.semanticNames.values(),
+      ...this.wireNames.values(),
+    ]);
     for (const type of this.namedTypes) {
+      if (this.semanticNames.has(type)) continue;
       const base = typescriptIdentifier(pascalCase(type.name || type.kind), "Value");
       let candidate = base;
       if (used.has(candidate)) {
@@ -219,6 +227,7 @@ export class TypeRegistry {
     }
     const usedNames = new Set(used);
     for (const type of this.namedTypes) {
+      if (this.wireNames.has(type)) continue;
       const semanticName = this.semanticNames.get(type)!;
       const base = `${semanticName}Wire`;
       let candidate = base;

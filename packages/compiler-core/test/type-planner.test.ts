@@ -41,6 +41,91 @@ function operation(container: Namespace, name: string): Operation {
 }
 
 describe("TypePlanner", () => {
+  test("bounds work for shared type graphs with and without cycles", async () => {
+    for (const cyclic of [false, true]) {
+      const depth = 30;
+      const program = await compile(
+        [
+          ...Array.from(
+            { length: depth },
+            (_, index) => `model N${index} { a?: N${index + 1}; b?: N${index + 1}; }`,
+          ),
+          `model N${depth} { value: string; ${cyclic ? "root?: N0;" : ""} }`,
+        ].join("\n"),
+      );
+      const planner = new TypePlanner(program);
+      let inspected = 0;
+      const plan = planner.createWirePlan(model(program.getGlobalNamespaceType(), "N0"), {
+        projection: {
+          key: "read",
+          propertyFilter: () => {
+            inspected++;
+            return true;
+          },
+        },
+      });
+      expect(plan.semanticType).toBe("N0");
+      expect(plan.codec).toBeUndefined();
+      // Count semantic visits instead of relying on machine-dependent timing.
+      expect(inspected).toBeLessThan(depth * 10);
+      expect(planner.createTypePlans()).toHaveLength(depth + 1);
+    }
+  });
+
+  test("propagates changed projections through cycles independent of root order", async () => {
+    const program = await compile(`model A { b?: B; secret: string; } model B { a?: A; }`);
+    const global = program.getGlobalNamespaceType();
+    const projection = {
+      key: "read",
+      propertyFilter: (property: { name: string }) => property.name !== "secret",
+    };
+    for (const roots of [
+      ["A", "B"],
+      ["B", "A"],
+    ]) {
+      const planner = new TypePlanner(program);
+      for (const name of roots) {
+        expect(planner.createWirePlan(model(global, name), { projection }).semanticType).toBe(
+          `${name}Read`,
+        );
+      }
+      const projected = planner
+        .createModelModulePlan()
+        .declarations.filter((value) => /interface [AB]Read/.test(value))
+        .join("\n");
+      expect(projected).toContain("b?: BRead");
+      expect(projected).toContain("a?: ARead");
+      expect(projected).not.toContain("secret");
+    }
+  });
+
+  test("retains issued semantic, wire, and projection names as roots are added", async () => {
+    const program = await compile(`
+      model Item { data: bytes; secret: string; }
+      model ItemWire { label: string; }
+      model ItemInput { label: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const item = model(global, "Item");
+    const planner = new TypePlanner(program);
+    const initial = planner.createWirePlan(item);
+    const projection = {
+      key: "input",
+      propertyFilter: (property: { name: string }) => property.name !== "secret",
+    };
+    const projected = planner.createWirePlan(item, { projection });
+    planner.prepare([model(global, "ItemWire"), model(global, "ItemInput")]);
+
+    expect(planner.createWirePlan(item)).toEqual(initial);
+    expect(planner.createWirePlan(item, { projection })).toEqual(projected);
+    expect(planner.getGeneratedName(model(global, "ItemWire"))).not.toBe(initial.wireType);
+    expect(planner.getGeneratedName(model(global, "ItemInput"))).not.toBe(projected.semanticType);
+    const names = planner.emittedTypeNames;
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain(initial.wireType);
+    expect(names).toContain(projected.wireType);
+  });
+
   test("omits identity codecs and wire aliases", async () => {
     const program = await compile(`model Pet { id: string; name: string; }`);
     const pet = model(program.getGlobalNamespaceType(), "Pet");
@@ -472,7 +557,8 @@ describe("TypePlanner", () => {
     expect(models).toContain("export interface EverythingInput");
     expect(models).toContain("date: Temporal.PlainDate");
     expect(models).toContain("zoned: Temporal.ZonedDateTime");
-    expect(models).toContain("export type StringMap = { known: Slug } & Record<string, Slug>");
+    expect(models).toContain("export interface StringMap");
+    expect(models).toContain("[key: string]: Slug");
     expect(models).toContain("@deprecated Use NewEverything.");
     expect(issues).toEqual([]);
   });
