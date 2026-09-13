@@ -137,6 +137,44 @@ describe("schema document planning", () => {
     });
   });
 
+  test("relocates references through schema and codec collection children", () => {
+    const schema = (name: string) => ({
+      items: { $ref: `#/$defs/${name}` },
+      anyOf: [{ $ref: `#/$defs/${name}` }],
+      prefixItems: [{ $ref: `#/$defs/${name}` }],
+      additionalProperties: { $ref: `#/$defs/${name}` },
+    });
+    const codec = (name: string): NonNullable<JsonWirePlan["codec"]>["root"] => ({
+      kind: "object",
+      properties: {
+        array: { wireName: "array", codec: { kind: "array", item: { kind: "ref", name } } },
+        tuple: { wireName: "tuple", codec: { kind: "tuple", items: [{ kind: "ref", name }] } },
+        union: { wireName: "union", codec: { kind: "union", variants: [{ kind: "ref", name }] } },
+      },
+      additionalProperties: { kind: "ref", name },
+    });
+    const document = planSchemaDocument([
+      tool(
+        "First",
+        { ...schema("Value"), $defs: { Value: { type: "string" } } },
+        {
+          root: codec("Value"),
+          definitions: { Value: { kind: "bytes" } },
+        },
+      ),
+      tool(
+        "Second",
+        { ...schema("Value"), $defs: { Value: { type: "number" } } },
+        {
+          root: codec("Value"),
+          definitions: { Value: { kind: "bigint-string" } },
+        },
+      ),
+    ]);
+    expect(document.schemas.SecondInput).toEqual(schema("ValueForSecondInput"));
+    expect(document.codecs?.SecondInput).toEqual(codec("ValueForSecondInput"));
+  });
+
   test("retains mixed dialects locally and hoists a common dialect", () => {
     const first = tool("First", { $schema: "dialect-a", type: "string" });
     const second = tool("Second", { $schema: "dialect-b", type: "number" });
