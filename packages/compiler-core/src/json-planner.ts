@@ -28,6 +28,7 @@ import {
 import type { ObjectPropertyCodecSpec, ValueCodecDocument, ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema, JsonWirePlan } from "./plans.js";
 import type { ScalarPlanner } from "./scalar-planner.js";
+import { getNumericBounds, hasNumericBounds } from "./scalar-policy.js";
 import { isNamedType, type NamedType, type TypeRegistry } from "./type-registry.js";
 
 type SchemaObject = Record<string, unknown>;
@@ -127,7 +128,8 @@ export class JsonPlanner {
       type.kind === "Scalar" &&
       encodingTarget !== undefined &&
       encodingTarget !== type &&
-      getEncode(this.program, encodingTarget) !== undefined;
+      (getEncode(this.program, encodingTarget) !== undefined ||
+        hasNumericBounds(this.program, encodingTarget));
     const protocolModel =
       type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
@@ -311,7 +313,8 @@ export class JsonPlanner {
       type.kind === "Scalar" &&
       encodingTarget !== undefined &&
       encodingTarget !== type &&
-      getEncode(this.program, encodingTarget) !== undefined;
+      (getEncode(this.program, encodingTarget) !== undefined ||
+        hasNumericBounds(this.program, encodingTarget));
     const protocolModel =
       type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
@@ -470,10 +473,31 @@ export class JsonPlanner {
     const maxLength = getMaxLength(this.program, target);
     const minItems = getMinItems(this.program, target);
     const maxItems = getMaxItems(this.program, target);
-    const min = getMinValueAsNumeric(this.program, target)?.asNumber();
-    const max = getMaxValueAsNumeric(this.program, target)?.asNumber();
-    const minExclusive = getMinValueExclusiveAsNumeric(this.program, target)?.asNumber();
-    const maxExclusive = getMaxValueExclusiveAsNumeric(this.program, target)?.asNumber();
+    const scalar =
+      target.kind === "Scalar"
+        ? target
+        : target.kind === "ModelProperty" && target.type.kind === "Scalar"
+          ? target.type
+          : undefined;
+    const bounds =
+      scalar && schema.$ref === undefined
+        ? getNumericBounds(this.program, scalar, target as ModelProperty | Scalar, {
+            includeIntrinsic: false,
+          })
+        : {
+            minimum: getMinValueAsNumeric(this.program, target),
+            maximum: getMaxValueAsNumeric(this.program, target),
+            exclusiveMinimum: getMinValueExclusiveAsNumeric(this.program, target),
+            exclusiveMaximum: getMaxValueExclusiveAsNumeric(this.program, target),
+          };
+    const numericWire =
+      !scalar ||
+      (Object.values(bounds).some((value) => value !== undefined) &&
+        this.scalars.wireType(scalar, target as ModelProperty | Scalar) === "number");
+    const min = numericWire ? bounds.minimum?.asNumber() : undefined;
+    const max = numericWire ? bounds.maximum?.asNumber() : undefined;
+    const minExclusive = numericWire ? bounds.exclusiveMinimum?.asNumber() : undefined;
+    const maxExclusive = numericWire ? bounds.exclusiveMaximum?.asNumber() : undefined;
     const pattern = getPatternData(this.program, target)?.pattern;
     const format = getFormat(this.program, target);
     if (description !== undefined) additions.description = description;
@@ -629,6 +653,7 @@ function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
     const spec = pending.pop()!;
     if (visited.has(spec)) continue;
     visited.add(spec);
+    if (spec.numericConstraints !== undefined) return true;
     switch (spec.kind) {
       case "identity":
       case "primitive":
@@ -675,6 +700,9 @@ function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
         pending.push(target);
         break;
       }
+      default:
+        spec satisfies never;
+        return true;
     }
   }
   return false;

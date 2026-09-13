@@ -100,6 +100,20 @@ describe("generated MCP server", () => {
     expect(defineMcpApplication(application)).toBe(application);
   });
 
+  test("preserves wire-only validation when reachable codecs have no numeric constraints", async () => {
+    const schema = createSchema({
+      schema: { type: "string" },
+      codec: {
+        root: { kind: "bytes" },
+        definitions: { Unused: { kind: "number-string", numericConstraints: { minimum: "1" } } },
+      },
+    });
+    const wire = "not-base64!";
+    expect(await schema.validateWire(wire)).toEqual({ ok: true, value: wire });
+    expect(await schema.wire["~standard"].validate(wire)).toEqual({ value: wire });
+    expect((await schema.input["~standard"].validate(wire)).issues).toBeDefined();
+  });
+
   test("defers validator compilation and avoids codecs for identity contracts", async () => {
     let invalidPatternSchema: ReturnType<typeof createSchema> | undefined;
     expect(() => {

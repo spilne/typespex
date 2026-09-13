@@ -38,3 +38,35 @@ test("rejects opaque scalar-constructor defaults", async () => {
     "Default value for Third.createdAt cannot be represented on the JSON wire.",
   );
 });
+
+test("diagnoses numeric defaults outside property bounds, including nested objects", async () => {
+  const runner = await createTestRunner(await createTestHost());
+  const [, diagnostics] = await runner.compileAndDiagnose(`
+    model Encoded { @encode(string) @minValue(1) value: int32 = 0; }
+    model Native { @maxValue(10) value: float64 = 11; }
+    model Element { @encode(string) @minValueExclusive(1) value: int32; }
+    model Nested { element: Element = #{ value: 1 }; }
+    model Valid { @encode(string) @minValue(1) @maxValue(10) value: int32 = 10; }
+  `);
+  expect(diagnostics).toHaveLength(0);
+  const issues: CompilerIssue[] = [];
+  const planner = new TypePlanner(runner.program, { onIssue: (issue) => issues.push(issue) });
+  const models = runner.program.getGlobalNamespaceType().models;
+  for (const name of ["Encoded", "Native", "Nested", "Valid"])
+    planner.createWirePlan(models.get(name)!);
+  expect(issues).toHaveLength(3);
+  for (const [name, constraint] of [
+    ["Encoded.value", "at least 1"],
+    ["Native.value", "at most 10"],
+    ["Nested.element", "greater than 1"],
+  ]) {
+    expect(
+      issues.some(
+        (issue) =>
+          issue.code === "unsupported-type" &&
+          issue.message.includes(name!) &&
+          issue.message.includes(constraint!),
+      ),
+    ).toBe(true);
+  }
+});

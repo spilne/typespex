@@ -1,14 +1,146 @@
 import {
+  $maxValue,
+  $maxValueExclusive,
+  $minValue,
+  $minValueExclusive,
   getEncode,
   getMaxValueAsNumeric,
   getMaxValueExclusiveAsNumeric,
   getMinValueAsNumeric,
   getMinValueExclusiveAsNumeric,
+  Numeric,
   type EncodeData,
   type ModelProperty,
   type Program,
   type Scalar,
 } from "@typespec/compiler";
+import { SyntaxKind } from "@typespec/compiler/ast";
+import { compareNumericStrings, type NumericConstraints } from "@typespex/codec";
+
+type NumericBounds = { readonly [Key in keyof NumericConstraints]?: Numeric };
+
+const intrinsicBounds: Readonly<Record<string, readonly [string, string]>> = {
+  int8: ["-128", "127"],
+  uint8: ["0", "255"],
+  int16: ["-32768", "32767"],
+  uint16: ["0", "65535"],
+  int32: ["-2147483648", "2147483647"],
+  uint32: ["0", "4294967295"],
+  int64: ["-9223372036854775808", "9223372036854775807"],
+  uint64: ["0", "18446744073709551615"],
+  safeint: ["-9007199254740991", "9007199254740991"],
+  float32: ["-3.4e38", "3.4e38"],
+  float64: [String(-Number.MAX_VALUE), String(Number.MAX_VALUE)],
+};
+
+const numericBoundGetters = {
+  minimum: getMinValueAsNumeric,
+  maximum: getMaxValueAsNumeric,
+  exclusiveMinimum: getMinValueExclusiveAsNumeric,
+  exclusiveMaximum: getMaxValueExclusiveAsNumeric,
+} as const;
+
+const numericBoundDecorators = {
+  minimum: $minValue,
+  maximum: $maxValue,
+  exclusiveMinimum: $minValueExclusive,
+  exclusiveMaximum: $maxValueExclusive,
+} as const;
+
+/** Detect literal precision already lost by the compiler's numeric literal cache. */
+export function getNumericBoundIssue(
+  program: Program,
+  scalar: Scalar,
+  target: ModelProperty | Scalar,
+): string | undefined {
+  if (!isNumericIntrinsic(getScalarIntrinsicName(program, scalar))) return undefined;
+  const sources: (Scalar | ModelProperty)[] = target === scalar ? [] : [target];
+  for (let current: Scalar | undefined = scalar; current; current = current.baseScalar)
+    sources.push(current);
+  for (const source of sources) {
+    for (const key of Object.keys(numericBoundGetters) as (keyof NumericBounds)[]) {
+      const bound = numericBoundGetters[key](program, source);
+      if (!bound) continue;
+      for (const application of source.decorators) {
+        if (application.decorator !== numericBoundDecorators[key]) continue;
+        const argument = application.args[0];
+        if (argument?.node?.kind !== SyntaxKind.NumericLiteral) continue;
+        const value = argument.value;
+        const resolved =
+          value.entityKind === "Value" && value.valueKind === "NumericValue"
+            ? value.value
+            : value.entityKind === "Type" && value.kind === "Number"
+              ? value.numericValue
+              : undefined;
+        // A later custom decorator may intentionally replace the bound. Only
+        // diagnose the standard decorator's own incorrectly resolved literal.
+        if (
+          resolved &&
+          compareNumericStrings(resolved.toString(), bound.toString()) === 0 &&
+          compareNumericStrings(
+            resolved.toString(),
+            normalizeNumericLiteral(argument.node.valueAsString),
+          ) !== 0
+        ) {
+          return `TypeSpec resolved the numeric bound ${argument.node.valueAsString} as ${resolved.toString()}. Its precision was lost before TypeSpex planning; this bound cannot be emitted safely.`;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+// The scanner permits a leading plus and redundant decimal zeros. Numeric()
+// misparses some of those spellings, so normalize syntax without redoing its arithmetic.
+function normalizeNumericLiteral(text: string): string {
+  if (text.startsWith("0x") || text.startsWith("0b")) return BigInt(text).toString();
+  const sign = text[0] === "-" ? "-" : "";
+  let start = text[0] === "+" || text[0] === "-" ? 1 : 0;
+  while (text[start] === "0" && text[start + 1]! >= "0" && text[start + 1]! <= "9") start++;
+  return sign + text.slice(start);
+}
+
+export function hasNumericBounds(program: Program, target: ModelProperty | Scalar): boolean {
+  return Object.values(numericBoundGetters).some((get) => get(program, target) !== undefined);
+}
+
+/** Intersect intrinsic, inherited, and property bounds without rounding them. */
+export function getNumericBounds(
+  program: Program,
+  scalar: Scalar,
+  target: ModelProperty | Scalar = scalar,
+  options: { readonly includeIntrinsic?: boolean } = {},
+): NumericBounds {
+  const intrinsic = getScalarIntrinsicName(program, scalar);
+  if (!isNumericIntrinsic(intrinsic)) return {};
+  const bounds: { -readonly [Key in keyof NumericBounds]?: Numeric } = {};
+  const intrinsicRange = intrinsicBounds[intrinsic];
+  if (intrinsicRange && options.includeIntrinsic !== false) {
+    bounds.minimum = Numeric(intrinsicRange[0]);
+    bounds.maximum = Numeric(intrinsicRange[1]);
+  }
+  const sources: (Scalar | ModelProperty)[] = [];
+  for (let current: Scalar | undefined = scalar; current; current = current.baseScalar) {
+    sources.push(current);
+  }
+  if (target !== scalar) sources.push(target);
+  for (const source of sources) {
+    for (const key of Object.keys(numericBoundGetters) as (keyof NumericBounds)[]) {
+      const value = numericBoundGetters[key](program, source);
+      if (!value) continue;
+      const previous = bounds[key];
+      const lower = key === "minimum" || key === "exclusiveMinimum";
+      if (
+        !previous ||
+        (lower
+          ? compareNumericStrings(value.toString(), previous.toString()) > 0
+          : compareNumericStrings(value.toString(), previous.toString()) < 0)
+      )
+        bounds[key] = value;
+    }
+  }
+  return bounds;
+}
 
 export interface ScalarEncodingDeclaration {
   readonly data: EncodeData;
@@ -119,18 +251,19 @@ export function isJsonSafeIntegerRange(
   scalar: Scalar,
   target: ModelProperty | Scalar,
 ): boolean {
+  const bounds = getNumericBounds(program, scalar, target, { includeIntrinsic: false });
   const minimum =
-    getMinValueAsNumeric(program, target) ??
-    getMinValueExclusiveAsNumeric(program, target) ??
-    (target === scalar
-      ? undefined
-      : (getMinValueAsNumeric(program, scalar) ?? getMinValueExclusiveAsNumeric(program, scalar)));
+    bounds.exclusiveMinimum &&
+    (!bounds.minimum ||
+      compareNumericStrings(bounds.exclusiveMinimum.toString(), bounds.minimum.toString()) > 0)
+      ? bounds.exclusiveMinimum
+      : bounds.minimum;
   const maximum =
-    getMaxValueAsNumeric(program, target) ??
-    getMaxValueExclusiveAsNumeric(program, target) ??
-    (target === scalar
-      ? undefined
-      : (getMaxValueAsNumeric(program, scalar) ?? getMaxValueExclusiveAsNumeric(program, scalar)));
+    bounds.exclusiveMaximum &&
+    (!bounds.maximum ||
+      compareNumericStrings(bounds.exclusiveMaximum.toString(), bounds.maximum.toString()) < 0)
+      ? bounds.exclusiveMaximum
+      : bounds.maximum;
   const min = minimum?.asNumber();
   const max = maximum?.asNumber();
   return (
