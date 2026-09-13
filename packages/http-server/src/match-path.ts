@@ -4,8 +4,8 @@ const HEX = /^[0-9A-Fa-f]{2}$/;
 export interface CanonicalPathSegment {
   readonly raw: string;
   readonly value: string;
-  /** Canonical UTF-16 boundary index to raw UTF-16 boundary index. */
-  readonly rawOffsets: readonly number[];
+  /** Canonical to raw UTF-16 boundaries; `null` means the offsets are identical. */
+  readonly rawOffsets: readonly number[] | null;
 }
 
 /** A structurally parsed pathname whose segments have been canonicalized independently. */
@@ -14,8 +14,8 @@ export interface CanonicalPathname {
   readonly value: string;
   readonly segments: readonly CanonicalPathSegment[];
   readonly trailingSlash: boolean;
-  /** Canonical UTF-16 boundary index to raw UTF-16 boundary index. */
-  readonly rawOffsets: readonly number[];
+  /** Canonical to raw UTF-16 boundaries; `null` means the offsets are identical. */
+  readonly rawOffsets: readonly number[] | null;
 }
 
 interface CanonicalBuilder {
@@ -124,7 +124,9 @@ function decodeUtf8Escapes(
  * which keeps reserved delimiters distinct from encoded parameter data.
  * Malformed escapes remain untouched so a parameter decoder can report them.
  */
-export function canonicalizePathSegment(raw: string): CanonicalPathSegment {
+export function canonicalizePathSegment(
+  raw: string,
+): CanonicalPathSegment & { readonly rawOffsets: readonly number[] } {
   const builder = createBuilder();
   let index = 0;
   while (index < raw.length) {
@@ -185,6 +187,17 @@ export function canonicalizePathname(pathname: string): CanonicalPathname | unde
   const rawSegments = pathname.substring(1, end).split("/");
   if (rawSegments.some((segment) => segment.length === 0)) return undefined;
 
+  // Canonicalization only rewrites percent escapes; unescaped text and offsets stay unchanged.
+  if (!pathname.includes("%")) {
+    return {
+      raw: pathname,
+      value: pathname,
+      segments: rawSegments.map((raw) => ({ raw, value: raw, rawOffsets: null })),
+      trailingSlash,
+      rawOffsets: null,
+    };
+  }
+
   const segments = rawSegments.map(canonicalizePathSegment);
   const builder = createBuilder();
   let rawOffset = 0;
@@ -217,6 +230,7 @@ export function rawPathSlice(
   canonicalStart: number,
   canonicalEnd: number,
 ): string {
+  if (pathname.rawOffsets === null) return pathname.raw.slice(canonicalStart, canonicalEnd);
   return pathname.raw.slice(
     pathname.rawOffsets[canonicalStart]!,
     pathname.rawOffsets[canonicalEnd]!,
@@ -228,5 +242,6 @@ export function rawSegmentSlice(
   canonicalStart: number,
   canonicalEnd: number,
 ): string {
+  if (segment.rawOffsets === null) return segment.raw.slice(canonicalStart, canonicalEnd);
   return segment.raw.slice(segment.rawOffsets[canonicalStart]!, segment.rawOffsets[canonicalEnd]!);
 }

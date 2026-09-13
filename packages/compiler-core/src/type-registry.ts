@@ -29,6 +29,7 @@ export class TypeRegistry {
   private readonly semanticNames = new Map<NamedType, string>();
   private readonly wireNames = new Map<NamedType, string>();
   private readonly reservedNames = new Set<string>();
+  private occupiedNames = new Set<string>();
   private namesPrepared = false;
 
   constructor(
@@ -68,18 +69,15 @@ export class TypeRegistry {
       `${this.getName(type)}${pascalCase(key)}`,
       "ProjectedType",
     );
-    const occupied = new Set([
-      ...this.semanticNames.values(),
-      ...this.wireNames.values(),
-      ...this.reservedNames,
-    ]);
     let name = baseName;
     let suffix = 2;
-    while (occupied.has(name) || occupied.has(`${name}Wire`)) {
+    while (this.occupiedNames.has(name) || this.occupiedNames.has(`${name}Wire`)) {
       name = `${baseName}${suffix++}`;
     }
     this.reservedNames.add(name);
     this.reservedNames.add(`${name}Wire`);
+    this.occupiedNames.add(name);
+    this.occupiedNames.add(`${name}Wire`);
     return name;
   }
 
@@ -229,6 +227,7 @@ export class TypeRegistry {
       usedNames.add(candidate);
       this.wireNames.set(type, candidate);
     }
+    this.occupiedNames = usedNames;
     this.namesPrepared = true;
   }
 

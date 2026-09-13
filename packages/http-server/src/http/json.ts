@@ -56,13 +56,14 @@ function serializeJsonValue(
 
   let serialized: string;
   if (Array.isArray(value)) {
-    const items: string[] = [];
+    let items = "";
     for (let index = 0; index < value.length; index++) {
-      items.push(serializeJsonValue(value[index], ancestors, String(index)) ?? "null");
+      if (index > 0) items += ",";
+      items += serializeJsonValue(value[index], ancestors, String(index)) ?? "null";
     }
-    serialized = `[${items.join(",")}]`;
+    serialized = `[${items}]`;
   } else {
-    const entries: string[] = [];
+    let entries = "";
     for (const property of Object.keys(value)) {
       const item = serializeJsonValue(
         (value as Record<string, unknown>)[property],
@@ -70,10 +71,11 @@ function serializeJsonValue(
         property,
       );
       if (item !== undefined) {
-        entries.push(`${JSON.stringify(property)}:${item}`);
+        if (entries.length > 0) entries += ",";
+        entries += `${JSON.stringify(property)}:${item}`;
       }
     }
-    serialized = `{${entries.join(",")}}`;
+    serialized = `{${entries}}`;
   }
 
   ancestors.delete(value);
