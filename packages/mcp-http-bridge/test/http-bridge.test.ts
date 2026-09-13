@@ -342,7 +342,7 @@ describe("MCP HTTP bridge", () => {
         authProvider,
         fetch: fetchMock,
       }),
-    ).rejects.toThrow("Rejected cross-origin redirect to https://redirect.example.test");
+    ).rejects.toThrow("Upstream redirect origin is not allowed.");
     expect(requests).toHaveLength(1);
 
     requests.length = 0;
@@ -496,7 +496,7 @@ describe("MCP HTTP bridge", () => {
             headers: { "Content-Type": "application/jsonl" },
           })) as typeof fetch,
       }),
-    ).rejects.toThrow("exceeded 1 items");
+    ).rejects.toThrow("Upstream JSONL response exceeded the configured item limit.");
   });
 
   test("preserves server base paths and prefers exact responses over defaults", async () => {
