@@ -1,9 +1,10 @@
-import type { Namespace, Program, Type } from "@typespec/compiler";
+import type { Namespace, Program } from "@typespec/compiler";
 import type { HttpService } from "@typespec/http";
 import type { TypespexEmitterOptions } from "./lib.js";
 import { collectEmittedNamedTypes, getNamedTypeKey, type EmittedNamedType } from "./named-types.js";
 import { getNamespaceFullName } from "./namespace-names.js";
 import { tsIdentifier } from "./typescript-names.js";
+import { createHttpPlanningState, type HttpPlanningState } from "./planning-state.js";
 
 export { getNamespaceFullName } from "./namespace-names.js";
 
@@ -53,20 +54,20 @@ export interface EmitterCtx {
   serviceName: string;
   options: TypespexEmitterOptions;
   fileNames: GeneratedFileNames;
-  /** Track which named types have been emitted to avoid duplicates. */
-  emittedModels: Set<Type>;
   /** Named declarations emitted for this service, including external dependencies. */
   namedTypes: readonly EmittedNamedType[];
   /** Generated export names keyed by the semantic identity of a named type. */
   typeNames: ReadonlyMap<string, string>;
+  /** Mutable registries scoped to planning this service. */
+  planningState: HttpPlanningState;
 }
 
 export interface GeneratedFileNames {
-  models: string;
-  serverHints: string;
-  serverOperations: string;
-  server: string;
-  serverRouter: string;
+  readonly models: string;
+  readonly serverHints: string;
+  readonly serverOperations: string;
+  readonly server: string;
+  readonly serverRouter: string;
 }
 
 export const DEFAULT_FILE_NAMES: GeneratedFileNames = {
@@ -89,20 +90,21 @@ export function createEmitterContext(
     service,
     options["omit-unreachable-types"] ?? false,
   );
+  const typeNames = createTypeNames(
+    service,
+    serviceName,
+    namedTypes,
+    getGeneratedTypeReservedNames(options),
+  );
   return {
     program,
     service,
     serviceName,
     options,
     fileNames,
-    emittedModels: new Set(),
     namedTypes,
-    typeNames: createTypeNames(
-      service,
-      serviceName,
-      namedTypes,
-      getGeneratedTypeReservedNames(options),
-    ),
+    typeNames,
+    planningState: createHttpPlanningState(program, typeNames),
   };
 }
 
@@ -162,6 +164,26 @@ export function getGeneratedTypeName(
   fallback: string,
 ): string {
   return ctx.typeNames.get(getNamedTypeKey(type)) ?? tsIdentifier(type.name, fallback);
+}
+
+export function collectReferencedTypes<T>(
+  ctx: EmitterCtx,
+  build: () => T,
+): { readonly value: T; readonly names: readonly string[] } {
+  const names = new Set<string>();
+  const previous = ctx.planningState.referencedTypeNames;
+  ctx.planningState.referencedTypeNames = names;
+  try {
+    return { value: build(), names: [...names].sort() };
+  } finally {
+    ctx.planningState.referencedTypeNames = previous;
+  }
+}
+
+/** Records an actual reference to a declaration in the generated models module. */
+export function recordTypeReference(ctx: EmitterCtx, name: string): string {
+  ctx.planningState.referencedTypeNames?.add(name);
+  return name;
 }
 
 export function hasGeneratedTypeNameCollision(ctx: EmitterCtx, type: EmittedNamedType): boolean {

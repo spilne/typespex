@@ -1,8 +1,12 @@
-import type { Namespace, Operation } from "@typespec/compiler";
+import type { Namespace } from "@typespec/compiler";
 import type { HttpService } from "@typespec/http";
-import type { OperationPlan, ServicePlan, TypePlanner } from "@typespex/compiler-core/unstable";
+import type {
+  OperationPlan,
+  ServicePlan,
+  TypeScriptModulePlan,
+} from "@typespex/compiler-core/unstable";
 import type { HttpWireOperationPlan } from "@typespex/http-client";
-import type { McpServerMetadata, McpToolMetadata } from "@typespex/mcp";
+import type { McpIconOptions, McpToolAnnotationsOptions } from "@typespex/mcp";
 import type { HttpPlanningApi } from "./http-planner.js";
 
 export interface ResolvedModes {
@@ -12,25 +16,28 @@ export interface ResolvedModes {
 
 export interface PlannedServer {
   readonly plan: ServicePlan;
-  readonly metadata: McpServerMetadata;
-  readonly name: string;
+  readonly modelModule: TypeScriptModulePlan;
   readonly symbolName: string;
   readonly outputDir: string;
   readonly fileNames: OutputFileNames;
-  readonly planner: TypePlanner;
   readonly tools: readonly PlannedTool[];
+  readonly version: string;
+  readonly instructions?: string;
+  readonly icons?: readonly McpIconOptions[];
+  readonly websiteUrl?: string;
   readonly applicationModule?: string;
   readonly modes: ResolvedModes;
 }
 
 export interface PlannedTool {
   readonly plan: OperationPlan;
-  readonly metadata: McpToolMetadata;
-  readonly operation: Operation;
   readonly name: string;
   readonly symbolName: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly icons?: readonly McpIconOptions[];
   readonly allowsVoid: boolean;
-  readonly annotations?: McpToolMetadata["annotations"];
+  readonly annotations?: McpToolAnnotationsOptions;
   readonly http?: HttpWireOperationPlan;
   readonly requiresTaggedResult: boolean;
 }

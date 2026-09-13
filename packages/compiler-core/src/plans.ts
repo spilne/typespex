@@ -29,6 +29,13 @@ export interface TypePlan {
   readonly wireType: string;
 }
 
+/** A data-only TypeScript module that can be rendered without compiler state. */
+export interface TypeScriptModulePlan {
+  readonly banner: string;
+  readonly imports: readonly string[];
+  readonly declarations: readonly string[];
+}
+
 export interface JsonWirePlan {
   readonly version: typeof COMPILER_PLAN_VERSION;
   readonly schema: JsonSchema;
@@ -36,6 +43,8 @@ export interface JsonWirePlan {
   readonly codec?: ValueCodecDocument;
   readonly semanticType: string;
   readonly wireType: string;
+  /** Generated type exports referenced by the semantic and wire expressions. */
+  readonly referencedTypes?: readonly string[];
 }
 
 export interface ArtifactPlan {

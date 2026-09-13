@@ -11,9 +11,9 @@ import {
 } from "./ctx.js";
 import { emitModels } from "./emit-models.js";
 import { emitServerHints } from "./emit-server-hints.js";
-import { emitServerOperations } from "./emit-server-operations.js";
-import { emitServer } from "./emit-server.js";
-import { emitServerRouter } from "./emit-server-router.js";
+import { renderServerOperations } from "./render-server-operations.js";
+import { renderServer } from "./render-server.js";
+import { renderServerRouter } from "./render-server-router.js";
 import { reportUnsupportedResponseStatusContracts } from "./server-response-plan.js";
 import { reportIgnoredDecorators } from "./report-ignored-decorators.js";
 import { getServerHttpOperations } from "./operation-surface.js";
@@ -21,6 +21,7 @@ import { reportRequestInputCollisions } from "./request-input-plan.js";
 import { reportRouteConflicts } from "./route-selection.js";
 import { reportUnsupportedUriTemplates } from "./uri-template.js";
 import { reportUnsupportedLiterals } from "./report-unsupported-literals.js";
+import { buildServerPlan, type ServerPlan } from "./server-plan.js";
 import {
   formatGeneratedFiles,
   GeneratedFileFormatError,
@@ -46,7 +47,7 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
   }
 
   const serviceOutput = resolveServiceOutput(context.options);
-  const emissionPlans = services.map((service): ServiceEmissionPlan => {
+  const planningContexts = services.map((service): ServicePlanningContext => {
     const layout = createServiceLayout(service, serviceOutput, context.options);
     return {
       service,
@@ -56,8 +57,8 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
     };
   });
 
-  reportDuplicateOutputPaths(context, emissionPlans);
-  for (const { ctx, httpOperations } of emissionPlans) {
+  reportDuplicateOutputPaths(context, planningContexts);
+  for (const { ctx, httpOperations } of planningContexts) {
     reportUnsupportedUriTemplates(ctx, httpOperations);
     reportRouteConflicts(ctx, httpOperations);
     reportIgnoredDecorators(ctx, httpOperations);
@@ -68,17 +69,13 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
 
   if (program.hasError()) return;
 
-  // Render every service before writing anything. Some response diagnostics
-  // are discovered while rendering, and an error must not leave partial output.
-  const files = emissionPlans.flatMap(({ ctx, httpOperations, layout }) =>
-    GENERATED_ARTIFACTS.map((artifact) => ({
-      fileName: generatedArtifactFileName(artifact, layout.fileNames),
-      outputDir: layout.outputDir,
-      raw: artifact.emit(ctx, httpOperations),
-    })),
-  );
+  // Plan every service before writing anything. Some response diagnostics are
+  // discovered while planning, and an error must not leave partial output.
+  const emissionPlans = planningContexts.map(buildServiceEmissionPlan);
 
   if (program.hasError()) return;
+
+  const files = emissionPlans.flatMap(renderServiceArtifacts);
 
   let formattedFiles: FormattedGeneratedFile[];
   try {
@@ -105,34 +102,69 @@ export async function $onEmit(context: EmitContext<TypespexEmitterOptions>): Pro
   }
 }
 
-interface ServiceEmissionPlan {
+interface ServicePlanningContext {
   readonly service: HttpService;
   readonly layout: ServiceLayout;
   readonly ctx: EmitterCtx;
   readonly httpOperations: HttpOperation[];
 }
 
+interface ServiceEmissionPlan {
+  readonly layout: ServiceLayout;
+  readonly models: string;
+  readonly serverHints: string;
+  readonly server: ServerPlan;
+}
+
 interface GeneratedArtifactDefinition {
   readonly artifact: string;
   readonly fileNameKey: keyof GeneratedFileNames;
-  readonly emit: (ctx: EmitterCtx, httpOperations: HttpOperation[]) => string;
 }
 
 const GENERATED_ARTIFACTS: readonly GeneratedArtifactDefinition[] = [
-  { artifact: "models", fileNameKey: "models", emit: (ctx) => emitModels(ctx) },
-  { artifact: "server-hints", fileNameKey: "serverHints", emit: emitServerHints },
-  {
-    artifact: "server-operations",
-    fileNameKey: "serverOperations",
-    emit: emitServerOperations,
-  },
-  { artifact: "server", fileNameKey: "server", emit: emitServer },
-  { artifact: "server-router", fileNameKey: "serverRouter", emit: emitServerRouter },
+  { artifact: "models", fileNameKey: "models" },
+  { artifact: "server-hints", fileNameKey: "serverHints" },
+  { artifact: "server-operations", fileNameKey: "serverOperations" },
+  { artifact: "server", fileNameKey: "server" },
+  { artifact: "server-router", fileNameKey: "serverRouter" },
 ];
+
+function buildServiceEmissionPlan({
+  ctx,
+  httpOperations,
+  layout,
+}: ServicePlanningContext): ServiceEmissionPlan {
+  return {
+    layout,
+    models: emitModels(ctx),
+    serverHints: emitServerHints(ctx, httpOperations),
+    server: buildServerPlan(ctx, httpOperations),
+  };
+}
+
+function renderServiceArtifacts({
+  layout,
+  models,
+  serverHints,
+  server,
+}: ServiceEmissionPlan): Array<{ fileName: string; outputDir: string; raw: string }> {
+  const content: Record<keyof GeneratedFileNames, string> = {
+    models,
+    serverHints,
+    serverOperations: renderServerOperations(server),
+    server: renderServer(server),
+    serverRouter: renderServerRouter(server),
+  };
+  return GENERATED_ARTIFACTS.map((artifact) => ({
+    fileName: generatedArtifactFileName(artifact, layout.fileNames),
+    outputDir: layout.outputDir,
+    raw: content[artifact.fileNameKey],
+  }));
+}
 
 function reportDuplicateOutputPaths(
   context: EmitContext<TypespexEmitterOptions>,
-  plans: readonly ServiceEmissionPlan[],
+  plans: readonly ServicePlanningContext[],
 ): void {
   const owners = new Map<string, string>();
 

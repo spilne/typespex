@@ -8,7 +8,6 @@ import {
   walkPropertiesInherited,
 } from "@typespec/compiler";
 import {
-  createMetadataInfo,
   HttpVisibilityProvider,
   resolveRequestVisibility,
   Visibility,
@@ -19,6 +18,7 @@ import {
   type MetadataInfo,
 } from "@typespec/http";
 import { getGeneratedTypeName, type EmitterCtx } from "./ctx.js";
+import type { PayloadPlanningState, PayloadTypeAliasEntry } from "./planning-state.js";
 import { discriminatedUnionBodyToTs, resolveDiscriminatedUnion } from "./discriminated-unions.js";
 import { getHttpPartType, isHttpFileModel } from "./http-models.js";
 import {
@@ -49,23 +49,6 @@ export interface PayloadCollection {
   readonly kind: "array" | "record";
   readonly value: Type;
 }
-
-interface PayloadTypeAlias {
-  readonly name: string;
-  readonly type: Model | Union;
-  readonly projection: PayloadProjection;
-  declaration?: string;
-}
-
-interface PayloadContextState {
-  readonly metadata: MetadataInfo;
-  readonly aliases: Map<Type, Map<string, PayloadTypeAlias>>;
-  readonly projectionChanges: Map<Type, Map<string, boolean>>;
-  readonly projectionFilters: Map<Type, Map<string, boolean>>;
-  readonly usedAliasNames: Set<string>;
-}
-
-const payloadStates = new WeakMap<EmitterCtx, PayloadContextState>();
 
 export function getPayloadBodyContext(
   body: HttpPayloadBody | undefined,
@@ -297,13 +280,13 @@ export function payloadProjectionFiltersProperties(
  * for a service context.
  */
 export function getPayloadTypeAliasDeclarations(ctx: EmitterCtx): readonly string[] {
-  const aliases: PayloadTypeAlias[] = [];
+  const aliases: PayloadTypeAliasEntry[] = [];
   for (const byProjection of getPayloadContextState(ctx).aliases.values()) {
     aliases.push(...byProjection.values());
   }
   return aliases
     .filter(
-      (alias): alias is PayloadTypeAlias & { declaration: string } =>
+      (alias): alias is PayloadTypeAliasEntry & { declaration: string } =>
         alias.declaration !== undefined,
     )
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -431,7 +414,7 @@ function getOrCreatePayloadAlias(
   }
   state.usedAliasNames.add(name);
 
-  const alias: PayloadTypeAlias = { name, type, projection };
+  const alias: PayloadTypeAliasEntry = { name, type, projection };
   byProjection.set(projection.cacheKey, alias);
 
   const parameters = isTemplateDeclaration(type) ? templateParametersToTs(ctx, type) : "";
@@ -443,7 +426,7 @@ function getOrCreatePayloadAlias(
   return payloadAliasReference(ctx, alias);
 }
 
-function payloadAliasReference(ctx: EmitterCtx, alias: PayloadTypeAlias): string {
+function payloadAliasReference(ctx: EmitterCtx, alias: PayloadTypeAliasEntry): string {
   if (!isTemplateDeclaration(alias.type)) return alias.name;
   const args =
     alias.type.templateMapper?.args.filter(isType).map((argument) => typeToTs(ctx, argument)) ?? [];
@@ -608,19 +591,8 @@ function markProjectionSeen(
   return false;
 }
 
-function getPayloadContextState(ctx: EmitterCtx): PayloadContextState {
-  let state = payloadStates.get(ctx);
-  if (state) return state;
-
-  state = {
-    metadata: createMetadataInfo(ctx.program),
-    aliases: new Map(),
-    projectionChanges: new Map(),
-    projectionFilters: new Map(),
-    usedAliasNames: new Set(ctx.typeNames.values()),
-  };
-  payloadStates.set(ctx, state);
-  return state;
+function getPayloadContextState(ctx: EmitterCtx): PayloadPlanningState {
+  return ctx.planningState.payload;
 }
 
 function arrayTypeToTs(elementTs: string): string {

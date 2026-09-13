@@ -167,4 +167,40 @@ describe("operation overloads", () => {
     expect(responses.map((response) => response.status)).toEqual([204, 204, 204]);
     expect(calls.sort()).toEqual(["base", "number", "text"]);
   });
+
+  test("keeps decoder-only payload aliases out of handler contracts", () => {
+    const result = compileFixture(
+      "overload-decoder-aliases",
+      `
+        import "@typespec/http";
+        using TypeSpec.Http;
+
+        @service namespace Api {
+          model Owner { name: string; }
+
+          model Pet {
+            @visibility(Lifecycle.Read) id?: string;
+            owner: Owner;
+          }
+
+          @post @route("/pets")
+          @parameterVisibility(Lifecycle.Read)
+          op create(@body body: Pet): void;
+
+          @overload(create)
+          @parameterVisibility(Lifecycle.Create)
+          op createWrite(@body body: Pet): void;
+        }
+      `,
+    );
+    const server = result.readFile("api", "server.ts");
+    const operations = result.readFile("api", "server-operations.ts");
+
+    expect(server).not.toContain("type _TypespexPayload_Pet_");
+    expect(server).not.toContain("Owner");
+    expect(operations).toContain(
+      "type _TypespexPayload_Pet_request_2_explicit = { owner: Owner };",
+    );
+    result.typecheck("api");
+  });
 });

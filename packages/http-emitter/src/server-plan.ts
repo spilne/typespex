@@ -1,14 +1,17 @@
 import type { HttpOperation } from "@typespec/http";
 import {
   allocateGeneratedNames,
+  collectReferencedTypes,
   getNamespaceFullName,
   getRelativeNamespaceSegments,
   type EmitterCtx,
+  type GeneratedFileNames,
 } from "./ctx.js";
 import { buildInputType } from "./server-input-types.js";
 import { collectModelImports, groupOperations } from "./server-operation-layout.js";
 import { buildResultType } from "./server-response-plan.js";
 import { getPayloadTypeAliasDeclarations } from "./payload-context.js";
+import { getJsonWireSerializerDeclarations } from "./json-wire-transforms.js";
 import {
   emitHintEntries,
   emitOperationHintEntries,
@@ -17,22 +20,36 @@ import {
 } from "./emit-server-hints.js";
 import { getRouteSelections, type RouteSelectionEmission } from "./route-selection.js";
 import { lowerUriTemplate, type RoutePattern } from "./uri-template.js";
+import {
+  buildInputDecoderPlan,
+  getServerInputDecoderImports,
+  type InputDecoderPlan,
+} from "./server-input-decoders.js";
+import { buildResponseEncoder } from "./server-response-encoder.js";
+import { getXmlCodecDeclarations } from "./xml-wire-codecs.js";
+import { createHttpPlanningState } from "./planning-state.js";
 
-export interface ServerEmission {
+export interface ServerPlan {
   readonly serviceName: string;
-  readonly modelImports: readonly string[];
-  readonly payloadTypeAliases: readonly string[];
-  readonly groups: readonly ServerEmissionGroup[];
+  readonly fileNames: GeneratedFileNames;
+  readonly operationModelImports: readonly string[];
+  readonly handlerModelImports: readonly string[];
+  readonly inputDecoderImports: readonly string[];
+  readonly operationPayloadTypeAliases: readonly string[];
+  readonly handlerPayloadTypeAliases: readonly string[];
+  readonly jsonSerializerDeclarations: readonly string[];
+  readonly xmlCodecDeclarations: readonly string[];
+  readonly groups: readonly ServerGroupPlan[];
 }
 
-export interface ServerEmissionGroup {
+export interface ServerGroupPlan {
   readonly interfaceName?: string;
   readonly propertyName: string;
   readonly exportName: string;
-  readonly operations: readonly ServerOperationEmission[];
+  readonly operations: readonly ServerOperationPlan[];
 }
 
-export interface ServerOperationEmission {
+export interface ServerOperationPlan {
   readonly name: string;
   readonly propertyName: string;
   readonly operationId: string;
@@ -43,21 +60,24 @@ export interface ServerOperationEmission {
   readonly routePatterns: readonly RoutePattern[];
   readonly routeSelection?: RouteSelectionEmission;
   readonly serviceHints: readonly EmittedHintEntry[];
-  readonly namespaces: readonly ServerNamespaceEmission[];
+  readonly namespaces: readonly ServerNamespacePlan[];
   readonly operationHints: readonly EmittedHintEntry[];
-  readonly httpOperation: HttpOperation;
+  readonly inputDecoder: InputDecoderPlan;
+  readonly responseEncoder: string;
 }
 
-export interface ServerNamespaceEmission {
+export interface ServerNamespacePlan {
   readonly name: string;
   readonly fullName: string;
   readonly hints: readonly EmittedHintEntry[];
 }
 
-export function buildServerEmission(
-  ctx: EmitterCtx,
-  httpOperations: HttpOperation[],
-): ServerEmission {
+export function buildServerPlan(ctx: EmitterCtx, httpOperations: HttpOperation[]): ServerPlan {
+  // A plan owns all mutable registries used to construct it. Starting from a
+  // fresh state makes repeated planning with the same service context
+  // deterministic and prevents aliases from leaking between plans.
+  ctx.planningState = createHttpPlanningState(ctx.program, ctx.typeNames);
+
   const operationIds = allocateOperationIds(ctx, httpOperations);
   const routeSelections = getRouteSelections(ctx, httpOperations);
   const rawGroups = groupOperations(ctx, httpOperations);
@@ -66,43 +86,104 @@ export function buildServerEmission(
       .filter((group) => group.interfaceName !== undefined)
       .map((group) => group.propertyName),
   );
-  const groups = rawGroups.map((group) => {
-    const operationNames = allocateOperationNames(
-      ctx,
-      group.operations,
-      group.interfaceName ? new Set() : interfaceProperties,
-    );
-    return {
-      interfaceName: group.interfaceName,
-      propertyName: group.propertyName,
-      exportName: group.exportName,
-      operations: group.operations.map((operation) =>
-        buildOperationEmission(
+  const modelImports = collectModelImports(ctx, httpOperations);
+  const plannedContracts = collectReferencedTypes(ctx, () =>
+    rawGroups.map((group) => {
+      const operationNames = allocateOperationNames(
+        ctx,
+        group.operations,
+        group.interfaceName ? new Set() : interfaceProperties,
+      );
+      return {
+        interfaceName: group.interfaceName,
+        propertyName: group.propertyName,
+        exportName: group.exportName,
+        operations: group.operations.map((operation) => ({
+          source: operation,
+          contract: buildOperationContract(
+            ctx,
+            operation,
+            operationNames.get(operation)!,
+            operationIds.get(operation)!,
+            routeSelections.get(operation),
+          ),
+        })),
+      };
+    }),
+  );
+  // Handler signatures only need aliases materialized while their input and
+  // result contracts are built. Decoders and encoders can add private aliases
+  // later; emitting those into server.ts would also require their dependencies.
+  const handlerPayloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
+
+  const responseEncoders = new Map<HttpOperation, string>();
+  for (const group of plannedContracts.value) {
+    for (const operation of group.operations) {
+      responseEncoders.set(
+        operation.source,
+        buildResponseEncoder(ctx, operation.source, operation.contract.resultType),
+      );
+    }
+  }
+
+  const inputDecoders = new Map<HttpOperation, InputDecoderPlan>();
+  for (const group of plannedContracts.value) {
+    const inputsName = `${group.exportName}Input`;
+    for (const operation of group.operations) {
+      inputDecoders.set(
+        operation.source,
+        buildInputDecoderPlan(
           ctx,
-          operation,
-          operationNames.get(operation)!,
-          operationIds.get(operation)!,
-          routeSelections.get(operation),
+          operation.source,
+          operation.contract.inputType,
+          inputsName,
+          operation.contract.propertyName,
         ),
-      ),
-    };
-  });
+      );
+    }
+  }
+
+  const groups: ServerGroupPlan[] = plannedContracts.value.map((group) => ({
+    interfaceName: group.interfaceName,
+    propertyName: group.propertyName,
+    exportName: group.exportName,
+    operations: group.operations.map(({ source, contract }) => ({
+      ...contract,
+      inputDecoder: inputDecoders.get(source)!,
+      responseEncoder: responseEncoders.get(source)!,
+    })),
+  }));
+
+  // Complete codec graphs before taking immutable renderer snapshots. XML
+  // codecs can register JSON serializers, and both can finish payload aliases.
+  const xmlCodecDeclarations = getXmlCodecDeclarations(ctx);
+  const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
+  const operationPayloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
+  const availableModelImports = new Set(modelImports);
 
   return {
     serviceName: ctx.serviceName,
-    modelImports: collectModelImports(ctx, httpOperations),
-    payloadTypeAliases: getPayloadTypeAliasDeclarations(ctx),
+    fileNames: ctx.fileNames,
+    operationModelImports: modelImports,
+    handlerModelImports: plannedContracts.names.filter((name) => availableModelImports.has(name)),
+    inputDecoderImports: getServerInputDecoderImports(ctx, httpOperations),
+    operationPayloadTypeAliases,
+    handlerPayloadTypeAliases,
+    jsonSerializerDeclarations,
+    xmlCodecDeclarations,
     groups,
   };
 }
 
-function buildOperationEmission(
+type ServerOperationContract = Omit<ServerOperationPlan, "inputDecoder" | "responseEncoder">;
+
+function buildOperationContract(
   ctx: EmitterCtx,
   operation: HttpOperation,
   propertyName: string,
   operationId: string,
   routeSelection: RouteSelectionEmission | undefined,
-): ServerOperationEmission {
+): ServerOperationContract {
   const operationName = operation.operation.name;
   const lowered = lowerUriTemplate(operation);
   if (!lowered.ok) {
@@ -129,7 +210,6 @@ function buildOperationEmission(
       }),
     ),
     operationHints: emitOperationHintEntries(ctx, operation),
-    httpOperation: operation,
   };
 }
 
@@ -217,28 +297,4 @@ function operationQualifiedName(operation: HttpOperation): string {
 
 function operationStableKey(operation: HttpOperation): string {
   return `${operationQualifiedName(operation)}:${operation.verb}:${operation.uriTemplate}`;
-}
-
-export function collectReferencedModelImports(emission: ServerEmission): string[] {
-  const available = new Set(emission.modelImports);
-  const imported = new Set<string>();
-
-  for (const alias of emission.payloadTypeAliases) {
-    collectFromText(alias);
-  }
-  for (const group of emission.groups) {
-    for (const operation of group.operations) {
-      collectFromText(operation.inputType);
-      collectFromText(operation.resultType);
-    }
-  }
-
-  return [...imported].sort();
-
-  function collectFromText(text: string): void {
-    for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
-      const name = match[0];
-      if (available.has(name)) imported.add(name);
-    }
-  }
 }

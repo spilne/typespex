@@ -5,6 +5,7 @@ import { HttpTestLibrary } from "@typespec/http/testing";
 import {
   TypePlanner,
   isVoidType,
+  renderTypeScriptModule,
   type CompilerIssue,
   type TypeProjection,
 } from "../src/unstable.js";
@@ -49,6 +50,7 @@ describe("TypePlanner", () => {
     expect(plan.version).toBe(1);
     expect(plan.semanticType).toBe("Pet");
     expect(plan.wireType).toBe("Pet");
+    expect(plan.referencedTypes).toEqual(["Pet"]);
     expect(plan.codec).toBeUndefined();
     expect(planner.createTypePlans()).toEqual([
       {
@@ -60,7 +62,90 @@ describe("TypePlanner", () => {
       },
     ]);
     expect(planner.emittedTypeNames).toEqual(["Pet"]);
-    expect(planner.emitModels()).not.toContain("PetWire");
+    const modulePlan = planner.createModelModulePlan();
+    expect(modulePlan.declarations).toHaveLength(1);
+    expect(renderTypeScriptModule(modulePlan)).not.toContain("PetWire");
+  });
+
+  test("isolates recursive JSON documents across projections and incremental preparation", async () => {
+    const program = await compile(`
+      model Node { next?: Node; @encode(string) count: int32 = 7; }
+      model Other { label: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const node = model(global, "Node");
+    const planner = new TypePlanner(program);
+    const projection: TypeProjection = {
+      key: "input",
+      propertyFilter: (property) => property.name !== "count",
+    };
+
+    const projected = planner.createWirePlan(node, { projection });
+    expect(projected.semanticType).toBe("NodeInput");
+    expect(projected.wireType).toBe("NodeInput");
+    expect(projected.codec).toBeUndefined();
+    expect(projected.schema).toEqual({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $ref: "#/$defs/Node",
+      $defs: {
+        Node: {
+          type: "object",
+          properties: { next: { $ref: "#/$defs/Node" } },
+          additionalProperties: false,
+        },
+      },
+    });
+
+    const full = planner.createWirePlan(node);
+    expect(full.wireType).toBe("NodeWire");
+    expect(full.codec).toEqual({
+      root: { kind: "ref", name: "Node" },
+      definitions: {
+        Node: {
+          kind: "object",
+          properties: {
+            next: { wireName: "next", codec: { kind: "ref", name: "Node" }, optional: true },
+            count: {
+              wireName: "count",
+              codec: { kind: "number-string", integer: true },
+              optional: true,
+              hasDefault: true,
+              defaultValue: "7",
+            },
+          },
+        },
+      },
+    });
+    expect(full.schema).toMatchObject({
+      $defs: { Node: { properties: { count: { type: "string", default: "7" } } } },
+    });
+
+    const other = planner.createWirePlan(model(global, "Other"));
+    expect(other.codec).toBeUndefined();
+    expect(other.schema).not.toHaveProperty("$defs.Node");
+    expect(planner.createWirePlan(node, { projection })).toEqual(projected);
+    expect(planner.createWirePlan(node)).toEqual(full);
+  });
+
+  test("records model references structurally in canonical order", async () => {
+    const program = await compile(`
+      model Pet { id: string; }
+      model Zebra { id: string; }
+      model Alpha { id: string; }
+      op inspect(
+        Pet: string,
+        literal: "Pet",
+        nested: { pet: Pet, zebra: Zebra, alpha: Alpha },
+      ): Pet;
+    `);
+    const inspect = operation(program.getGlobalNamespaceType(), "inspect");
+    const planner = new TypePlanner(program);
+
+    const input = planner.createWirePlan(inspect.parameters);
+    const output = planner.createWirePlan(inspect.returnType);
+
+    expect(input.referencedTypes).toEqual(["Alpha", "Pet", "Zebra"]);
+    expect(output.referencedTypes).toEqual(["Pet"]);
   });
 
   test("keeps unsafe numeric literals lossless across semantic and wire types", async () => {
@@ -79,7 +164,7 @@ describe("TypePlanner", () => {
     expect(plan.wireType).toBe("ExactValuesWire");
     expect(JSON.stringify(plan.schema)).toContain('"const":"9007199254740993"');
     expect(JSON.stringify(plan.codec)).toContain('"kind":"bigint-literal-string"');
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain(
       'export type ExactValues = 9007199254740993n | "1.234567890123456789";',
     );
@@ -109,7 +194,7 @@ describe("TypePlanner", () => {
     planner.prepare([declaredPetInput]);
     const declaredName = planner.getGeneratedName(declaredPetInput);
     expect(declaredName).not.toBe("PetInput");
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models.match(/export interface PetInput\b/g)).toHaveLength(1);
     expect(models).toContain(`export interface ${declaredName}`);
   });
@@ -304,7 +389,7 @@ describe("TypePlanner", () => {
       }).semanticType,
     ).toBe("EverythingInput");
 
-    const models = planner.emitModels();
+    const models = renderTypeScriptModule(planner.createModelModulePlan());
     expect(models).toContain('import type { Temporal } from "@js-temporal/polyfill"');
     expect(models).toContain("export interface Everything");
     expect(models).toContain("export interface EverythingInput");
@@ -328,7 +413,11 @@ describe("TypePlanner", () => {
         @encode(string) scalar FloatText extends float64;
         @encode("base64url") scalar Token extends bytes;
         @encode("rfc3339") scalar Timestamp extends utcDateTime;
+        @encode("rfc7231") scalar HttpTimestamp extends utcDateTime;
+        @encode("unixTimestamp", int64) scalar EpochTimestamp extends utcDateTime;
         @encode("ISO8601") scalar Period extends duration;
+        @encode("seconds", float64) scalar PeriodSeconds extends duration;
+        @encode("milliseconds", int64) scalar PeriodMilliseconds extends duration;
         @encode("rot13") scalar InvalidText extends string;
 
         model Original { original: string; }
@@ -346,7 +435,11 @@ describe("TypePlanner", () => {
           float: FloatText;
           token: Token;
           timestamp: Timestamp;
+          httpTimestamp: HttpTimestamp;
+          epochTimestamp: EpochTimestamp;
           period: Period;
+          periodSeconds: PeriodSeconds;
+          periodMilliseconds: PeriodMilliseconds;
           invalid: InvalidText;
           original: Original;
           batch: Batch;
@@ -384,7 +477,7 @@ describe("TypePlanner", () => {
     expect(JSON.stringify(plan.schema)).toContain('"contentEncoding":"base64"');
     expect(JSON.stringify(plan.codec)).toContain('"kind":"file"');
     expect(issues.some((issue) => issue.code === "unsupported-stream")).toBe(true);
-    expect(issues.some((issue) => issue.code === "unsupported-encoding")).toBe(true);
+    expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(1);
 
     // Multiple roots exercise the union document wrapper and false-root metadata path.
     const multi = planner.createWirePlan([
@@ -398,6 +491,49 @@ describe("TypePlanner", () => {
       allOf: [false],
     });
     expect(isVoidType(operation(namespace(global, "Api"), "nothing").returnType)).toBe(true);
+  });
+
+  test("keeps scalar defaults aligned with canonical JSON representations", async () => {
+    const program = await compile(`
+      @minValue(-10) @maxValue(10)
+      scalar BoundedId extends int64;
+
+      @encode(string) scalar LargeId extends int64;
+      @encode(string) scalar Money extends decimal;
+      @encode(string) scalar BooleanText extends boolean;
+
+      model Defaults {
+        bounded: BoundedId = 5;
+        large: LargeId = 9007199254740993;
+        money: Money = 12.50;
+        flag: BooleanText = true;
+        @encode(string) count: int32 = 7;
+        instant: utcDateTime = utcDateTime.fromISO("2024-01-02T03:04:05Z");
+      }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const issues: CompilerIssue[] = [];
+    const planner = new TypePlanner(program, {
+      canonicalJsonWire: true,
+      onIssue: (issue) => issues.push(issue),
+    });
+
+    const schema = planner.createWirePlan(model(global, "Defaults")).schema as {
+      $defs: {
+        Defaults: {
+          properties: Record<string, { default?: unknown }>;
+        };
+      };
+    };
+    const properties = schema.$defs.Defaults.properties;
+
+    expect(properties.bounded?.default).toBe(5);
+    expect(properties.large?.default).toBe("9007199254740993");
+    expect(properties.money?.default).toBe("12.5");
+    expect(properties.flag?.default).toBe(true);
+    expect(properties.count?.default).toBe(7);
+    expect(properties.instant?.default).toBe("2024-01-02T03:04:05Z");
+    expect(issues).toEqual([]);
   });
 
   test("rejects unprepared names and reports unsafe native numeric representations once", async () => {
@@ -425,7 +561,9 @@ describe("TypePlanner", () => {
     planner.createWirePlan(values);
     expect(issues.filter((issue) => issue.code === "unsafe-number")).toHaveLength(2);
     expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(3);
-    expect(planner.emitModels()).toContain("export type UnknownScalar = unknown");
+    expect(renderTypeScriptModule(planner.createModelModulePlan())).toContain(
+      "export type UnknownScalar = unknown",
+    );
   });
 
   test("reports unserializable defaults independently for properties with the same name", async () => {
@@ -447,6 +585,40 @@ describe("TypePlanner", () => {
     );
     expect(issues.map((issue) => issue.message)).toContain(
       "Default value for Second.createdAt cannot be represented on the JSON wire.",
+    );
+  });
+});
+
+describe("renderTypeScriptModule", () => {
+  test("renders every module section with stable spacing", () => {
+    expect(renderTypeScriptModule({ banner: "// Banner", imports: [], declarations: [] })).toBe(
+      "// Banner\n",
+    );
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: ['import type { Pet } from "./pet.js";'],
+        declarations: [],
+      }),
+    ).toBe('// Banner\nimport type { Pet } from "./pet.js";\n\n');
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [],
+        declarations: ["export interface Pet {}"],
+      }),
+    ).toBe("// Banner\nexport interface Pet {}\n");
+    expect(
+      renderTypeScriptModule({
+        banner: "// Banner",
+        imports: [
+          'import type { Pet } from "./pet.js";',
+          'import type { Owner } from "./owner.js";',
+        ],
+        declarations: ["export interface Pet {}", "export interface Owner {}"],
+      }),
+    ).toBe(
+      '// Banner\nimport type { Pet } from "./pet.js";\nimport type { Owner } from "./owner.js";\n\nexport interface Pet {}\n\nexport interface Owner {}\n',
     );
   });
 });

@@ -26,21 +26,7 @@ import {
   isXmlUnwrapped,
   type XmlNamespaceMetadata,
 } from "./xml-metadata.js";
-
-interface XmlCodecEmission {
-  readonly name: string;
-  readonly type: Model | Union;
-  readonly projection?: PayloadProjection;
-  declaration?: string;
-  building?: boolean;
-}
-
-interface XmlCodecState {
-  readonly codecs: Map<Model | Union, Map<string, XmlCodecEmission>>;
-  readonly usedNames: Set<string>;
-}
-
-const states = new WeakMap<EmitterCtx, XmlCodecState>();
+import type { XmlCodecEntry, XmlPlanningState } from "./planning-state.js";
 
 export function emitXmlCodec(
   ctx: EmitterCtx,
@@ -70,8 +56,7 @@ export function getXmlCodecDeclarations(ctx: EmitterCtx): readonly string[] {
   return [...state.codecs.values()]
     .flatMap((byProjection) => [...byProjection.values()])
     .filter(
-      (codec): codec is XmlCodecEmission & { declaration: string } =>
-        codec.declaration !== undefined,
+      (codec): codec is XmlCodecEntry & { declaration: string } => codec.declaration !== undefined,
     )
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((codec) => codec.declaration);
@@ -321,7 +306,7 @@ function getOrCreateXmlCodec(
   ctx: EmitterCtx,
   type: Model | Union,
   projection?: PayloadProjection,
-): XmlCodecEmission {
+): XmlCodecEntry {
   const state = getState(ctx);
   let projections = state.codecs.get(type);
   if (!projections) {
@@ -342,21 +327,16 @@ function getOrCreateXmlCodec(
     suffix += 1;
   }
   state.usedNames.add(name);
-  const emission: XmlCodecEmission = { name, type, projection };
+  const emission: XmlCodecEntry = { name, type, projection };
   projections.set(key, emission);
   return emission;
 }
 
-function getState(ctx: EmitterCtx): XmlCodecState {
-  let state = states.get(ctx);
-  if (!state) {
-    state = { codecs: new Map(), usedNames: new Set() };
-    states.set(ctx, state);
-  }
-  return state;
+function getState(ctx: EmitterCtx): XmlPlanningState {
+  return ctx.planningState.xml;
 }
 
-function nextPendingCodec(state: XmlCodecState): XmlCodecEmission | undefined {
+function nextPendingCodec(state: XmlPlanningState): XmlCodecEntry | undefined {
   for (const projections of state.codecs.values()) {
     for (const codec of projections.values()) {
       if (!codec.declaration && !codec.building) return codec;
