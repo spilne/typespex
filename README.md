@@ -316,6 +316,11 @@ const server = Bun.serve({
 console.log(`Listening on http://localhost:${server.port}`);
 ```
 
+Direct `Bun.serve` callbacks retain native buffering for verified fixed-length bodies. Router
+limits still apply; chunked and synthetic bodies use streamed counting. When calling the returned
+handler manually or after rewriting request headers, use `handler.fetch(request)` and omit Bun's
+optional server argument.
+
 ### Node.js
 
 ```ts
@@ -682,7 +687,9 @@ bun run bench:http
 bun run bench:matchers
 ```
 
-The HTTP benchmark uses Autocannon against Bare Bun, Hono, Hono with Zod validation, and TypeSpex.
+The HTTP benchmark uses Autocannon against Bare Bun, Hono, Hono with Zod validation, Elysia with
+input validation, and TypeSpex. Recorded comparisons and their raw trials are in
+[bench/RESULTS.md](bench/RESULTS.md).
 Every timed cell gets a fresh server process and the same bounded, deterministic pet fixture. The
 timed scenarios cover list, successful and missing read, and create. DELETE remains bound in every
 server so their route tables stay equivalent, but it is not load-tested because repeated deletion
@@ -695,7 +702,7 @@ buckets, so `0 ms` means the request landed in its sub-millisecond bucket rather
 taking no time.
 
 The defaults are five trials, a 2-second warmup and 10-second measurement per cell, 50 connections,
-and HTTP pipelining of one. A complete run takes about 16 minutes plus build and startup time. These
+and HTTP pipelining of one. A complete run takes about 20 minutes plus build and startup time. These
 environment variables tune it:
 
 | Variable                      | Default            | Meaning                                           |

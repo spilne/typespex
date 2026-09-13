@@ -1,0 +1,3954 @@
+{
+  "schemaVersion": 1,
+  "kind": "http",
+  "complete": true,
+  "metadata": {
+    "recordedAt": "2026-09-13T20:41:39.091Z",
+    "git": {
+      "commit": "43bb211be1ef9a9785e86baef3bbc4f1ea308671",
+      "branch": "audit-benchmark-performance",
+      "dirty": false
+    },
+    "runtime": {
+      "name": "Bun",
+      "version": "1.3.14"
+    },
+    "system": {
+      "platform": "darwin",
+      "release": "25.5.0",
+      "architecture": "arm64",
+      "logicalCpuCount": 10,
+      "cpuModels": ["Apple M1 Pro"],
+      "totalMemoryBytes": 17179869184,
+      "freeMemoryBytesAtStart": 117014528
+    },
+    "dependencies": {
+      "autocannon": "8.0.0",
+      "hono": "4.13.7",
+      "honoZodValidator": "0.9.1",
+      "zod": "4.5.4",
+      "tinybench": "6.1.5"
+    }
+  },
+  "settings": {
+    "durationSeconds": 10,
+    "warmupSeconds": 2,
+    "trials": 5,
+    "connections": 50,
+    "pipelining": 1,
+    "timeoutSeconds": 10,
+    "seed": "typespex-http-v1"
+  },
+  "schedule": [
+    {
+      "trial": 1,
+      "sequence": 1,
+      "serverId": "hono-zod",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 1,
+      "sequence": 2,
+      "serverId": "typespex-prototype",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 1,
+      "sequence": 3,
+      "serverId": "typespex",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 1,
+      "sequence": 4,
+      "serverId": "bare-bun",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 1,
+      "sequence": 5,
+      "serverId": "hono",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 1,
+      "sequence": 6,
+      "serverId": "typespex",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 1,
+      "sequence": 7,
+      "serverId": "typespex-prototype",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 1,
+      "sequence": 8,
+      "serverId": "hono-zod",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 1,
+      "sequence": 9,
+      "serverId": "hono",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 1,
+      "sequence": 10,
+      "serverId": "bare-bun",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 1,
+      "sequence": 11,
+      "serverId": "typespex-prototype",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 1,
+      "sequence": 12,
+      "serverId": "hono-zod",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 1,
+      "sequence": 13,
+      "serverId": "bare-bun",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 1,
+      "sequence": 14,
+      "serverId": "hono",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 1,
+      "sequence": 15,
+      "serverId": "typespex",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 1,
+      "sequence": 16,
+      "serverId": "hono-zod",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 1,
+      "sequence": 17,
+      "serverId": "hono",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 1,
+      "sequence": 18,
+      "serverId": "typespex",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 1,
+      "sequence": 19,
+      "serverId": "bare-bun",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 1,
+      "sequence": 20,
+      "serverId": "typespex-prototype",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 21,
+      "serverId": "typespex-prototype",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 2,
+      "sequence": 22,
+      "serverId": "hono-zod",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 2,
+      "sequence": 23,
+      "serverId": "hono",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 2,
+      "sequence": 24,
+      "serverId": "bare-bun",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 2,
+      "sequence": 25,
+      "serverId": "typespex",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 2,
+      "sequence": 26,
+      "serverId": "hono-zod",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 2,
+      "sequence": 27,
+      "serverId": "bare-bun",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 2,
+      "sequence": 28,
+      "serverId": "hono",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 2,
+      "sequence": 29,
+      "serverId": "typespex",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 2,
+      "sequence": 30,
+      "serverId": "typespex-prototype",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 2,
+      "sequence": 31,
+      "serverId": "hono",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 32,
+      "serverId": "typespex",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 33,
+      "serverId": "bare-bun",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 34,
+      "serverId": "typespex-prototype",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 35,
+      "serverId": "hono-zod",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 2,
+      "sequence": 36,
+      "serverId": "typespex-prototype",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 2,
+      "sequence": 37,
+      "serverId": "typespex",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 2,
+      "sequence": 38,
+      "serverId": "bare-bun",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 2,
+      "sequence": 39,
+      "serverId": "hono",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 2,
+      "sequence": 40,
+      "serverId": "hono-zod",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 41,
+      "serverId": "bare-bun",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 3,
+      "sequence": 42,
+      "serverId": "hono",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 3,
+      "sequence": 43,
+      "serverId": "typespex",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 3,
+      "sequence": 44,
+      "serverId": "typespex-prototype",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 3,
+      "sequence": 45,
+      "serverId": "hono-zod",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 3,
+      "sequence": 46,
+      "serverId": "typespex",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 3,
+      "sequence": 47,
+      "serverId": "bare-bun",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 3,
+      "sequence": 48,
+      "serverId": "typespex-prototype",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 3,
+      "sequence": 49,
+      "serverId": "hono-zod",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 3,
+      "sequence": 50,
+      "serverId": "hono",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 3,
+      "sequence": 51,
+      "serverId": "typespex",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 52,
+      "serverId": "bare-bun",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 53,
+      "serverId": "hono",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 54,
+      "serverId": "hono-zod",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 55,
+      "serverId": "typespex-prototype",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 3,
+      "sequence": 56,
+      "serverId": "hono-zod",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 3,
+      "sequence": 57,
+      "serverId": "hono",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 3,
+      "sequence": 58,
+      "serverId": "bare-bun",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 3,
+      "sequence": 59,
+      "serverId": "typespex",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 3,
+      "sequence": 60,
+      "serverId": "typespex-prototype",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 61,
+      "serverId": "bare-bun",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 4,
+      "sequence": 62,
+      "serverId": "typespex-prototype",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 4,
+      "sequence": 63,
+      "serverId": "hono-zod",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 4,
+      "sequence": 64,
+      "serverId": "hono",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 4,
+      "sequence": 65,
+      "serverId": "typespex",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 4,
+      "sequence": 66,
+      "serverId": "bare-bun",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 4,
+      "sequence": 67,
+      "serverId": "hono",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 4,
+      "sequence": 68,
+      "serverId": "hono-zod",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 4,
+      "sequence": 69,
+      "serverId": "typespex-prototype",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 4,
+      "sequence": 70,
+      "serverId": "typespex",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 4,
+      "sequence": 71,
+      "serverId": "hono",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 72,
+      "serverId": "bare-bun",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 73,
+      "serverId": "typespex",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 74,
+      "serverId": "typespex-prototype",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 75,
+      "serverId": "hono-zod",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 4,
+      "sequence": 76,
+      "serverId": "hono",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 4,
+      "sequence": 77,
+      "serverId": "typespex",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 4,
+      "sequence": 78,
+      "serverId": "typespex-prototype",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 4,
+      "sequence": 79,
+      "serverId": "hono-zod",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 4,
+      "sequence": 80,
+      "serverId": "bare-bun",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 81,
+      "serverId": "hono",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 5,
+      "sequence": 82,
+      "serverId": "hono-zod",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 5,
+      "sequence": 83,
+      "serverId": "typespex-prototype",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 5,
+      "sequence": 84,
+      "serverId": "typespex",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 5,
+      "sequence": 85,
+      "serverId": "bare-bun",
+      "scenarioId": "not-found"
+    },
+    {
+      "trial": 5,
+      "sequence": 86,
+      "serverId": "bare-bun",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 5,
+      "sequence": 87,
+      "serverId": "typespex",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 5,
+      "sequence": 88,
+      "serverId": "typespex-prototype",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 5,
+      "sequence": 89,
+      "serverId": "hono-zod",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 5,
+      "sequence": 90,
+      "serverId": "hono",
+      "scenarioId": "create"
+    },
+    {
+      "trial": 5,
+      "sequence": 91,
+      "serverId": "typespex",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 92,
+      "serverId": "typespex-prototype",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 93,
+      "serverId": "hono-zod",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 94,
+      "serverId": "bare-bun",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 95,
+      "serverId": "hono",
+      "scenarioId": "list"
+    },
+    {
+      "trial": 5,
+      "sequence": 96,
+      "serverId": "typespex-prototype",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 5,
+      "sequence": 97,
+      "serverId": "hono-zod",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 5,
+      "sequence": 98,
+      "serverId": "hono",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 5,
+      "sequence": 99,
+      "serverId": "typespex",
+      "scenarioId": "read"
+    },
+    {
+      "trial": 5,
+      "sequence": 100,
+      "serverId": "bare-bun",
+      "scenarioId": "read"
+    }
+  ],
+  "samples": [
+    {
+      "trial": 1,
+      "sequence": 1,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 77523.2,
+      "requestsTotal": 775224,
+      "requestsSent": 775274,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 32,
+      "throughputAverageBytesPerSecond": 13411123.2,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 775224,
+      "statusCodes": {
+        "404": 775224
+      },
+      "startedAt": "2026-09-13T20:41:41.200Z",
+      "finishedAt": "2026-09-13T20:41:51.205Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 2,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 65046.4,
+      "requestsTotal": 650479,
+      "requestsSent": 650529,
+      "latencyAverageMs": 0.16,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 11252531.2,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 650479,
+      "statusCodes": {
+        "404": 650479
+      },
+      "startedAt": "2026-09-13T20:41:53.275Z",
+      "finishedAt": "2026-09-13T20:42:03.281Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 3,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 58774.4,
+      "requestsTotal": 587695,
+      "requestsSent": 587745,
+      "latencyAverageMs": 0.19,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 12,
+      "throughputAverageBytesPerSecond": 10168115.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 587695,
+      "statusCodes": {
+        "404": 587695
+      },
+      "startedAt": "2026-09-13T20:42:05.347Z",
+      "finishedAt": "2026-09-13T20:42:15.350Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 4,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 83756.8,
+      "requestsTotal": 837585,
+      "requestsSent": 837635,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 15663923.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 837585,
+      "statusCodes": {
+        "404": 837585
+      },
+      "startedAt": "2026-09-13T20:42:17.415Z",
+      "finishedAt": "2026-09-13T20:42:27.419Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 5,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 79769.61,
+      "requestsTotal": 797727,
+      "requestsSent": 797777,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 6,
+      "throughputAverageBytesPerSecond": 13801881.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 797727,
+      "statusCodes": {
+        "404": 797727
+      },
+      "startedAt": "2026-09-13T20:42:29.483Z",
+      "finishedAt": "2026-09-13T20:42:39.487Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 6,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18027.2,
+      "requestsTotal": 180275,
+      "requestsSent": 180325,
+      "latencyAverageMs": 2.33,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 2812313.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 180275
+      },
+      "startedAt": "2026-09-13T20:42:41.558Z",
+      "finishedAt": "2026-09-13T20:42:51.561Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 7,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18012.8,
+      "requestsTotal": 180138,
+      "requestsSent": 180188,
+      "latencyAverageMs": 2.33,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 13,
+      "throughputAverageBytesPerSecond": 2810265.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 180138
+      },
+      "startedAt": "2026-09-13T20:42:53.630Z",
+      "finishedAt": "2026-09-13T20:43:03.633Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 8,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 57011.2,
+      "requestsTotal": 570064,
+      "requestsSent": 570114,
+      "latencyAverageMs": 0.17,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 8893235.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 570064
+      },
+      "startedAt": "2026-09-13T20:43:05.701Z",
+      "finishedAt": "2026-09-13T20:43:15.704Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 9,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 68012.8,
+      "requestsTotal": 680206,
+      "requestsSent": 680256,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 10611097.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 680206
+      },
+      "startedAt": "2026-09-13T20:43:17.770Z",
+      "finishedAt": "2026-09-13T20:43:27.773Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 10,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 59488.8,
+      "requestsTotal": 594875,
+      "requestsSent": 594925,
+      "latencyAverageMs": 0.3,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 35,
+      "throughputAverageBytesPerSecond": 10112409.6,
+      "durationSeconds": 10.03,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 594875
+      },
+      "startedAt": "2026-09-13T20:43:29.836Z",
+      "finishedAt": "2026-09-13T20:43:39.864Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 11,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 46800,
+      "requestsTotal": 467919,
+      "requestsSent": 467969,
+      "latencyAverageMs": 0.53,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 15,
+      "throughputAverageBytesPerSecond": 24798822.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 467919
+      },
+      "startedAt": "2026-09-13T20:43:41.935Z",
+      "finishedAt": "2026-09-13T20:43:51.937Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 12,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 53644.8,
+      "requestsTotal": 536419,
+      "requestsSent": 536469,
+      "latencyAverageMs": 0.18,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 21,
+      "throughputAverageBytesPerSecond": 28431155.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 536419
+      },
+      "startedAt": "2026-09-13T20:43:54.002Z",
+      "finishedAt": "2026-09-13T20:44:04.004Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 13,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 76352,
+      "requestsTotal": 763520,
+      "requestsSent": 763570,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 41536716.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 763520
+      },
+      "startedAt": "2026-09-13T20:44:06.068Z",
+      "finishedAt": "2026-09-13T20:44:16.070Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 14,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 69760,
+      "requestsTotal": 697613,
+      "requestsSent": 697663,
+      "latencyAverageMs": 0.13,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 6,
+      "throughputAverageBytesPerSecond": 36975411.21,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 697613
+      },
+      "startedAt": "2026-09-13T20:44:18.134Z",
+      "finishedAt": "2026-09-13T20:44:28.137Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 15,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 42147.2,
+      "requestsTotal": 421473,
+      "requestsSent": 421523,
+      "latencyAverageMs": 0.94,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 12,
+      "throughputAverageBytesPerSecond": 22337945.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 421473
+      },
+      "startedAt": "2026-09-13T20:44:30.201Z",
+      "finishedAt": "2026-09-13T20:44:40.204Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 16,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 80896,
+      "requestsTotal": 808945,
+      "requestsSent": 808995,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 15,
+      "throughputAverageBytesPerSecond": 12054528,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 808945
+      },
+      "startedAt": "2026-09-13T20:44:42.271Z",
+      "finishedAt": "2026-09-13T20:44:52.276Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 17,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 83206.4,
+      "requestsTotal": 832035,
+      "requestsSent": 832085,
+      "latencyAverageMs": 0.09,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 12397772.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 832035
+      },
+      "startedAt": "2026-09-13T20:44:54.341Z",
+      "finishedAt": "2026-09-13T20:45:04.344Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 18,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 75232,
+      "requestsTotal": 752390,
+      "requestsSent": 752440,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 11210752,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 752390
+      },
+      "startedAt": "2026-09-13T20:45:06.408Z",
+      "finishedAt": "2026-09-13T20:45:16.410Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 19,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 91020.8,
+      "requestsTotal": 910142,
+      "requestsSent": 910192,
+      "latencyAverageMs": 0.06,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 14834892.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 910142
+      },
+      "startedAt": "2026-09-13T20:45:18.474Z",
+      "finishedAt": "2026-09-13T20:45:28.478Z"
+    },
+    {
+      "trial": 1,
+      "sequence": 20,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 72985.61,
+      "requestsTotal": 729840,
+      "requestsSent": 729890,
+      "latencyAverageMs": 0.13,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 10874880,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 729840
+      },
+      "startedAt": "2026-09-13T20:45:30.541Z",
+      "finishedAt": "2026-09-13T20:45:40.544Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 21,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 19473.6,
+      "requestsTotal": 194718,
+      "requestsSent": 194768,
+      "latencyAverageMs": 2.17,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 44,
+      "throughputAverageBytesPerSecond": 3037388.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 194718
+      },
+      "startedAt": "2026-09-13T20:45:42.611Z",
+      "finishedAt": "2026-09-13T20:45:52.615Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 22,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 59411.2,
+      "requestsTotal": 594110,
+      "requestsSent": 594160,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 9269248,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 594110
+      },
+      "startedAt": "2026-09-13T20:45:54.684Z",
+      "finishedAt": "2026-09-13T20:46:04.686Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 23,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 72704,
+      "requestsTotal": 727006,
+      "requestsSent": 727056,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 11341824,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 727006
+      },
+      "startedAt": "2026-09-13T20:46:06.751Z",
+      "finishedAt": "2026-09-13T20:46:16.753Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 24,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 85062.4,
+      "requestsTotal": 850546,
+      "requestsSent": 850596,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 14459699.2,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 850546
+      },
+      "startedAt": "2026-09-13T20:46:18.814Z",
+      "finishedAt": "2026-09-13T20:46:28.819Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 25,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18833.6,
+      "requestsTotal": 188338,
+      "requestsSent": 188388,
+      "latencyAverageMs": 2.24,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 11,
+      "throughputAverageBytesPerSecond": 2938060.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 188338
+      },
+      "startedAt": "2026-09-13T20:46:30.885Z",
+      "finishedAt": "2026-09-13T20:46:40.888Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 26,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 52617.6,
+      "requestsTotal": 526178,
+      "requestsSent": 526228,
+      "latencyAverageMs": 0.18,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 28,
+      "throughputAverageBytesPerSecond": 27887206.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 526178
+      },
+      "startedAt": "2026-09-13T20:46:42.955Z",
+      "finishedAt": "2026-09-13T20:46:52.958Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 27,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 74419.2,
+      "requestsTotal": 744169,
+      "requestsSent": 744219,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 40484864,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 744169
+      },
+      "startedAt": "2026-09-13T20:46:55.022Z",
+      "finishedAt": "2026-09-13T20:47:05.025Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 28,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 67016,
+      "requestsTotal": 670037,
+      "requestsSent": 670087,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 7,
+      "throughputAverageBytesPerSecond": 35504128,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 670037
+      },
+      "startedAt": "2026-09-13T20:47:07.090Z",
+      "finishedAt": "2026-09-13T20:47:17.094Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 29,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 42076.8,
+      "requestsTotal": 420726,
+      "requestsSent": 420776,
+      "latencyAverageMs": 0.97,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 22298624,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 420726
+      },
+      "startedAt": "2026-09-13T20:47:19.156Z",
+      "finishedAt": "2026-09-13T20:47:29.158Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 30,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 46508.8,
+      "requestsTotal": 465117,
+      "requestsSent": 465167,
+      "latencyAverageMs": 0.57,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 24651366.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 465117
+      },
+      "startedAt": "2026-09-13T20:47:31.223Z",
+      "finishedAt": "2026-09-13T20:47:41.226Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 31,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 83174.4,
+      "requestsTotal": 831692,
+      "requestsSent": 831742,
+      "latencyAverageMs": 0.09,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 45,
+      "throughputAverageBytesPerSecond": 12392038.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 831692
+      },
+      "startedAt": "2026-09-13T20:47:43.290Z",
+      "finishedAt": "2026-09-13T20:47:53.293Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 32,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 67822.4,
+      "requestsTotal": 678173,
+      "requestsSent": 678223,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 11,
+      "throughputAverageBytesPerSecond": 10105651.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 678173
+      },
+      "startedAt": "2026-09-13T20:47:55.358Z",
+      "finishedAt": "2026-09-13T20:48:05.360Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 33,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 90854.4,
+      "requestsTotal": 908612,
+      "requestsSent": 908662,
+      "latencyAverageMs": 0.06,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 14809497.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 908612
+      },
+      "startedAt": "2026-09-13T20:48:07.424Z",
+      "finishedAt": "2026-09-13T20:48:17.427Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 34,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 72896,
+      "requestsTotal": 728937,
+      "requestsSent": 728987,
+      "latencyAverageMs": 0.13,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 10860953.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 728937
+      },
+      "startedAt": "2026-09-13T20:48:19.491Z",
+      "finishedAt": "2026-09-13T20:48:29.495Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 35,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 83430.4,
+      "requestsTotal": 834315,
+      "requestsSent": 834365,
+      "latencyAverageMs": 0.09,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 12431360,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 834315
+      },
+      "startedAt": "2026-09-13T20:48:31.561Z",
+      "finishedAt": "2026-09-13T20:48:41.566Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 36,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 72614.4,
+      "requestsTotal": 726157,
+      "requestsSent": 726207,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 12562432,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 726157,
+      "statusCodes": {
+        "404": 726157
+      },
+      "startedAt": "2026-09-13T20:48:43.630Z",
+      "finishedAt": "2026-09-13T20:48:53.632Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 37,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 64715.2,
+      "requestsTotal": 647175,
+      "requestsSent": 647225,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 17,
+      "throughputAverageBytesPerSecond": 11196825.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 647175,
+      "statusCodes": {
+        "404": 647175
+      },
+      "startedAt": "2026-09-13T20:48:55.697Z",
+      "finishedAt": "2026-09-13T20:49:05.700Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 38,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 90304,
+      "requestsTotal": 903057,
+      "requestsSent": 903107,
+      "latencyAverageMs": 0.06,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 16888627.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 903057,
+      "statusCodes": {
+        "404": 903057
+      },
+      "startedAt": "2026-09-13T20:49:07.763Z",
+      "finishedAt": "2026-09-13T20:49:17.767Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 39,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 77139.2,
+      "requestsTotal": 771333,
+      "requestsSent": 771383,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 13344768,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 771333,
+      "statusCodes": {
+        "404": 771333
+      },
+      "startedAt": "2026-09-13T20:49:19.830Z",
+      "finishedAt": "2026-09-13T20:49:29.834Z"
+    },
+    {
+      "trial": 2,
+      "sequence": 40,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 89068.8,
+      "requestsTotal": 890836,
+      "requestsSent": 890886,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 15411609.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 890836,
+      "statusCodes": {
+        "404": 890836
+      },
+      "startedAt": "2026-09-13T20:49:31.898Z",
+      "finishedAt": "2026-09-13T20:49:41.901Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 41,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 75718.4,
+      "requestsTotal": 757103,
+      "requestsSent": 757153,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 41186099.21,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 757103
+      },
+      "startedAt": "2026-09-13T20:49:43.963Z",
+      "finishedAt": "2026-09-13T20:49:53.965Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 42,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 67044.8,
+      "requestsTotal": 670410,
+      "requestsSent": 670460,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 35530342.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 670410
+      },
+      "startedAt": "2026-09-13T20:49:56.028Z",
+      "finishedAt": "2026-09-13T20:50:06.030Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 43,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 42409.6,
+      "requestsTotal": 424108,
+      "requestsSent": 424158,
+      "latencyAverageMs": 0.97,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 22478848,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 424108
+      },
+      "startedAt": "2026-09-13T20:50:08.094Z",
+      "finishedAt": "2026-09-13T20:50:18.096Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 44,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 46230.4,
+      "requestsTotal": 462309,
+      "requestsSent": 462359,
+      "latencyAverageMs": 0.62,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 24500633.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 462309
+      },
+      "startedAt": "2026-09-13T20:50:20.160Z",
+      "finishedAt": "2026-09-13T20:50:30.163Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 45,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 52809.6,
+      "requestsTotal": 528089,
+      "requestsSent": 528139,
+      "latencyAverageMs": 0.19,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 6,
+      "throughputAverageBytesPerSecond": 27987148.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 528089
+      },
+      "startedAt": "2026-09-13T20:50:32.229Z",
+      "finishedAt": "2026-09-13T20:50:42.231Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 46,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 67724.8,
+      "requestsTotal": 677250,
+      "requestsSent": 677300,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 10091724.81,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 677250
+      },
+      "startedAt": "2026-09-13T20:50:44.294Z",
+      "finishedAt": "2026-09-13T20:50:54.296Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 47,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 91219.2,
+      "requestsTotal": 912192,
+      "requestsSent": 912242,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 11,
+      "throughputAverageBytesPerSecond": 14868889.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 912192
+      },
+      "startedAt": "2026-09-13T20:50:56.360Z",
+      "finishedAt": "2026-09-13T20:51:06.363Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 48,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 74112,
+      "requestsTotal": 741148,
+      "requestsSent": 741198,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 11,
+      "throughputAverageBytesPerSecond": 11043635.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 741148
+      },
+      "startedAt": "2026-09-13T20:51:08.426Z",
+      "finishedAt": "2026-09-13T20:51:18.428Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 49,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 87315.2,
+      "requestsTotal": 872995,
+      "requestsSent": 873045,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 19,
+      "throughputAverageBytesPerSecond": 13007257.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 872995
+      },
+      "startedAt": "2026-09-13T20:51:20.495Z",
+      "finishedAt": "2026-09-13T20:51:30.497Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 50,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 65144,
+      "requestsTotal": 651458,
+      "requestsSent": 651508,
+      "latencyAverageMs": 0.22,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 40,
+      "throughputAverageBytesPerSecond": 9707929.6,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 651458
+      },
+      "startedAt": "2026-09-13T20:51:32.560Z",
+      "finishedAt": "2026-09-13T20:51:42.565Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 51,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 56723.2,
+      "requestsTotal": 567218,
+      "requestsSent": 567268,
+      "latencyAverageMs": 0.23,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 30,
+      "throughputAverageBytesPerSecond": 9813401.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 567218,
+      "statusCodes": {
+        "404": 567218
+      },
+      "startedAt": "2026-09-13T20:51:44.630Z",
+      "finishedAt": "2026-09-13T20:51:54.634Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 52,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 92128,
+      "requestsTotal": 921390,
+      "requestsSent": 921440,
+      "latencyAverageMs": 0.07,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 20,
+      "throughputAverageBytesPerSecond": 17230643.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 921390,
+      "statusCodes": {
+        "404": 921390
+      },
+      "startedAt": "2026-09-13T20:51:56.697Z",
+      "finishedAt": "2026-09-13T20:52:06.700Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 53,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 84320,
+      "requestsTotal": 843133,
+      "requestsSent": 843183,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 14586675.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 843133,
+      "statusCodes": {
+        "404": 843133
+      },
+      "startedAt": "2026-09-13T20:52:08.764Z",
+      "finishedAt": "2026-09-13T20:52:18.767Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 54,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 77715.2,
+      "requestsTotal": 777129,
+      "requestsSent": 777179,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 32,
+      "throughputAverageBytesPerSecond": 13443891.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 777129,
+      "statusCodes": {
+        "404": 777129
+      },
+      "startedAt": "2026-09-13T20:52:20.832Z",
+      "finishedAt": "2026-09-13T20:52:30.836Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 55,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 65912,
+      "requestsTotal": 659134,
+      "requestsSent": 659184,
+      "latencyAverageMs": 0.17,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 15,
+      "throughputAverageBytesPerSecond": 11401625.6,
+      "durationSeconds": 10.01,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 659134,
+      "statusCodes": {
+        "404": 659134
+      },
+      "startedAt": "2026-09-13T20:52:32.901Z",
+      "finishedAt": "2026-09-13T20:52:42.911Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 56,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 59043.2,
+      "requestsTotal": 590360,
+      "requestsSent": 590410,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 9209446.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 590360
+      },
+      "startedAt": "2026-09-13T20:52:44.976Z",
+      "finishedAt": "2026-09-13T20:52:54.979Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 57,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 73836.8,
+      "requestsTotal": 738400,
+      "requestsSent": 738450,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 11520409.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 738400
+      },
+      "startedAt": "2026-09-13T20:52:57.044Z",
+      "finishedAt": "2026-09-13T20:53:07.046Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 58,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 87334.4,
+      "requestsTotal": 873427,
+      "requestsSent": 873477,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 14849638.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 873427
+      },
+      "startedAt": "2026-09-13T20:53:09.107Z",
+      "finishedAt": "2026-09-13T20:53:19.110Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 59,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18971.2,
+      "requestsTotal": 189711,
+      "requestsSent": 189761,
+      "latencyAverageMs": 2.22,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 2959360,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 189711
+      },
+      "startedAt": "2026-09-13T20:53:21.175Z",
+      "finishedAt": "2026-09-13T20:53:31.178Z"
+    },
+    {
+      "trial": 3,
+      "sequence": 60,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 19105.6,
+      "requestsTotal": 191053,
+      "requestsSent": 191103,
+      "latencyAverageMs": 2.21,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 31,
+      "throughputAverageBytesPerSecond": 2980864,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 191053
+      },
+      "startedAt": "2026-09-13T20:53:33.246Z",
+      "finishedAt": "2026-09-13T20:53:43.249Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 61,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 95180.8,
+      "requestsTotal": 951818,
+      "requestsSent": 951868,
+      "latencyAverageMs": 0.06,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 15514828.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 951818
+      },
+      "startedAt": "2026-09-13T20:53:45.315Z",
+      "finishedAt": "2026-09-13T20:53:55.318Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 62,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 67652.8,
+      "requestsTotal": 676510,
+      "requestsSent": 676560,
+      "latencyAverageMs": 0.16,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 14,
+      "throughputAverageBytesPerSecond": 10079436.81,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 676510
+      },
+      "startedAt": "2026-09-13T20:53:57.380Z",
+      "finishedAt": "2026-09-13T20:54:07.383Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 63,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 81862.4,
+      "requestsTotal": 818511,
+      "requestsSent": 818561,
+      "latencyAverageMs": 0.09,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 7,
+      "throughputAverageBytesPerSecond": 12197068.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 818511
+      },
+      "startedAt": "2026-09-13T20:54:09.448Z",
+      "finishedAt": "2026-09-13T20:54:19.452Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 64,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 84544,
+      "requestsTotal": 845417,
+      "requestsSent": 845467,
+      "latencyAverageMs": 0.09,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 12,
+      "throughputAverageBytesPerSecond": 12597657.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 845417
+      },
+      "startedAt": "2026-09-13T20:54:21.515Z",
+      "finishedAt": "2026-09-13T20:54:31.518Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 65,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 68497.61,
+      "requestsTotal": 685043,
+      "requestsSent": 685093,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 6,
+      "throughputAverageBytesPerSecond": 10208051.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 685043
+      },
+      "startedAt": "2026-09-13T20:54:33.582Z",
+      "finishedAt": "2026-09-13T20:54:43.584Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 66,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 95187.2,
+      "requestsTotal": 951840,
+      "requestsSent": 951890,
+      "latencyAverageMs": 0.07,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 16,
+      "throughputAverageBytesPerSecond": 17799168,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 951840,
+      "statusCodes": {
+        "404": 951840
+      },
+      "startedAt": "2026-09-13T20:54:45.645Z",
+      "finishedAt": "2026-09-13T20:54:55.648Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 67,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 92320,
+      "requestsTotal": 923221,
+      "requestsSent": 923271,
+      "latencyAverageMs": 0.07,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 15971942.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 923221,
+      "statusCodes": {
+        "404": 923221
+      },
+      "startedAt": "2026-09-13T20:54:57.711Z",
+      "finishedAt": "2026-09-13T20:55:07.715Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 68,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 86532.8,
+      "requestsTotal": 865348,
+      "requestsSent": 865398,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 12,
+      "throughputAverageBytesPerSecond": 14970880,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 865348,
+      "statusCodes": {
+        "404": 865348
+      },
+      "startedAt": "2026-09-13T20:55:09.778Z",
+      "finishedAt": "2026-09-13T20:55:19.782Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 69,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 69145.61,
+      "requestsTotal": 691477,
+      "requestsSent": 691527,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 11,
+      "throughputAverageBytesPerSecond": 11961958.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 691477,
+      "statusCodes": {
+        "404": 691477
+      },
+      "startedAt": "2026-09-13T20:55:21.847Z",
+      "finishedAt": "2026-09-13T20:55:31.851Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 70,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 62121.6,
+      "requestsTotal": 621184,
+      "requestsSent": 621234,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 7,
+      "throughputAverageBytesPerSecond": 10746265.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 621184,
+      "statusCodes": {
+        "404": 621184
+      },
+      "startedAt": "2026-09-13T20:55:33.915Z",
+      "finishedAt": "2026-09-13T20:55:43.917Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 71,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 69624,
+      "requestsTotal": 696274,
+      "requestsSent": 696324,
+      "latencyAverageMs": 0.13,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 10860953.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 696274
+      },
+      "startedAt": "2026-09-13T20:55:45.985Z",
+      "finishedAt": "2026-09-13T20:55:55.987Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 72,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 82272,
+      "requestsTotal": 822701,
+      "requestsSent": 822751,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 13985382.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 822701
+      },
+      "startedAt": "2026-09-13T20:55:58.049Z",
+      "finishedAt": "2026-09-13T20:56:08.052Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 73,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18833.6,
+      "requestsTotal": 188338,
+      "requestsSent": 188388,
+      "latencyAverageMs": 2.24,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 15,
+      "throughputAverageBytesPerSecond": 2938060.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 188338
+      },
+      "startedAt": "2026-09-13T20:56:10.118Z",
+      "finishedAt": "2026-09-13T20:56:20.120Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 74,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 19038.41,
+      "requestsTotal": 190392,
+      "requestsSent": 190442,
+      "latencyAverageMs": 2.22,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 14,
+      "throughputAverageBytesPerSecond": 2970419.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 190392
+      },
+      "startedAt": "2026-09-13T20:56:22.188Z",
+      "finishedAt": "2026-09-13T20:56:32.192Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 75,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 56796.8,
+      "requestsTotal": 567967,
+      "requestsSent": 568017,
+      "latencyAverageMs": 0.18,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 8859648,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 567967
+      },
+      "startedAt": "2026-09-13T20:56:34.258Z",
+      "finishedAt": "2026-09-13T20:56:44.262Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 76,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 71249.61,
+      "requestsTotal": 712493,
+      "requestsSent": 712543,
+      "latencyAverageMs": 0.13,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 37762662.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 712493
+      },
+      "startedAt": "2026-09-13T20:56:46.328Z",
+      "finishedAt": "2026-09-13T20:56:56.332Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 77,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 44105.6,
+      "requestsTotal": 440993,
+      "requestsSent": 441043,
+      "latencyAverageMs": 0.84,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 23373414.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 440993
+      },
+      "startedAt": "2026-09-13T20:56:58.395Z",
+      "finishedAt": "2026-09-13T20:57:08.398Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 78,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 47955.2,
+      "requestsTotal": 479528,
+      "requestsSent": 479578,
+      "latencyAverageMs": 0.44,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 25416499.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 479528
+      },
+      "startedAt": "2026-09-13T20:57:10.460Z",
+      "finishedAt": "2026-09-13T20:57:20.462Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 79,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 55990.4,
+      "requestsTotal": 559898,
+      "requestsSent": 559948,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 29673062.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 559898
+      },
+      "startedAt": "2026-09-13T20:57:22.528Z",
+      "finishedAt": "2026-09-13T20:57:32.530Z"
+    },
+    {
+      "trial": 4,
+      "sequence": 80,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 81830.4,
+      "requestsTotal": 818289,
+      "requestsSent": 818339,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 44518604.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 818289
+      },
+      "startedAt": "2026-09-13T20:57:34.590Z",
+      "finishedAt": "2026-09-13T20:57:44.593Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 81,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 82822.4,
+      "requestsTotal": 828329,
+      "requestsSent": 828379,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 12,
+      "throughputAverageBytesPerSecond": 14329446.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 828329,
+      "statusCodes": {
+        "404": 828329
+      },
+      "startedAt": "2026-09-13T20:57:46.656Z",
+      "finishedAt": "2026-09-13T20:57:56.660Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 82,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 92064,
+      "requestsTotal": 920494,
+      "requestsSent": 920544,
+      "latencyAverageMs": 0.07,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 3,
+      "throughputAverageBytesPerSecond": 15925248,
+      "durationSeconds": 9.95,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 920494,
+      "statusCodes": {
+        "404": 920494
+      },
+      "startedAt": "2026-09-13T20:57:58.724Z",
+      "finishedAt": "2026-09-13T20:58:08.672Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 83,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 73049.61,
+      "requestsTotal": 730480,
+      "requestsSent": 730530,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 12636160,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 730480,
+      "statusCodes": {
+        "404": 730480
+      },
+      "startedAt": "2026-09-13T20:58:10.736Z",
+      "finishedAt": "2026-09-13T20:58:20.738Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 84,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 65008,
+      "requestsTotal": 650050,
+      "requestsSent": 650100,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 11246796.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 650050,
+      "statusCodes": {
+        "404": 650050
+      },
+      "startedAt": "2026-09-13T20:58:22.802Z",
+      "finishedAt": "2026-09-13T20:58:32.804Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 85,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "requestsPerSecond": 80787.2,
+      "requestsTotal": 807779,
+      "requestsSent": 807829,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 15106048,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 807779,
+      "statusCodes": {
+        "404": 807779
+      },
+      "startedAt": "2026-09-13T20:58:34.867Z",
+      "finishedAt": "2026-09-13T20:58:44.871Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 86,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 77113.61,
+      "requestsTotal": 771145,
+      "requestsSent": 771195,
+      "latencyAverageMs": 0.11,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 13109657.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 771145
+      },
+      "startedAt": "2026-09-13T20:58:46.934Z",
+      "finishedAt": "2026-09-13T20:58:56.937Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 87,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 17811.2,
+      "requestsTotal": 178110,
+      "requestsSent": 178160,
+      "latencyAverageMs": 2.36,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 2778931.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 178110
+      },
+      "startedAt": "2026-09-13T20:58:59.004Z",
+      "finishedAt": "2026-09-13T20:59:09.007Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 88,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 18112,
+      "requestsTotal": 181076,
+      "requestsSent": 181126,
+      "latencyAverageMs": 2.32,
+      "latencyP50Ms": 2,
+      "latencyP99Ms": 5,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 2825011.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 181076
+      },
+      "startedAt": "2026-09-13T20:59:11.077Z",
+      "finishedAt": "2026-09-13T20:59:21.080Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 89,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 59852.8,
+      "requestsTotal": 598484,
+      "requestsSent": 598534,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 4,
+      "throughputAverageBytesPerSecond": 9337241.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 598484
+      },
+      "startedAt": "2026-09-13T20:59:23.148Z",
+      "finishedAt": "2026-09-13T20:59:33.150Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 90,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "requestsPerSecond": 73184,
+      "requestsTotal": 731818,
+      "requestsSent": 731868,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 11416371.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 731818
+      },
+      "startedAt": "2026-09-13T20:59:35.213Z",
+      "finishedAt": "2026-09-13T20:59:45.216Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 91,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 41788.81,
+      "requestsTotal": 417898,
+      "requestsSent": 417948,
+      "latencyAverageMs": 0.97,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 22147891.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 417898
+      },
+      "startedAt": "2026-09-13T20:59:47.280Z",
+      "finishedAt": "2026-09-13T20:59:57.282Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 92,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 45030.4,
+      "requestsTotal": 450276,
+      "requestsSent": 450326,
+      "latencyAverageMs": 0.66,
+      "latencyP50Ms": 1,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 23863296,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 450276
+      },
+      "startedAt": "2026-09-13T20:59:59.345Z",
+      "finishedAt": "2026-09-13T21:00:09.347Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 93,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 49990.4,
+      "requestsTotal": 499888,
+      "requestsSent": 499938,
+      "latencyAverageMs": 0.27,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 2,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 26497843.2,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 499888
+      },
+      "startedAt": "2026-09-13T21:00:11.414Z",
+      "finishedAt": "2026-09-13T21:00:21.417Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 94,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 70963.2,
+      "requestsTotal": 709562,
+      "requestsSent": 709612,
+      "latencyAverageMs": 0.14,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 8,
+      "throughputAverageBytesPerSecond": 38594150.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 709562
+      },
+      "startedAt": "2026-09-13T21:00:23.480Z",
+      "finishedAt": "2026-09-13T21:00:33.483Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 95,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "requestsPerSecond": 64505.6,
+      "requestsTotal": 645056,
+      "requestsSent": 645106,
+      "latencyAverageMs": 0.17,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 34184396.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 645056
+      },
+      "startedAt": "2026-09-13T21:00:35.548Z",
+      "finishedAt": "2026-09-13T21:00:45.550Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 96,
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 68019.2,
+      "requestsTotal": 680052,
+      "requestsSent": 680102,
+      "latencyAverageMs": 0.15,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 10131865.6,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 680052
+      },
+      "startedAt": "2026-09-13T21:00:47.614Z",
+      "finishedAt": "2026-09-13T21:00:57.617Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 97,
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 77612.8,
+      "requestsTotal": 776123,
+      "requestsSent": 776173,
+      "latencyAverageMs": 0.12,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 10,
+      "throughputAverageBytesPerSecond": 11563008,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 776123
+      },
+      "startedAt": "2026-09-13T21:00:59.683Z",
+      "finishedAt": "2026-09-13T21:01:09.686Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 98,
+      "serverId": "hono",
+      "server": "Hono",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 80396.8,
+      "requestsTotal": 804047,
+      "requestsSent": 804097,
+      "latencyAverageMs": 0.1,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 5,
+      "throughputAverageBytesPerSecond": 11982438.4,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 804047
+      },
+      "startedAt": "2026-09-13T21:01:11.751Z",
+      "finishedAt": "2026-09-13T21:01:21.754Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 99,
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 65483.2,
+      "requestsTotal": 654786,
+      "requestsSent": 654836,
+      "latencyAverageMs": 0.16,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 7,
+      "throughputAverageBytesPerSecond": 9756672,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 654786
+      },
+      "startedAt": "2026-09-13T21:01:23.819Z",
+      "finishedAt": "2026-09-13T21:01:33.821Z"
+    },
+    {
+      "trial": 5,
+      "sequence": 100,
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "requestsPerSecond": 86912,
+      "requestsTotal": 869143,
+      "requestsSent": 869193,
+      "latencyAverageMs": 0.08,
+      "latencyP50Ms": 0,
+      "latencyP99Ms": 1,
+      "latencyMaxMs": 9,
+      "throughputAverageBytesPerSecond": 14167244.8,
+      "durationSeconds": 10,
+      "errors": 0,
+      "timeouts": 0,
+      "mismatches": 0,
+      "resets": 0,
+      "non2xx": 0,
+      "statusCodes": {
+        "200": 869143
+      },
+      "startedAt": "2026-09-13T21:01:35.885Z",
+      "finishedAt": "2026-09-13T21:01:45.888Z"
+    }
+  ],
+  "aggregates": [
+    {
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "requestsPerSecond": {
+        "median": 75718.4,
+        "mad": 1299.199999999997,
+        "min": 70963.2,
+        "max": 81830.4
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "serverId": "hono",
+      "server": "Hono",
+      "requestsPerSecond": {
+        "median": 67044.8,
+        "mad": 2539.2000000000044,
+        "min": 64505.6,
+        "max": 71249.61
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.9005202958376334,
+        "mad": 0.013142738529508313,
+        "min": 0.870698542351009,
+        "max": 0.9136630343671417
+      }
+    },
+    {
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "requestsPerSecond": {
+        "median": 52809.6,
+        "mad": 835.2000000000044,
+        "min": 49990.4,
+        "max": 55990.4
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.7025984911986589,
+        "mad": 0.004444852454591919,
+        "min": 0.6842249335210387,
+        "max": 0.7070433436532508
+      }
+    },
+    {
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "requestsPerSecond": {
+        "median": 42147.2,
+        "mad": 262.40000000000146,
+        "min": 41788.81,
+        "max": 44105.6
+      },
+      "latencyP50Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "latencyP99Ms": {
+        "median": 2,
+        "mad": 0,
+        "min": 2,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.5600963570281464,
+        "mad": 0.008084621906604084,
+        "min": 0.5389879555764118,
+        "max": 0.5888800110479798
+      }
+    },
+    {
+      "scenarioId": "list",
+      "scenario": "GET /pets?limit=10",
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "requestsPerSecond": {
+        "median": 46508.8,
+        "mad": 291.1999999999971,
+        "min": 45030.4,
+        "max": 47955.2
+      },
+      "latencyP50Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 0,
+        "max": 1
+      },
+      "latencyP99Ms": {
+        "median": 2,
+        "mad": 0,
+        "min": 2,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.6129505448449287,
+        "mad": 0.012006455499068536,
+        "min": 0.5860315970592836,
+        "max": 0.6345598845598847
+      }
+    },
+    {
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "requestsPerSecond": {
+        "median": 91020.8,
+        "mad": 198.39999999999418,
+        "min": 86912,
+        "max": 95180.8
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "serverId": "hono",
+      "server": "Hono",
+      "requestsPerSecond": {
+        "median": 83174.4,
+        "mad": 1369.6000000000058,
+        "min": 65144,
+        "max": 84544
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.9141470960483756,
+        "mad": 0.010889722802876256,
+        "min": 0.7141478986879956,
+        "max": 0.9250368188512519
+      }
+    },
+    {
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "requestsPerSecond": {
+        "median": 81862.4,
+        "mad": 1568,
+        "min": 77612.8,
+        "max": 87315.2
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.8930044182621503,
+        "mad": 0.025282423101614215,
+        "min": 0.8600726196880042,
+        "max": 0.9572019925629692
+      }
+    },
+    {
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "requestsPerSecond": {
+        "median": 67822.4,
+        "mad": 675.2100000000064,
+        "min": 65483.2,
+        "max": 75232
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.7464954916877994,
+        "mad": 0.006947070904247732,
+        "min": 0.7196578511632598,
+        "max": 0.826536352130502
+      }
+    },
+    {
+      "scenarioId": "read",
+      "scenario": "GET /pets/:id (success)",
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "requestsPerSecond": {
+        "median": 72896,
+        "mad": 1216,
+        "min": 67652.8,
+        "max": 74112
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.8018563888693573,
+        "mad": 0.010604145754932404,
+        "min": 0.7107820064550834,
+        "max": 0.8124605346242897
+      }
+    },
+    {
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "requestsPerSecond": {
+        "median": 90304,
+        "mad": 4883.199999999997,
+        "min": 80787.2,
+        "max": 95187.2
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "serverId": "hono",
+      "server": "Hono",
+      "requestsPerSecond": {
+        "median": 82822.4,
+        "mad": 3052.7899999999936,
+        "min": 77139.2,
+        "max": 92320
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.9523956263849621,
+        "mad": 0.03714727626339209,
+        "min": 0.8542168674698795,
+        "max": 1.0251921096411312
+      }
+    },
+    {
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "requestsPerSecond": {
+        "median": 86532.8,
+        "mad": 5531.199999999997,
+        "min": 77523.2,
+        "max": 92064
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.9255749980897072,
+        "mad": 0.06074675952900299,
+        "min": 0.8435567905522751,
+        "max": 1.1395864691436268
+      }
+    },
+    {
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "requestsPerSecond": {
+        "median": 62121.6,
+        "mad": 2886.4000000000015,
+        "min": 56723.2,
+        "max": 65008
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.7017269045617789,
+        "mad": 0.04910134146085776,
+        "min": 0.6156998957971518,
+        "max": 0.8046819298106631
+      }
+    },
+    {
+      "scenarioId": "not-found",
+      "scenario": "GET /pets/:id (404)",
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "requestsPerSecond": {
+        "median": 69145.61,
+        "mad": 3468.7899999999936,
+        "min": 65046.4,
+        "max": 73049.61
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.7766103767097119,
+        "mad": 0.050193274410243016,
+        "min": 0.7154393886766238,
+        "max": 0.9042225748633447
+      }
+    },
+    {
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "serverId": "bare-bun",
+      "server": "Bare Bun",
+      "requestsPerSecond": {
+        "median": 82272,
+        "mad": 5062.399999999994,
+        "min": 59488.8,
+        "max": 87334.4
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 5
+      },
+      "throughputRatioToBare": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "serverId": "hono",
+      "server": "Hono",
+      "requestsPerSecond": {
+        "median": 72704,
+        "mad": 1132.800000000003,
+        "min": 68012.8,
+        "max": 73836.8
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 1
+      },
+      "throughputRatioToBare": {
+        "median": 0.8547137160484539,
+        "mad": 0.009264500161014322,
+        "min": 0.8454492158874396,
+        "max": 1.1432874759618616
+      }
+    },
+    {
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "serverId": "hono-zod",
+      "server": "Hono+Zod",
+      "requestsPerSecond": {
+        "median": 59043.2,
+        "mad": 809.6000000000058,
+        "min": 56796.8,
+        "max": 59852.8
+      },
+      "latencyP50Ms": {
+        "median": 0,
+        "mad": 0,
+        "min": 0,
+        "max": 0
+      },
+      "latencyP99Ms": {
+        "median": 1,
+        "mad": 0,
+        "min": 1,
+        "max": 2
+      },
+      "throughputRatioToBare": {
+        "median": 0.6984425551124821,
+        "mad": 0.022383636748126268,
+        "min": 0.6760589183643558,
+        "max": 0.9583518242089266
+      }
+    },
+    {
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "serverId": "typespex",
+      "server": "TypeSpex before",
+      "requestsPerSecond": {
+        "median": 18833.6,
+        "mad": 137.60000000000218,
+        "min": 17811.2,
+        "max": 18971.2
+      },
+      "latencyP50Ms": {
+        "median": 2,
+        "mad": 0,
+        "min": 2,
+        "max": 2
+      },
+      "latencyP99Ms": {
+        "median": 5,
+        "mad": 0,
+        "min": 5,
+        "max": 5
+      },
+      "throughputRatioToBare": {
+        "median": 0.22891870867366781,
+        "mad": 0.007509484386556242,
+        "min": 0.2172248277883629,
+        "max": 0.3030351931792203
+      }
+    },
+    {
+      "scenarioId": "create",
+      "scenario": "POST /pets (create)",
+      "serverId": "typespex-prototype",
+      "server": "TypeSpex optimized",
+      "requestsPerSecond": {
+        "median": 19038.41,
+        "mad": 435.1899999999987,
+        "min": 18012.8,
+        "max": 19473.6
+      },
+      "latencyP50Ms": {
+        "median": 2,
+        "mad": 0,
+        "min": 2,
+        "max": 2
+      },
+      "latencyP99Ms": {
+        "median": 5,
+        "mad": 0,
+        "min": 5,
+        "max": 5
+      },
+      "throughputRatioToBare": {
+        "median": 0.23140813399455465,
+        "mad": 0.003466098971584536,
+        "min": 0.21876374029019494,
+        "max": 0.3027931308078159
+      }
+    }
+  ],
+  "comparison": {
+    "beforeHttpCommit": "7fe006d7783bfc6dcf3ab44d7d070ae01a06cd6f",
+    "afterHttpCommit": "43bb211be1ef9a9785e86baef3bbc4f1ea308671",
+    "mergedAs": "6ede99ce4e46d81ce176f1cbbfedd67e46e6367f",
+    "environmentNote": "Shared Apple M1 Pro laptop; an unrelated background process occupied approximately one CPU core. No concurrent tests or builds from this benchmark session."
+  }
+}

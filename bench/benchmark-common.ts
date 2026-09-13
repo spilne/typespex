@@ -123,6 +123,7 @@ export async function benchmarkMetadata(repositoryRoot: string) {
     dependencies: {
       autocannon: await installedPackageVersion(repositoryRoot, "autocannon"),
       hono: await installedPackageVersion(repositoryRoot, "hono"),
+      elysia: await installedPackageVersion(repositoryRoot, "elysia"),
       honoZodValidator: await installedPackageVersion(repositoryRoot, "@hono/zod-validator"),
       zod: await installedPackageVersion(repositoryRoot, "zod"),
       tinybench: await installedPackageVersion(repositoryRoot, "tinybench"),

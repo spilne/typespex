@@ -89,6 +89,19 @@ export interface HttpRouterOptions<Ctx extends RequestContext> {
   readonly maxRequestBodyBytes?: RequestBodyLimit;
 }
 
+/** Request facts verified by the hosting HTTP transport. */
+export interface HttpRequestTransportInfo {
+  /** Original request whose body was framed by the transport; never replace this reference. */
+  readonly request: Request;
+  /**
+   * Exact body length enforced by the transport's HTTP message framing,
+   * expressed as a non-negative safe integer.
+   * Adapters must not derive this from unverified client headers. Use ordinary
+   * handle(request) for synthetic requests and chunked or unbounded bodies.
+   */
+  readonly verifiedBodyLength: number;
+}
+
 /** HTTP request handler accepted by the runtime adapters. */
 export interface HttpRouter {
   /** Handles a request, including configured middleware and not-found handling. */
@@ -110,6 +123,36 @@ export interface HttpRouter {
 /** Router that can distinguish an unmatched request from a matched response. */
 export interface ComposableHttpRouter extends HttpRouter {
   tryHandle(request: Request): Promise<Response | undefined>;
+}
+
+const transportHandlers = new WeakMap<
+  HttpRouter,
+  {
+    readonly handle: HttpRouter["handle"];
+    readonly handleWithTransport: (
+      request: Request,
+      transport: HttpRequestTransportInfo,
+    ) => Promise<Response>;
+  }
+>();
+
+/**
+ * Adapter entry point for transport-verified request facts. Only an unchanged
+ * router created here can use the shortcut; copies and wrappers keep control
+ * through their ordinary handle method.
+ *
+ * The transport must enforce the supplied length on this original Request.
+ * A client-provided Content-Length header alone does not establish that bound.
+ */
+export function handleRequestWithTransport(
+  router: HttpRouter,
+  request: Request,
+  transport: HttpRequestTransportInfo,
+): Promise<Response> {
+  const registered = transportHandlers.get(router);
+  return registered && registered.handle === router.handle
+    ? registered.handleWithTransport(request, transport)
+    : router.handle(request);
 }
 
 /** Binds one generated server operation to its implementation handler. */
@@ -178,10 +221,15 @@ export function createHttpRouter<Ctx extends RequestContext>(
   async function execute(
     request: Request,
     matched: ReturnType<typeof routeMatcher.match>,
+    transport?: HttpRequestTransportInfo,
   ): Promise<Response> {
     let context: Ctx | undefined;
     try {
-      request = enforceRequestBodyLimit(request, maxRequestBodyBytes);
+      request = enforceRequestBodyLimit(
+        request,
+        maxRequestBodyBytes,
+        transport?.request === request ? transport.verifiedBodyLength : undefined,
+      );
       const match: MatchedEndpoint | undefined = matched
         ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
         : undefined;
@@ -204,7 +252,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
     }
   }
 
-  return {
+  const router: ComposableHttpRouter = {
     async handle(request: Request): Promise<Response> {
       return execute(request, matchRequest(request));
     },
@@ -215,4 +263,11 @@ export function createHttpRouter<Ctx extends RequestContext>(
       return execute(request, matched);
     },
   };
+  transportHandlers.set(router, {
+    handle: router.handle,
+    handleWithTransport(request, transport) {
+      return execute(request, matchRequest(request), transport);
+    },
+  });
+  return router;
 }

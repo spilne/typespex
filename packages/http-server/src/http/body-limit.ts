@@ -28,8 +28,12 @@ export class RequestBodyTooLargeError extends HttpError {
 
 interface RequestBodyLimitState {
   maximum: RequestBodyLimit;
+  readonly verifiedBodyLength?: number;
   received: number;
   readonly source: ReadableStream<Uint8Array> | null;
+  // Preserve native buffering without creating Request.body's stream wrapper.
+  // Read it only when a rejected request needs draining.
+  readonly nativeRequest?: Request;
   reader?: ReadableStreamDefaultReader<Uint8Array>;
   reading: boolean;
   draining: boolean;
@@ -56,7 +60,9 @@ export function resolveRequestBodyLimit(limit?: RequestBodyLimit): RequestBodyLi
 }
 
 /**
- * Returns a request whose body is counted while it is consumed.
+ * Returns a request whose body is bounded while it is consumed.
+ * A transport-verified byte length preserves the native request without a
+ * counting stream; it must be a non-negative safe integer.
  *
  * Reapplying an unspecified limit to an already-limited request inherits the
  * existing policy. An explicit smaller limit tightens the existing counter
@@ -66,6 +72,7 @@ export function resolveRequestBodyLimit(limit?: RequestBodyLimit): RequestBodyLi
 export function enforceRequestBodyLimit(
   request: Request,
   configuredLimit?: RequestBodyLimit,
+  verifiedBodyLength?: number,
 ): Request {
   const existing = requestBodyLimitStates.get(request);
   if (existing) {
@@ -76,12 +83,13 @@ export function enforceRequestBodyLimit(
       return request;
     }
     if (existing.maximum === false) {
-      return createLimitedRequest(request, requested);
+      return createLimitedRequest(request, requested, existing.verifiedBodyLength);
     }
 
     existing.maximum = requested;
     const error =
       contentLengthError(request, requested) ??
+      verifiedLengthError(existing.verifiedBodyLength, requested) ??
       (existing.received > requested
         ? new RequestBodyTooLargeError(requested, undefined, existing.received)
         : undefined);
@@ -93,12 +101,20 @@ export function enforceRequestBodyLimit(
     return request;
   }
 
+  if (
+    verifiedBodyLength !== undefined &&
+    (!Number.isSafeInteger(verifiedBodyLength) || verifiedBodyLength < 0)
+  ) {
+    throw new RangeError("Verified request body length must be a non-negative safe integer.");
+  }
   const maximum = resolveRequestBodyLimit(configuredLimit);
   if (maximum === false) {
     requestBodyLimitStates.set(request, {
       maximum,
+      verifiedBodyLength,
       received: 0,
-      source: request.body,
+      source: verifiedBodyLength === undefined ? request.body : null,
+      nativeRequest: verifiedBodyLength === undefined ? undefined : request,
       reading: false,
       draining: false,
       drainRequested: false,
@@ -106,7 +122,7 @@ export function enforceRequestBodyLimit(
     return request;
   }
 
-  return createLimitedRequest(request, maximum);
+  return createLimitedRequest(request, maximum, verifiedBodyLength);
 }
 
 /**
@@ -131,23 +147,32 @@ export function releaseRequestBodyLimit(request: Request): void {
   if (state && !state.reading && !state.draining) releaseReader(state);
 }
 
-function createLimitedRequest(request: Request, maximum: number): Request {
+function createLimitedRequest(
+  request: Request,
+  maximum: number,
+  verifiedBodyLength?: number,
+): Request {
   const state: RequestBodyLimitState = {
     maximum,
+    verifiedBodyLength,
     received: 0,
-    source: request.body,
+    source: verifiedBodyLength === undefined ? request.body : null,
+    nativeRequest: verifiedBodyLength === undefined ? undefined : request,
     reading: false,
     draining: false,
     drainRequested: false,
   };
 
-  const earlyError = contentLengthError(request, maximum);
+  const earlyError =
+    contentLengthError(request, maximum) ?? verifiedLengthError(verifiedBodyLength, maximum);
   if (earlyError) {
     state.error = earlyError;
     beginSafeDrain(state);
     throw earlyError;
   }
-  if (request.body === null) {
+  // Verified HTTP framing already bounds this body. Retaining the native
+  // Request lets its consumer use the transport's buffered-body fast path.
+  if (verifiedBodyLength !== undefined || request.body === null) {
     requestBodyLimitStates.set(request, state);
     return request;
   }
@@ -221,6 +246,15 @@ function createLimitedRequest(request: Request, maximum: number): Request {
   return limitedRequest;
 }
 
+function verifiedLengthError(
+  length: number | undefined,
+  maximum: number,
+): RequestBodyTooLargeError | undefined {
+  return length !== undefined && length > maximum
+    ? new RequestBodyTooLargeError(maximum, String(length))
+    : undefined;
+}
+
 function contentLengthError(
   request: Request,
   maximum: number,
@@ -245,12 +279,14 @@ function contentLengthError(
  */
 function beginSafeDrain(state: RequestBodyLimitState): void {
   state.drainRequested = true;
-  if (state.reading || state.draining || state.source === null) return;
+  if (state.reading || state.draining) return;
+  const source = state.source ?? state.nativeRequest?.body;
+  if (!source) return;
   state.draining = true;
 
   void (async () => {
     try {
-      const reader = (state.reader ??= state.source!.getReader());
+      const reader = (state.reader ??= source.getReader());
       for (;;) {
         const next = await reader.read();
         if (next.done) break;
