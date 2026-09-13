@@ -341,8 +341,8 @@ describe("@typespex/mcp emitter", () => {
       `    mode: [http-bridge]\n    application-module: "../../../../application.js"\n    launchers: [node]\n`,
       {
         "application.ts": `
-          import { definePetApiMcpApplication } from "./generated/@typespex/mcp-emitter/pet-api/mcp-server.js";
-          export default definePetApiMcpApplication({ kind: "http-bridge", bridge: {} });
+          import { definePetAPIMcpApplication } from "./generated/@typespex/mcp-emitter/pet-api/mcp-server.js";
+          export default definePetAPIMcpApplication({ kind: "http-bridge", bridge: {} });
         `,
       },
     );
