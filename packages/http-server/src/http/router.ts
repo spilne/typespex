@@ -89,10 +89,26 @@ export interface HttpRouterOptions<Ctx extends RequestContext> {
   readonly maxRequestBodyBytes?: RequestBodyLimit;
 }
 
+/** Request facts verified by the hosting HTTP transport. */
+export interface HttpRequestTransportInfo {
+  /** Original request whose body was framed by the transport; never replace this reference. */
+  readonly request: Request;
+  /**
+   * Exact body length enforced by the transport's HTTP message framing,
+   * expressed as a non-negative safe integer.
+   * Adapters must not derive this from unverified client headers. Omit it
+   * for synthetic requests and chunked or otherwise unbounded bodies.
+   */
+  readonly verifiedBodyLength: number;
+}
+
 /** HTTP request handler accepted by the runtime adapters. */
 export interface HttpRouter {
   /** Handles a request, including configured middleware and not-found handling. */
   handle(request: Request): Promise<Response>;
+
+  /** Optional adapter capability; transport facts apply only to their original Request. */
+  handleWithTransport?(request: Request, transport: HttpRequestTransportInfo): Promise<Response>;
 
   /**
    * Handles a request only when one of the router's operations matches it.
@@ -178,10 +194,15 @@ export function createHttpRouter<Ctx extends RequestContext>(
   async function execute(
     request: Request,
     matched: ReturnType<typeof routeMatcher.match>,
+    transport?: HttpRequestTransportInfo,
   ): Promise<Response> {
     let context: Ctx | undefined;
     try {
-      request = enforceRequestBodyLimit(request, maxRequestBodyBytes);
+      request = enforceRequestBodyLimit(
+        request,
+        maxRequestBodyBytes,
+        transport?.request === request ? transport.verifiedBodyLength : undefined,
+      );
       const match: MatchedEndpoint | undefined = matched
         ? { endpoint: matched.route.operation.endpoint, pathParams: matched.pathParams }
         : undefined;
@@ -207,6 +228,13 @@ export function createHttpRouter<Ctx extends RequestContext>(
   return {
     async handle(request: Request): Promise<Response> {
       return execute(request, matchRequest(request));
+    },
+
+    async handleWithTransport(
+      request: Request,
+      transport: HttpRequestTransportInfo,
+    ): Promise<Response> {
+      return execute(request, matchRequest(request), transport);
     },
 
     async tryHandle(request: Request): Promise<Response | undefined> {

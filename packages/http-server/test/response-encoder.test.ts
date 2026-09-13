@@ -22,6 +22,50 @@ describe("ResponseEncoders", () => {
     expect(await response.text()).toBe('{"value":9223372036854775807}');
   });
 
+  test("json escapes property names and strings like native JSON", async () => {
+    const encoder = ResponseEncoders.json();
+    const codePoints = [
+      ...Array.from({ length: 32 }, (_, index) => index),
+      0x22,
+      0x5c,
+      0x7f,
+      0x2028,
+      0x2029,
+      0xd7ff,
+      0xd800,
+      0xdbff,
+      0xdc00,
+      0xdfff,
+      0xe000,
+      0xffff,
+      0x10000,
+      0x1f98a,
+      0x10ffff,
+    ];
+    for (const codePoint of codePoints) {
+      const text = `prefix${String.fromCodePoint(codePoint)}suffix`;
+      const value = { [text]: text };
+      expect(await encoder.encode(value).text()).toBe(JSON.stringify(value));
+    }
+  });
+
+  test("default response headers are independent and explicit content types remain mutable", () => {
+    const encoder = ResponseEncoders.json();
+    const first = encoder.encode({ id: 1 });
+    first.headers.set("content-type", "text/plain");
+    expect(encoder.encode({ id: 2 }).headers.get("content-type")).toBe("application/json");
+
+    const headers = new Headers({ "content-type": "application/custom+json", "x-value": "first" });
+    const custom = ResponseEncoders.json(201, { headers });
+    headers.set("x-value", "second");
+    const response = custom.encode({ id: 3 });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("content-type")).toBe("application/custom+json");
+    expect(response.headers.get("x-value")).toBe("second");
+    response.headers.set("x-value", "response-only");
+    expect(headers.get("x-value")).toBe("second");
+  });
+
   test("json encodes nested bytes as base64 strings", async () => {
     const response = ResponseEncoders.json<{ value: Uint8Array }>(200).encode({
       value: new Uint8Array([1, 2, 255]),

@@ -48,6 +48,7 @@ export const SERVERS: readonly BenchmarkServer[] = [
   { id: "hono", name: "Hono", port: 3458, script: "bench-hono.ts" },
   { id: "hono-zod", name: "Hono+Zod", port: 3459, script: "bench-hono-zod.ts" },
   { id: "typespex", name: "TypeSpex", port: 3456, script: "bench-typespex.ts" },
+  { id: "elysia", name: "Elysia", port: 3461, script: "bench-elysia.ts" },
 ] as const;
 
 export interface BenchmarkScenario {

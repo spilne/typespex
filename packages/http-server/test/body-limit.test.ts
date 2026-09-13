@@ -14,7 +14,7 @@ import {
   emptyHints,
   type ServerOperation,
 } from "../src/server.js";
-import { resolveRequestBodyLimit } from "../src/http/body-limit.js";
+import { enforceRequestBodyLimit, resolveRequestBodyLimit } from "../src/http/body-limit.js";
 
 const encoder = new TextEncoder();
 
@@ -50,6 +50,36 @@ function expectTooLarge(result: Awaited<ReturnType<typeof decodeBody>>): Request
 }
 
 describe("request body limits", () => {
+  test("verified transport lengths retain native bodies and preserve tighter policies", async () => {
+    const request = new Request("http://localhost/body", {
+      method: "POST",
+      headers: { "content-length": "5" },
+      body: "hello",
+    });
+    expect(enforceRequestBodyLimit(request, 5, 5)).toBe(request);
+    expect(enforceRequestBodyLimit(request, 10)).toBe(request);
+    expect(await request.text()).toBe("hello");
+
+    request.headers.set("content-length", "1");
+    expect(() => enforceRequestBodyLimit(request, 4)).toThrow(RequestBodyTooLargeError);
+  });
+
+  test("a verified length remains enforceable when a decoder enables a smaller limit", () => {
+    for (const outerLimit of [false, 10] as const) {
+      const request = new Request("http://localhost/body", { method: "POST", body: "hello" });
+      enforceRequestBodyLimit(request, outerLimit, 5);
+      expect(() => enforceRequestBodyLimit(request, 4)).toThrow(RequestBodyTooLargeError);
+    }
+  });
+
+  test("rejects oversized or invalid transport lengths before reading the body", () => {
+    const request = () => new Request("http://localhost/body", { method: "POST", body: "hello" });
+    expect(() => enforceRequestBodyLimit(request(), 4, 5)).toThrow(RequestBodyTooLargeError);
+    for (const length of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => enforceRequestBodyLimit(request(), 5, length)).toThrow(RangeError);
+    }
+  });
+
   test("uses a documented finite 10 MiB default and validates overrides", () => {
     expect(DEFAULT_MAX_REQUEST_BODY_BYTES).toBe(10 * 1024 * 1024);
     expect(resolveRequestBodyLimit()).toBe(DEFAULT_MAX_REQUEST_BODY_BYTES);
