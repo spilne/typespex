@@ -4,11 +4,13 @@ import {
   getMaxValueExclusiveAsNumeric,
   getMinValueAsNumeric,
   getMinValueExclusiveAsNumeric,
+  serializeValueAsJson,
   type DiagnosticTarget,
   type EncodeData,
   type ModelProperty,
   type Program,
   type Scalar,
+  type Value,
 } from "@typespec/compiler";
 import type { ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema } from "./plans.js";
@@ -45,6 +47,23 @@ const NUMERIC_INTRINSICS: ReadonlySet<string> = new Set([
   ...FLOAT_INTRINSICS,
   ...DECIMAL_INTRINSICS,
 ]);
+const DATE_TIME_INTRINSICS: ReadonlySet<string> = new Set([
+  "plainDate",
+  "plainTime",
+  "utcDateTime",
+  "offsetDateTime",
+  "duration",
+]);
+
+type ScalarDefaultValue = Extract<
+  Value,
+  { readonly valueKind: "BooleanValue" | "NumericValue" | "ScalarValue" }
+>;
+
+interface ScalarDefaultContext {
+  readonly scalar?: Scalar;
+  readonly encodingTarget?: ModelProperty | Scalar;
+}
 
 /** Maps TypeSpec scalars to semantic types, JSON wire schemas, and codecs. */
 export class ScalarPlanner {
@@ -53,7 +72,7 @@ export class ScalarPlanner {
     private readonly options: ScalarPlannerOptions,
   ) {}
 
-  intrinsicName(scalar: Scalar): string {
+  private intrinsicName(scalar: Scalar): string {
     let current: Scalar | undefined = scalar;
     while (current) {
       if (this.program.checker.isStdType(current)) return current.name;
@@ -305,7 +324,45 @@ export class ScalarPlanner {
     return { kind: "identity" };
   }
 
-  effectiveEncoding(scalar: Scalar, target: ModelProperty | Scalar): EncodeData | undefined {
+  defaultValueToJson(
+    value: ScalarDefaultValue,
+    { scalar, encodingTarget }: ScalarDefaultContext,
+  ): unknown {
+    switch (value.valueKind) {
+      case "BooleanValue":
+        return this.usesDeclaredStringEncoding(scalar, encodingTarget)
+          ? String(value.value)
+          : value.value;
+      case "NumericValue":
+        if (this.numericDefaultUsesString(scalar, encodingTarget)) {
+          return value.value.toString();
+        }
+        return value.value.asNumber() ?? value.value.toString();
+      case "ScalarValue": {
+        // Only standard date/time constructors have an unambiguous JSON representation.
+        // Opaque constructors must not silently inherit their first argument's wire shape.
+        const intrinsic = this.intrinsicName(value.scalar);
+        if (value.value.name !== "fromISO" || !DATE_TIME_INTRINSICS.has(intrinsic)) {
+          return undefined;
+        }
+        const resolvedScalar = scalar ?? value.scalar;
+        const target = encodingTarget ?? resolvedScalar;
+        return serializeValueAsJson(
+          this.program,
+          value,
+          resolvedScalar,
+          this.options.canonicalJsonWire
+            ? undefined
+            : this.effectiveEncoding(resolvedScalar, target),
+        );
+      }
+    }
+  }
+
+  private effectiveEncoding(
+    scalar: Scalar,
+    target: ModelProperty | Scalar,
+  ): EncodeData | undefined {
     if (target.kind === "ModelProperty") {
       const propertyEncode = getEncode(this.program, target);
       if (propertyEncode) return propertyEncode;
@@ -319,7 +376,7 @@ export class ScalarPlanner {
     return undefined;
   }
 
-  isJsonSafeIntegerRange(scalar: Scalar, target: ModelProperty | Scalar): boolean {
+  private isJsonSafeIntegerRange(scalar: Scalar, target: ModelProperty | Scalar): boolean {
     const scalarMinimum =
       target === scalar
         ? undefined
@@ -367,6 +424,30 @@ export class ScalarPlanner {
       target,
     );
     return false;
+  }
+
+  private usesDeclaredStringEncoding(
+    scalar: Scalar | undefined,
+    target: ModelProperty | Scalar | undefined,
+  ): boolean {
+    if (this.options.canonicalJsonWire || !scalar || !target) return false;
+    const encoding = this.effectiveEncoding(scalar, target);
+    return encoding !== undefined && this.intrinsicName(encoding.type) === "string";
+  }
+
+  private numericDefaultUsesString(
+    scalar: Scalar | undefined,
+    target: ModelProperty | Scalar | undefined,
+  ): boolean {
+    if (!scalar || !target) return false;
+    if (!this.options.canonicalJsonWire) {
+      return this.usesDeclaredStringEncoding(scalar, target);
+    }
+    const intrinsic = this.intrinsicName(scalar);
+    return (
+      DECIMAL_INTRINSICS.has(intrinsic) ||
+      (BIGINT_INTRINSICS.has(intrinsic) && !this.isJsonSafeIntegerRange(scalar, target))
+    );
   }
 
   private isCanonicalEncodingSupported(

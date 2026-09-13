@@ -1353,42 +1353,15 @@ export class TypePlanner {
     switch (value.valueKind) {
       case "StringValue":
         return value.value;
-      case "BooleanValue": {
-        const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
+      case "BooleanValue":
+      case "NumericValue":
+      case "ScalarValue": {
+        const scalar = resolvedTarget.kind === "Scalar" ? resolvedTarget : value.scalar;
         const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
-        const encode =
-          scalar && encodingTarget
-            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
-            : undefined;
-        return !this.options.canonicalJsonWire &&
-          encode &&
-          this.scalars.intrinsicName(encode.type) === "string"
-          ? String(value.value)
-          : value.value;
+        return this.scalars.defaultValueToJson(value, { scalar, encodingTarget });
       }
       case "NullValue":
         return null;
-      case "NumericValue": {
-        const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
-        const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
-        const encode =
-          scalar && encodingTarget
-            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
-            : undefined;
-        const number = value.value.asNumber();
-        const canonicalString =
-          this.options.canonicalJsonWire &&
-          scalar !== undefined &&
-          (["numeric", "decimal", "decimal128"].includes(this.scalars.intrinsicName(scalar)) ||
-            (["int64", "uint64", "integer"].includes(this.scalars.intrinsicName(scalar)) &&
-              !this.scalars.isJsonSafeIntegerRange(scalar, encodingTarget ?? scalar)));
-        return (encode &&
-          this.scalars.intrinsicName(encode.type) === "string" &&
-          !this.options.canonicalJsonWire) ||
-          canonicalString
-          ? value.value.toString()
-          : (number ?? value.value.toString());
-      }
       case "EnumValue":
         return this.enumMemberValue(value.value);
       case "ArrayValue": {
@@ -1422,29 +1395,6 @@ export class TypePlanner {
           }),
         );
       }
-      case "ScalarValue": {
-        // Only standard date/time constructors have an unambiguous JSON representation.
-        // Opaque scalar constructors must not silently inherit their first argument's wire shape.
-        const intrinsic = this.scalars.intrinsicName(value.scalar);
-        if (
-          value.value.name !== "fromISO" ||
-          !["utcDateTime", "offsetDateTime", "plainDate", "plainTime", "duration"].includes(
-            intrinsic,
-          )
-        ) {
-          return undefined;
-        }
-        const scalar = resolvedTarget.kind === "Scalar" ? resolvedTarget : value.scalar;
-        const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
-        return serializeValueAsJson(
-          this.program,
-          value,
-          scalar,
-          !this.options.canonicalJsonWire && encodingTarget
-            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
-            : undefined,
-        );
-      }
       default:
         return undefined;
     }
@@ -1469,10 +1419,6 @@ export class TypePlanner {
       }
     }
     return unwrapped;
-  }
-
-  private defaultValueScalar(valueScalar: Scalar | undefined, target: Type): Scalar | undefined {
-    return target.kind === "Scalar" ? target : valueScalar;
   }
 
   private propertyDisplayName(property: ModelProperty): string {
