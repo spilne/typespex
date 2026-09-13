@@ -1357,7 +1357,9 @@ export class TypePlanner {
         const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
         const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
         const encode =
-          scalar && encodingTarget ? this.scalars.encode(scalar, encodingTarget) : undefined;
+          scalar && encodingTarget
+            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
+            : undefined;
         return !this.options.canonicalJsonWire &&
           encode &&
           this.scalars.intrinsicName(encode.type) === "string"
@@ -1370,7 +1372,9 @@ export class TypePlanner {
         const scalar = this.defaultValueScalar(value.scalar, resolvedTarget);
         const encodingTarget = target.kind === "ModelProperty" ? target : scalar;
         const encode =
-          scalar && encodingTarget ? this.scalars.encode(scalar, encodingTarget) : undefined;
+          scalar && encodingTarget
+            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
+            : undefined;
         const number = value.value.asNumber();
         const canonicalString =
           this.options.canonicalJsonWire &&
@@ -1437,7 +1441,7 @@ export class TypePlanner {
           value,
           scalar,
           !this.options.canonicalJsonWire && encodingTarget
-            ? this.scalars.encode(scalar, encodingTarget)
+            ? this.scalars.effectiveEncoding(scalar, encodingTarget)
             : undefined,
         );
       }

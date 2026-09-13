@@ -96,7 +96,7 @@ export class ScalarPlanner {
 
   schema(scalar: Scalar, encodingTarget: ModelProperty | Scalar): JsonSchema {
     const intrinsic = this.intrinsicName(scalar);
-    const declaredEncode = this.encode(scalar, encodingTarget);
+    const declaredEncode = this.effectiveEncoding(scalar, encodingTarget);
     if (
       this.options.canonicalJsonWire &&
       declaredEncode &&
@@ -241,7 +241,7 @@ export class ScalarPlanner {
 
   codec(scalar: Scalar, encodingTarget: ModelProperty | Scalar): ValueCodecSpec {
     const intrinsic = this.intrinsicName(scalar);
-    const declaredEncode = this.encode(scalar, encodingTarget);
+    const declaredEncode = this.effectiveEncoding(scalar, encodingTarget);
     const encode = this.options.canonicalJsonWire ? undefined : declaredEncode;
     const wireIntrinsic = encode ? this.intrinsicName(encode.type) : undefined;
     const encodedAsString = wireIntrinsic === "string";
@@ -348,7 +348,7 @@ export class ScalarPlanner {
     return { kind: "identity" };
   }
 
-  encode(scalar: Scalar, target: ModelProperty | Scalar): EncodeData | undefined {
+  effectiveEncoding(scalar: Scalar, target: ModelProperty | Scalar): EncodeData | undefined {
     if (target.kind === "ModelProperty") {
       const propertyEncode = getEncode(this.program, target);
       if (propertyEncode) return propertyEncode;
