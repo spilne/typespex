@@ -20,7 +20,7 @@ function serializeJsonValue(
 
   switch (typeof value) {
     case "string":
-      return JSON.stringify(value);
+      return quoteJsonString(value);
     case "boolean":
       return value ? "true" : "false";
     case "number":
@@ -72,7 +72,7 @@ function serializeJsonValue(
       );
       if (item !== undefined) {
         if (entries.length > 0) entries += ",";
-        entries += `${JSON.stringify(property)}:${item}`;
+        entries += `${quoteJsonString(property)}:${item}`;
       }
     }
     serialized = `{${entries}}`;
@@ -80,4 +80,10 @@ function serializeJsonValue(
 
   ancestors.delete(value);
   return serialized;
+}
+
+// Native stringification handles escapes and lone surrogates; ordinary strings
+// can be quoted directly without entering the native JSON serializer.
+function quoteJsonString(value: string): string {
+  return /["\\\u0000-\u001f\uD800-\uDFFF]/.test(value) ? JSON.stringify(value) : `"${value}"`;
 }

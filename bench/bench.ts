@@ -48,6 +48,7 @@ export const SERVERS: readonly BenchmarkServer[] = [
   { id: "hono", name: "Hono", port: 3458, script: "bench-hono.ts" },
   { id: "hono-zod", name: "Hono+Zod", port: 3459, script: "bench-hono-zod.ts" },
   { id: "typespex", name: "TypeSpex", port: 3456, script: "bench-typespex.ts" },
+  { id: "elysia", name: "Elysia", port: 3461, script: "bench-elysia.ts" },
 ] as const;
 
 export interface BenchmarkScenario {
@@ -107,11 +108,19 @@ export function fetchWithTimeout(
   if (!Number.isFinite(timeoutMilliseconds) || timeoutMilliseconds <= 0) {
     throw new Error("Fetch timeout must be a positive number of milliseconds.");
   }
-  return (input, init) =>
-    fetchRequest(input, {
+  return (input, init) => {
+    // Validation requests sit idle throughout warmup and measurement. Do not
+    // reuse a connection that the server may close during that interval.
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    headers.set("connection", "close");
+    return fetchRequest(input, {
       ...init,
+      headers,
       signal: AbortSignal.timeout(timeoutMilliseconds),
     });
+  };
 }
 
 export function autocannonOptions(

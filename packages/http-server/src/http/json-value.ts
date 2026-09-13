@@ -2,13 +2,17 @@
 import { parse as parseLosslessJson } from "lossless-json";
 import { defineDataProperty } from "./object-properties.js";
 
+const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const DECIMAL_INTEGER_PATTERN = /^-?(?:0|[1-9]\d*)$/;
 const MAX_LOSSLESS_JSON_INTEGER_DIGITS = 20;
 
 export function parseJsonText(text: string): unknown {
-  const nativeValue = JSON.parse(text) as unknown;
   const preciseValue = parseLosslessJson(text, undefined, { parseNumber: parseJsonNumber });
-  return rebuildJsonValue(nativeValue, preciseValue);
+  // Only a literal or Unicode-escaped __proto__ key can invoke the prototype
+  // setter in the lossless parser. Keep native JSON's safe object shape for
+  // those inputs; ordinary payloads need neither a second parse nor a copy.
+  if (!text.includes("__proto__") && !text.includes("\\u")) return preciseValue;
+  return rebuildJsonValue(JSON.parse(text), preciseValue);
 }
 
 function parseJsonNumber(value: string): number | bigint {
@@ -22,6 +26,9 @@ function parseJsonNumber(value: string): number | bigint {
     const numberValue = Number(value);
     return Number.isSafeInteger(numberValue) ? numberValue : BigInt(value);
   }
+  // The lossless parser also accepts .5 and e5, so numeric tokens need an
+  // explicit JSON grammar check when native JSON's validation pass is skipped.
+  if (!JSON_NUMBER_PATTERN.test(value)) throw new SyntaxError("Invalid JSON number.");
   const exactInteger = exactJsonIntegerWithinLimit(value);
   if (exactInteger !== undefined) {
     const numberValue = Number(value);

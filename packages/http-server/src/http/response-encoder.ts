@@ -269,6 +269,9 @@ function fileResponseEncoder(
 }
 
 function withContentType(init: ResponseInit, contentType: string): ResponseInit {
+  if (init.headers === undefined) {
+    return { ...init, headers: { "content-type": contentType } };
+  }
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", contentType);
   return { ...init, headers };
@@ -611,6 +614,7 @@ function resolveVariantBody<A>(
 }
 
 function omitVariantProperties(src: Record<string, unknown>, variant: ResponseVariant): unknown {
+  if (!variant.omit?.length && !variant.headers?.length) return src;
   const omit = new Set<string>(variant.omit ?? []);
   for (const [property] of variant.headers ?? []) {
     omit.add(property);

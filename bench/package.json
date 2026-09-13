@@ -13,6 +13,7 @@
     "@typespex/adapter-bun": "workspace:*",
     "@typespex/http-server": "workspace:*",
     "autocannon": "^8.0.0",
+    "elysia": "1.4.30",
     "hono": "^4.13.7",
     "zod": "^4.5.4"
   },

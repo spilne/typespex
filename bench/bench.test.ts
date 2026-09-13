@@ -125,6 +125,19 @@ describe("HTTP benchmark validation", () => {
     expect(signal?.aborted).toBeTrue();
   });
 
+  test("validation connections close while retaining the scenario's request headers", async () => {
+    const headers = new Headers({ "content-type": "application/json", connection: "keep-alive" });
+    const boundedFetch = fetchWithTimeout(1000, async (_input, init) => {
+      const received = new Headers(init?.headers);
+      expect(received.get("connection")).toBe("close");
+      expect(received.get("content-type")).toBe("application/json");
+      return new Response("ok");
+    });
+    await boundedFetch("http://127.0.0.1/check", { headers });
+    await boundedFetch(new Request("http://127.0.0.1/check", { headers }));
+    expect(headers.get("connection")).toBe("keep-alive");
+  });
+
   test("timed validation accepts exact success and modeled-error distributions", () => {
     const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
     const notFound = SCENARIOS.find((scenario) => scenario.id === "not-found")!;
@@ -161,31 +174,31 @@ describe("HTTP benchmark validation", () => {
     ).toThrow("request rate was NaN");
   });
 
-  test("four trials rotate every server through every position for each scenario", () => {
+  test("a full rotation places every server in every position for each scenario", () => {
     const schedule = createSchedule({
       durationSeconds: 1,
       warmupSeconds: 1,
-      trials: 4,
+      trials: SERVERS.length,
       connections: 1,
       pipelining: 1,
       timeoutSeconds: 1,
       seed: "schedule-test",
     });
-    expect(schedule).toHaveLength(4 * SCENARIOS.length * SERVERS.length);
+    expect(schedule).toHaveLength(SERVERS.length * SCENARIOS.length * SERVERS.length);
     for (const scenario of SCENARIOS) {
       const positions = new Map<string, Set<number>>();
-      for (let trial = 1; trial <= 4; trial++) {
+      for (let trial = 1; trial <= SERVERS.length; trial++) {
         const cells = schedule.filter(
           (cell) => cell.trial === trial && cell.scenarioId === scenario.id,
         );
-        expect(cells).toHaveLength(4);
+        expect(cells).toHaveLength(SERVERS.length);
         cells.forEach((cell, position) => {
           const seen = positions.get(cell.serverId) ?? new Set<number>();
           seen.add(position);
           positions.set(cell.serverId, seen);
         });
       }
-      expect([...positions.values()].every((seen) => seen.size === 4)).toBeTrue();
+      expect([...positions.values()].every((seen) => seen.size === SERVERS.length)).toBeTrue();
     }
   });
 });
