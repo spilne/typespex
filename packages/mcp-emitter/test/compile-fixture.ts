@@ -1,5 +1,6 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { buildFixturePackages } from "../../../scripts/test-support/package-builds.js";
 
@@ -13,6 +14,7 @@ export interface CompileResult {
   readonly stderr: string;
   read(service: string, file: string): string;
   files(service: string): string[];
+  typecheck(consumer: string): void;
 }
 
 export function cleanupFixtures(): void {
@@ -23,8 +25,9 @@ export function compileFixture(
   name: string,
   source: string,
   options = "    launchers: []\n",
+  sources: Readonly<Record<string, string>> = {},
 ): CompileResult {
-  return compile(name, source, options, false);
+  return compile(name, source, options, false, sources);
 }
 
 export function compileFixtureWithDiagnostics(
@@ -40,6 +43,7 @@ function compile(
   source: string,
   options: string,
   expectFailure: boolean,
+  sources: Readonly<Record<string, string>> = {},
 ): CompileResult {
   const directory = mkdtempSync(join(repoRoot, `example/tmp-mcp-${name}-`));
   tempDirs.push(directory);
@@ -68,10 +72,38 @@ function compile(
     );
   }
   const emitterOutput = join(outputDir, "@typespex", "mcp-emitter");
+  for (const [path, content] of Object.entries(sources)) {
+    const file = join(directory, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+  }
+  const tsconfig = join(directory, "tsconfig.json");
+  writeFileSync(
+    tsconfig,
+    JSON.stringify({
+      extends: join(repoRoot, "tsconfig.base.json"),
+      compilerOptions: { noEmit: true, rootDir: ".", types: ["bun-types"] },
+      include: ["**/*.ts"],
+    }),
+  );
+  const typecheck = (consumer?: string): void => {
+    if (consumer !== undefined) writeFileSync(join(directory, "consumer.ts"), consumer);
+    const checked = Bun.spawnSync(
+      ["node", fileURLToPath(import.meta.resolve("typescript/bin/tsc")), "-p", tsconfig],
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
+    );
+    if (checked.exitCode !== 0) {
+      throw new Error(
+        `Generated TypeScript failed to compile:\n${checked.stdout.toString()}${checked.stderr.toString()}`,
+      );
+    }
+  };
+  if (!expectFailure) typecheck();
   return {
     outputDir: emitterOutput,
     stdout,
     stderr,
+    typecheck,
     read(service, file) {
       return readFileSync(join(emitterOutput, service, file), "utf8");
     },
@@ -87,5 +119,9 @@ export function buildEmitter(): void {
     "mcp-http-bridge",
     "mcp-transport-http",
     "mcp-transport-stdio",
+    "adapter-node",
+    "adapter-bun",
+    "adapter-express",
+    "adapter-hono",
   ]);
 }

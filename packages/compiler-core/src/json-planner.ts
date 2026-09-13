@@ -623,19 +623,25 @@ function withDocumentMetadata(
 }
 
 function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
-  const visiting = new Set<string>();
-  const requiresTransform = (spec: ValueCodecSpec): boolean => {
+  const pending = [document.root];
+  const visited = new Set<ValueCodecSpec>();
+  while (pending.length > 0) {
+    const spec = pending.pop()!;
+    if (visited.has(spec)) continue;
+    visited.add(spec);
     switch (spec.kind) {
       case "identity":
       case "primitive":
       case "literal":
       case "decimal-string":
-        return false;
+        break;
       case "date-time":
-        return !(
-          spec.representation === "string" ||
-          (spec.representation === "date" && spec.format !== "date-time")
-        );
+        if (
+          spec.representation === "temporal" ||
+          (spec.representation === "date" && spec.format === "date-time")
+        )
+          return true;
+        break;
       case "bigint-string":
       case "bigint-literal-string":
       case "bigint-number":
@@ -645,34 +651,31 @@ function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
       case "file":
         return true;
       case "array":
-        return requiresTransform(spec.item);
+        pending.push(spec.item);
+        break;
       case "tuple":
-        return spec.items.some(requiresTransform);
+        pending.push(...spec.items);
+        break;
       case "union":
-        return spec.variants.some(requiresTransform);
+        pending.push(...spec.variants);
+        break;
       case "object":
-        return (
-          Object.keys(spec.excludedProperties ?? {}).length > 0 ||
-          Object.entries(spec.properties).some(
-            ([semanticName, property]) =>
-              property.wireName !== semanticName ||
-              property.hasDefault === true ||
-              requiresTransform(property.codec),
-          ) ||
-          (spec.additionalProperties !== undefined &&
-            spec.additionalProperties !== true &&
-            requiresTransform(spec.additionalProperties))
-        );
+        if (Object.keys(spec.excludedProperties ?? {}).length > 0) return true;
+        for (const [semanticName, property] of Object.entries(spec.properties)) {
+          if (property.wireName !== semanticName || property.hasDefault === true) return true;
+          pending.push(property.codec);
+        }
+        if (spec.additionalProperties !== undefined && spec.additionalProperties !== true) {
+          pending.push(spec.additionalProperties);
+        }
+        break;
       case "ref": {
-        if (visiting.has(spec.name)) return false;
         const target = document.definitions?.[spec.name];
         if (!target) return true;
-        visiting.add(spec.name);
-        const result = requiresTransform(target);
-        visiting.delete(spec.name);
-        return result;
+        pending.push(target);
+        break;
       }
     }
-  };
-  return requiresTransform(document.root);
+  }
+  return false;
 }
