@@ -24,7 +24,8 @@ Numeric contracts retain intrinsic, inherited, and property bounds when encoded 
 Generated runtime checks enforce these bounds for tool inputs, native outputs, and HTTP bridge
 outputs. If TypeSpec resolves a numeric literal written directly in a bound decorator with lost
 precision, generation reports a diagnostic instead of emitting an incorrect bound. This check does
-not currently detect precision loss through `const` references or custom decorators.
+not currently detect precision loss through `const` references or custom decorators. Numeric defaults
+that violate declared bounds also produce a generation diagnostic, including nested object defaults.
 
 ## License
 
