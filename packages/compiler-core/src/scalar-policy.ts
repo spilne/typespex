@@ -79,7 +79,7 @@ export function getNumericBoundIssue(
           compareNumericStrings(resolved.toString(), bound.toString()) === 0 &&
           compareNumericStrings(
             resolved.toString(),
-            Numeric(argument.node.valueAsString).toString(),
+            normalizeNumericLiteral(argument.node.valueAsString),
           ) !== 0
         ) {
           return `TypeSpec resolved the numeric bound ${argument.node.valueAsString} as ${resolved.toString()}. Its precision was lost before TypeSpex planning; this bound cannot be emitted safely.`;
@@ -88,6 +88,16 @@ export function getNumericBoundIssue(
     }
   }
   return undefined;
+}
+
+// The scanner permits a leading plus and redundant decimal zeros. Numeric()
+// misparses some of those spellings, so normalize syntax without redoing its arithmetic.
+function normalizeNumericLiteral(text: string): string {
+  if (text.startsWith("0x") || text.startsWith("0b")) return BigInt(text).toString();
+  const sign = text[0] === "-" ? "-" : "";
+  let start = text[0] === "+" || text[0] === "-" ? 1 : 0;
+  while (text[start] === "0" && text[start + 1]! >= "0" && text[start + 1]! <= "9") start++;
+  return sign + text.slice(start);
 }
 
 export function hasNumericBounds(program: Program, target: ModelProperty | Scalar): boolean {

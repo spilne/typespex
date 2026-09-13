@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createTestHost, createTestRunner } from "@typespec/compiler/testing";
-import type { Scalar } from "@typespec/compiler";
+import { getMaxValueAsNumeric, type Scalar } from "@typespec/compiler";
+import { getNumericBoundIssue } from "../src/scalar-policy.js";
 import {
   getEffectiveScalarEncoding,
   getScalarEncodingIssue,
@@ -32,6 +33,29 @@ async function compile(source: string) {
 }
 
 describe("shared scalar policy", () => {
+  test("recognizes equivalent numeric literal syntax without inheriting compiler parsing bugs", async () => {
+    for (const [expected, literal] of [
+      ["1.5", "+1.5"],
+      ["0.5", "+0.5"],
+      ["12.5", "+1.25e1"],
+      ["0.5", "00.05e1"],
+      ["-0.5", "-00.05e1"],
+      ["0", "+000.00"],
+      ["0", "-000.00e-5"],
+      ["255", "0xFF"],
+      ["1", "0b1"],
+      ["7", "007"],
+    ]) {
+      // Seed the literal cache with the correctly parsed spelling. Both decorators
+      // then resolve correctly even when Numeric(raw source) would be wrong.
+      const program = await compile(`@maxValue(${expected}) scalar Seed extends float64;
+        @maxValue(${literal}) scalar Value extends float64;`);
+      const scalar = program.getGlobalNamespaceType().scalars.get("Value")!;
+      expect(getMaxValueAsNumeric(program, scalar)?.toString()).toBe(expected!);
+      expect(getNumericBoundIssue(program, scalar, scalar)).toBeUndefined();
+    }
+  });
+
   test("classifies intrinsic numeric domains without choosing JavaScript representations", () => {
     for (const name of [...numerics, "boolean", "string", "bytes", "utcDateTime", "Custom"]) {
       expect(isIntegerIntrinsic(name)).toBe(integers.includes(name));

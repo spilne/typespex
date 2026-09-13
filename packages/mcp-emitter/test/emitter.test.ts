@@ -20,13 +20,16 @@ describe("@typespex/mcp emitter", () => {
         @encode(string) @minValue(0b1) @maxValue(0xFF) scalar Byte extends int32;
         @minValue(007) @maxValue(010) scalar Count extends int32;
         @minValue(00.5) scalar Fraction extends float64;
-        @tool op check(value: Byte, count: Count, fraction: Fraction): Byte;
+        @minValue(1.5) scalar Seed extends float64;
+        @maxValue(+1.5) scalar Positive extends float64;
+        @maxValue(00.05e1) scalar Leading extends float64;
+        @tool op check(value: Byte, count: Count, fraction: Fraction, seed: Seed, positive: Positive, leading: Leading): Byte;
       }
     `,
     );
     const { mcpTools } = await import(`${result.outputDir}/literals/mcp-operations.ts`);
     const tool = mcpTools[0];
-    const valid = { value: "255", count: 7, fraction: 0.5 };
+    const valid = { value: "255", count: 7, fraction: 0.5, seed: 1.5, positive: 1.5, leading: 0.5 };
     expect(await tool.input.input["~standard"].validate(valid)).toEqual({
       value: { ...valid, value: 255 },
     });
