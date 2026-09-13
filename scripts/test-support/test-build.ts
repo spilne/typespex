@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const BUILD_LOCK_WAIT_MS = 25;
 const BUILD_LOCK_TIMEOUT_MS = 120_000;
@@ -53,7 +53,10 @@ export function ensureTestBuild(build: TestBuild): void {
       if (isBuildFresh(inputs, artifacts, stamp)) return;
       reclaimAbandonedBuildLock(lockDir);
       if (Date.now() >= deadline) {
-        throw new Error(`${label} test build lock timed out: ${lockDir}`);
+        throw new Error(
+          `${label} test build lock timed out: ${lockDir}. ` +
+            "If no fixture build is running, remove this lock directory and retry.",
+        );
       }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, BUILD_LOCK_WAIT_MS);
     }
@@ -88,7 +91,7 @@ export function ensureTestBuild(build: TestBuild): void {
 
       const after = fingerprintBuildInputs(inputs);
       if (before !== after) continue;
-      writeFileSync(stamp, after);
+      writeFileSync(stamp, JSON.stringify({ inputs: after, output: fingerprintOutput(stamp) }));
       break;
     }
   } finally {
@@ -103,7 +106,10 @@ function isBuildFresh(
 ): boolean {
   try {
     if (artifacts.some((artifact) => !existsSync(artifact)) || !existsSync(stamp)) return false;
-    return readFileSync(stamp, "utf8") === fingerprintBuildInputs(inputs);
+    const saved = JSON.parse(readFileSync(stamp, "utf8"));
+    return (
+      saved.inputs === fingerprintBuildInputs(inputs) && saved.output === fingerprintOutput(stamp)
+    );
   } catch {
     // Another worker may be replacing an artifact or stamp while this worker
     // checks it. The lock path will decide which worker rebuilds.
@@ -119,7 +125,21 @@ function fingerprintBuildInputs(inputs: readonly string[]): string {
   return hash.digest("hex");
 }
 
-function updateFingerprint(hash: ReturnType<typeof createHash>, path: string): void {
+// Ordinary package builds do not update fixture stamps. Include all output,
+// not just entry points, so a build followed by a source revert cannot reuse
+// a stamp for different code. Exclude the stamp itself from its signature.
+function fingerprintOutput(stamp: string): string {
+  const hash = createHash("sha256");
+  updateFingerprint(hash, dirname(stamp), stamp);
+  return hash.digest("hex");
+}
+
+function updateFingerprint(
+  hash: ReturnType<typeof createHash>,
+  path: string,
+  excluded?: string,
+): void {
+  if (path === excluded) return;
   hash.update(path);
   hash.update("\0");
 
@@ -139,7 +159,7 @@ function updateFingerprint(hash: ReturnType<typeof createHash>, path: string): v
   }
 
   for (const child of children) {
-    updateFingerprint(hash, join(path, child));
+    updateFingerprint(hash, join(path, child), excluded);
   }
 }
 

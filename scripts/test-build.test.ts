@@ -61,6 +61,7 @@ function fixture() {
         }
       }
       writeFileSync("dist/index.js", readFileSync("src/index.ts"));
+      writeFileSync("dist/internal.js", "original output");
       writeFileSync("dist/index.d.ts", "export declare const value: number;");
       if (!existsSync("../../omit")) writeFileSync("dist/unstable.js", "export {};");
     `,
@@ -136,6 +137,16 @@ test("releases failed builds for a subsequent retry", () => {
   expect(existsSync(join(path, "dist/.test-build-complete"))).toBe(true);
 });
 
+test("rejects stamps when ordinary builds replace internal output", () => {
+  const { root, packageSource, builds } = fixture();
+  const path = packageSource("emitter");
+  buildFixturePackages(root, ["emitter"]);
+  writeFileSync(join(path, "dist/internal.js"), "different output");
+  buildFixturePackages(root, ["emitter"]);
+  expect(builds()).toEqual(["emitter", "emitter"]);
+  expect(readFileSync(join(path, "dist/internal.js"), "utf8")).toBe("original output");
+});
+
 test("reclaims a lock after its owner exits", async () => {
   const { root, packageSource } = fixture();
   packageSource("emitter");
@@ -177,7 +188,23 @@ test("coordinates concurrent processes and retries inputs changed during a build
     const ownerPath = join(root, ".context/test-build-locks/emitter/owner.json");
     const owner = JSON.parse(readFileSync(ownerPath, "utf8"));
     writeFileSync(ownerPath, JSON.stringify({ ...owner, createdAt: 0 }));
-    second = Bun.spawn(["bun", runner], { stdout: "pipe", stderr: "pipe" });
+    const waiter = join(root, "waiter.ts");
+    writeFileSync(
+      waiter,
+      `
+      import { writeFileSync } from "node:fs";
+      import { buildFixturePackages } from ${JSON.stringify(helper)};
+      const kill = process.kill;
+      process.kill = function(pid, signal) {
+        const result = kill.call(process, pid, signal);
+        if (pid === ${owner.pid} && signal === 0) writeFileSync(${JSON.stringify(join(root, "observed-owner"))}, "");
+        return result;
+      };
+      buildFixturePackages(${JSON.stringify(root)}, ["emitter"]);
+    `,
+    );
+    second = Bun.spawn(["bun", waiter], { stdout: "pipe", stderr: "pipe" });
+    await waitFor(join(root, "observed-owner"));
     writeFileSync(join(path, "src/index.ts"), "export const value = 4;");
     writeFileSync(join(root, "release"), "");
     expect(await first.exited).toBe(0);
