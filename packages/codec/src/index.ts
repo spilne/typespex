@@ -15,6 +15,13 @@ export {
 export interface CodecIssue {
   readonly message: string;
   readonly path: readonly (string | number)[];
+  /** Structured union matching information; other conversion issues omit this field. */
+  readonly code?:
+    | "ambiguous-union"
+    | "invalid-union-value"
+    | "unknown-property"
+    | "missing-property"
+    | "literal-mismatch";
 }
 
 export type CodecResult<T> =
@@ -102,7 +109,7 @@ interface CodecContext extends ValueCodecOptions {
   ];
 }
 
-type ConversionCache = WeakMap<object, Map<ValueCodecSpec, CodecResult<unknown>>>;
+type ConversionCache = WeakMap<object, Map<ValueCodecSpec, Map<number, CodecResult<unknown>>>>;
 
 const MAX_CODEC_DEPTH = 256;
 
@@ -149,8 +156,14 @@ async function cachedConversion(
   if (value === null || typeof value !== "object") return convert();
   const index = context.strictObjects ? 1 : 0;
   const completed = context.completed[index];
-  const previous = completed.get(value)?.get(spec);
-  if (previous) return previous;
+  const previous = completed.get(value)?.get(spec)?.get(depth);
+  if (previous)
+    return previous.ok
+      ? previous
+      : {
+          ok: false,
+          issues: previous.issues.map((issue) => ({ ...issue, path: [...path, ...issue.path] })),
+        };
   const active = context.active[index];
   const pending = active.get(value) ?? new Set<ValueCodecSpec>();
   if (pending.has(spec)) return failure(path, "Cyclic values cannot be converted as JSON.");
@@ -158,12 +171,25 @@ async function cachedConversion(
   active.set(value, pending);
   try {
     const result = await convert();
-    // Failed conversions contain paths and may have partial objects; only reuse completed values.
-    if (result.ok) {
-      const values = completed.get(value) ?? new Map<ValueCodecSpec, CodecResult<unknown>>();
-      values.set(spec, result);
-      completed.set(value, values);
-    }
+    // Cache failures too: otherwise repeated failing recursive branches double
+    // the work at each level. Relative paths remain correct at other call sites.
+    const values =
+      completed.get(value) ?? new Map<ValueCodecSpec, Map<number, CodecResult<unknown>>>();
+    const depths = values.get(spec) ?? new Map<number, CodecResult<unknown>>();
+    depths.set(
+      depth,
+      result.ok
+        ? result
+        : {
+            ok: false,
+            issues: result.issues.map((issue) => ({
+              ...issue,
+              path: issue.path.slice(path.length),
+            })),
+          },
+    );
+    values.set(spec, depths);
+    completed.set(value, values);
     return result;
   } finally {
     pending.delete(spec);
@@ -223,7 +249,7 @@ async function decodeUncheckedValue(
     case "literal":
       return Object.is(input, spec.value)
         ? success(input)
-        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`);
+        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`, "literal-mismatch");
     case "bigint-string":
       if (typeof input !== "string" || !/^-?(?:0|[1-9]\d*)$/.test(input)) {
         return failure(path, "Expected an integer encoded as a decimal string.");
@@ -401,7 +427,7 @@ async function encodeUncheckedValue(
     case "literal":
       return Object.is(value, spec.value)
         ? success(value)
-        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`);
+        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`, "literal-mismatch");
     case "bigint-string":
       return typeof value === "bigint"
         ? success(value.toString())
@@ -506,7 +532,11 @@ async function decodeObject(
         const decodedDefault = await decodeValue(
           property.codec,
           property.defaultValue,
-          context,
+          {
+            ...context,
+            completed: [new WeakMap(), new WeakMap()],
+            active: [new WeakMap(), new WeakMap()],
+          },
           [...path, property.wireName],
           depth + 1,
         );
@@ -516,6 +546,7 @@ async function decodeObject(
         issues.push({
           path: [...path, property.wireName],
           message: "Required property is missing.",
+          code: "missing-property",
         });
       }
       continue;
@@ -546,6 +577,7 @@ async function decodeObject(
         issues.push({
           path: [...path, wireName],
           message: "Property is not declared by this union branch.",
+          code: "unknown-property",
         });
       continue;
     }
@@ -591,7 +623,11 @@ async function encodeObject(
     const propertyValue = Object.hasOwn(value, propertyName) ? value[propertyName] : undefined;
     if (propertyValue === undefined) {
       if (!property.optional && !property.hasDefault) {
-        issues.push({ path: [...path, propertyName], message: "Required property is missing." });
+        issues.push({
+          path: [...path, propertyName],
+          message: "Required property is missing.",
+          code: "missing-property",
+        });
       }
       continue;
     }
@@ -614,6 +650,7 @@ async function encodeObject(
         issues.push({
           path: [...path, propertyName],
           message: "Property is not declared by this union branch.",
+          code: "unknown-property",
         });
       continue;
     }
@@ -655,6 +692,8 @@ async function convertUnion(
   const failures: (readonly CodecIssue[])[] = [];
   for (const strictObjects of context.strictObjects ? [true] : [true, false]) {
     let match: { readonly ok: true; readonly value: unknown } | undefined;
+    let fatal: readonly CodecIssue[] | undefined;
+    let coveredFailure: readonly CodecIssue[] | undefined;
     for (const variant of spec.variants) {
       const candidate = await convert(
         variant,
@@ -665,6 +704,20 @@ async function convertUnion(
       );
       if (!candidate.ok) {
         failures.push(candidate.issues);
+        if (candidate.issues.length > 0 && candidate.issues.every(isFatalUnionIssue))
+          fatal = candidate.issues;
+        if (
+          strictObjects &&
+          matchesContainer(variant, value, context.definitions) &&
+          !candidate.issues.some(
+            (issue) =>
+              issue.code === "unknown-property" ||
+              ((issue.code === "missing-property" || issue.code === "literal-mismatch") &&
+                issue.path.length <= path.length + 1),
+          )
+        ) {
+          coveredFailure = candidate.issues;
+        }
         continue;
       }
       if (context.wireValidationOnly) return candidate;
@@ -674,14 +727,25 @@ async function convertUnion(
           ? jsonValuesEqual(match.value, candidate.value)
           : await semanticValuesEqual(match.value, candidate.value, temporalValuesEqual))
       ) {
-        return failure(
-          path,
-          "Value matches multiple union branches with incompatible conversions.",
-        );
+        fatal = [
+          {
+            path,
+            message: "Value matches multiple union branches with incompatible conversions.",
+            code: "ambiguous-union",
+          },
+        ];
       }
       match = candidate;
     }
+    if (fatal) return { ok: false, issues: fatal };
     if (match) return match;
+    // A branch covered the supplied fields but could not convert a declared value.
+    // Projecting into a poorer alternative would silently discard that value.
+    if (coveredFailure)
+      return {
+        ok: false,
+        issues: coveredFailure.map((issue) => ({ ...issue, code: "invalid-union-value" })),
+      };
   }
   return {
     ok: false,
@@ -692,6 +756,36 @@ async function convertUnion(
             current.length < smallest.length ? current : smallest,
           ),
   };
+}
+
+function isFatalUnionIssue(issue: CodecIssue): boolean {
+  return issue.code === "ambiguous-union" || issue.code === "invalid-union-value";
+}
+
+function matchesContainer(
+  spec: ValueCodecSpec,
+  value: unknown,
+  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  seen = new Set<ValueCodecSpec>(),
+): boolean {
+  if (seen.has(spec)) return false;
+  seen.add(spec);
+  switch (spec.kind) {
+    case "ref":
+      return (
+        Object.hasOwn(definitions, spec.name) &&
+        matchesContainer(definitions[spec.name]!, value, definitions, seen)
+      );
+    case "union":
+      return spec.variants.some((variant) => matchesContainer(variant, value, definitions, seen));
+    case "object":
+      return isPlainObject(value);
+    case "array":
+    case "tuple":
+      return Array.isArray(value);
+    default:
+      return false;
+  }
 }
 
 async function temporalValuesEqual(left: object, right: object): Promise<boolean> {
@@ -929,6 +1023,10 @@ function success<T>(value: T): CodecResult<T> {
   return { ok: true, value };
 }
 
-function failure(path: readonly (string | number)[], message: string): CodecResult<never> {
-  return { ok: false, issues: [{ path, message }] };
+function failure(
+  path: readonly (string | number)[],
+  message: string,
+  code?: CodecIssue["code"],
+): CodecResult<never> {
+  return { ok: false, issues: [{ path, message, ...(code ? { code } : {}) }] };
 }

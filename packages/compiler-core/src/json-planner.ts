@@ -408,13 +408,11 @@ export class JsonPlanner {
     const excludedProperties: Record<string, string> = Object.create(null);
     for (const property of walkPropertiesInherited(model)) {
       if (propertyFilter && !propertyFilter(property)) {
-        if (this.types.indexer(model)) {
-          excludedProperties[property.name] = resolveEncodedName(
-            this.program,
-            property,
-            "application/json",
-          );
-        }
+        excludedProperties[property.name] = resolveEncodedName(
+          this.program,
+          property,
+          "application/json",
+        );
         continue;
       }
       const defaultValue = this.propertyDefaultValue(property);

@@ -178,4 +178,115 @@ describe("union conversion", () => {
     cyclic.child = cyclic;
     expect((await codec.encode(cyclic)).ok).toBe(false);
   });
+  test("keeps decoded object defaults independent for each array item", async () => {
+    const codec = createValueCodec<{ tags: string[] }[]>({
+      root: {
+        kind: "array",
+        item: {
+          kind: "object",
+          properties: {
+            tags: {
+              wireName: "tags",
+              codec: { kind: "array", item: { kind: "primitive", type: "string" } },
+              hasDefault: true,
+              defaultValue: [],
+            },
+          },
+        },
+      },
+    });
+    const decoded = await codec.decode([{}, {}]);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    decoded.value[0]!.tags.push("only-first");
+    expect(decoded.value[1]!.tags).toEqual([]);
+  });
+
+  test("propagates nested ambiguity and invalid declared values instead of dropping them", async () => {
+    const inner: ValueCodecSpec = {
+      kind: "union",
+      variants: ["p", "q"].map((wireName) => ({
+        kind: "object",
+        properties: { n: { wireName, codec: { kind: "primitive", type: "number" } } },
+      })),
+    };
+    const richer: ValueCodecSpec = {
+      kind: "object",
+      properties: {
+        value: { wireName: "value", codec: { kind: "primitive", type: "string" } },
+        inner: { wireName: "inner", codec: inner },
+      },
+    };
+    for (const variants of [
+      [plain, richer],
+      [richer, plain],
+    ]) {
+      const codec = createValueCodec({ root: { kind: "union", variants } });
+      expect((await codec.encode({ value: "v", inner: { n: 1 } })).ok).toBe(false);
+      expect((await codec.encode({ value: "v", inner: { n: "invalid" } })).ok).toBe(false);
+      expect((await codec.encode({ value: "v", inner: {} })).ok).toBe(false);
+    }
+    const tagged: ValueCodecSpec = {
+      ...richer,
+      properties: {
+        ...richer.properties,
+        kind: { wireName: "kind", codec: { kind: "literal", value: "rich" } },
+      },
+    };
+    const correct: ValueCodecSpec = {
+      kind: "object",
+      properties: {
+        kind: { wireName: "kind", codec: { kind: "literal", value: "plain" } },
+        value: { wireName: "value", codec: { kind: "primitive", type: "string" } },
+        inner: { wireName: "inner", codec: { kind: "identity" } },
+      },
+    };
+    const codec = createValueCodec({ root: { kind: "union", variants: [tagged, correct] } });
+    const value = { kind: "plain", value: "v", inner: { n: 1 } };
+    expect(await codec.encode(value)).toEqual({ ok: true, value });
+  });
+
+  test("bounds failing recursive alternatives and rebases cached issue paths", async () => {
+    const node: ValueCodecSpec = {
+      kind: "object",
+      properties: {
+        value: { wireName: "value", codec: { kind: "primitive", type: "string" } },
+        child: { wireName: "child", optional: true, codec: { kind: "ref", name: "Node" } },
+      },
+    };
+    const codec = createValueCodec({
+      root: { kind: "ref", name: "Node" },
+      definitions: { Node: { kind: "union", variants: [node, structuredClone(node)] } },
+    });
+    const depth = 20;
+    for (const terminal of [{ value: "v", extra: true }, { value: 42 }]) {
+      let reads = 0;
+      let value: Record<string, unknown> = terminal;
+      for (let index = 0; index < depth; index++) {
+        const child = value;
+        value = {
+          value: "v",
+          get child() {
+            if (++reads > depth * 12) throw new Error("Repeated failing traversal");
+            return child;
+          },
+        };
+      }
+      const encoded = await codec.encode(value);
+      expect(encoded.ok).toBe(typeof terminal.value === "string");
+      expect(reads).toBeLessThanOrEqual(depth * 8);
+      reads = 0;
+      expect((await codec.decode(value)).ok).toBe(typeof terminal.value === "string");
+      expect(reads).toBeLessThanOrEqual(depth * 8);
+    }
+    const shared = { value: 42 };
+    const array = createValueCodec({ root: { kind: "array", item: node } });
+    const failed = await array.decode([shared, shared]);
+    expect(failed.ok).toBe(false);
+    if (!failed.ok)
+      expect(failed.issues.map((issue) => issue.path)).toEqual([
+        [0, "value"],
+        [1, "value"],
+      ]);
+  });
 });

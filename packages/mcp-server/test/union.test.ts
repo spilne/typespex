@@ -96,4 +96,69 @@ describe("union schemas", () => {
     expect(await schema.input["~standard"].validate("abc")).toEqual({ value: "abc" });
     expect((await schema.input["~standard"].validate("ABC")).issues).toBeDefined();
   });
+  test("preserves nested projection failures and ignores mismatched discriminators", async () => {
+    const inner = {
+      anyOf: ["a", "b"].map((name) => ({
+        type: "object",
+        properties: { [name]: { type: "number" } },
+        required: [name],
+        additionalProperties: false,
+      })),
+    };
+    const richer = {
+      ...rich,
+      properties: { value: { type: "string" }, inner },
+      required: ["value", "inner"],
+    };
+    for (const anyOf of [
+      [plain, richer],
+      [richer, plain],
+    ]) {
+      const schema = createSchema({ schema: { anyOf } });
+      expect((await schema.encode({ value: "v", inner: { a: 1, b: 2 } })).ok).toBe(false);
+      expect((await schema.encode({ value: "v", inner: { a: "invalid" } })).ok).toBe(false);
+      expect((await schema.encode({ value: "v", inner: {} })).ok).toBe(false);
+    }
+    const wrong = {
+      ...richer,
+      properties: { ...richer.properties, kind: { const: "rich" } },
+      required: ["value", "inner", "kind"],
+    };
+    const correct = {
+      ...wrong,
+      properties: { ...wrong.properties, kind: { const: "plain" }, inner: true },
+    };
+    const schema = createSchema({ schema: { anyOf: [wrong, correct] } });
+    const value = { value: "v", kind: "plain", inner: { a: 1, b: 2 } };
+    expect(await schema.encode(value)).toEqual({ ok: true, value });
+  });
+
+  test("bounds repeated failing recursive projections", async () => {
+    const node = {
+      type: "object",
+      properties: { value: { type: "string" }, child: { $ref: "#/$defs/Node" } },
+      required: ["value"],
+      additionalProperties: false,
+    };
+    const schema = createSchema({
+      schema: { $ref: "#/$defs/Node", $defs: { Node: { anyOf: [node, structuredClone(node)] } } },
+    });
+    for (const terminal of [{ value: "v", extra: true }, { value: 42 }]) {
+      let reads = 0;
+      const depth = 20;
+      let value: Record<string, unknown> = terminal;
+      for (let index = 0; index < depth; index++) {
+        const child = value;
+        value = {
+          value: "v",
+          get child() {
+            if (++reads > depth * 12) throw new Error("Repeated failing traversal");
+            return child;
+          },
+        };
+      }
+      expect((await schema.encode(value)).ok).toBe(typeof terminal.value === "string");
+      expect(reads).toBeLessThanOrEqual(depth * 8);
+    }
+  });
 });

@@ -7,8 +7,11 @@ classification, redirects, limits, and JSONL collection. It contains no MCP tran
 adapter code.
 
 HTTP union conversions preserve the matching variant's fields and reject incompatible alternative
-conversions. Discriminated variants avoid ambiguous coercions. Additional properties cannot
-overwrite declared fields when HTTP and MCP property names differ.
+conversions. Exact JSON types take precedence over lenient number/boolean parsing or scalar-to-array
+wrapping: `int32 | string` preserves `"42"` as a string, and `T | T[]` preserves a single object.
+Explicit encodings can still overlap (for example, string-encoded numbers and plain strings);
+use object variants with distinct literal discriminators to make their meaning unambiguous.
+Additional properties cannot bypass or overwrite declared fields when HTTP and MCP names differ.
 
 ## Entry points
 

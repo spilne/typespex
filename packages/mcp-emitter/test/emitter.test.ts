@@ -103,6 +103,92 @@ describe("@typespex/mcp emitter", () => {
     expect((await constrained.success.encode({ a: "bee" })).ok).toBe(false);
   });
 
+  test("keeps closed-model hidden fields out of overlapping union outputs", async () => {
+    const result = compileFixture(
+      "closed-union-visibility",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace VisibilityChoices {
+        model User { name: string; @visibility(Lifecycle.Create) password: string; }
+        model Credential { name: string; password: string; }
+        @tool @returnTypeVisibility(Lifecycle.Read) op forward(): User | Credential;
+        @tool @returnTypeVisibility(Lifecycle.Read) op reverse(): Credential | User;
+        @tool @returnTypeVisibility(Lifecycle.Read) op user(): User;
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/visibility-choices/mcp-operations.ts`);
+    const value = { name: "user", password: "private" };
+    for (const name of ["forward", "reverse"]) {
+      const tool = mcpTools.find((tool: { name: string }) => tool.name === name);
+      expect((await tool.success.encode(value)).ok).toBe(false);
+      expect(await tool.success.encode({ name: "user" })).toEqual({
+        ok: true,
+        value: { name: "user" },
+      });
+    }
+    const tool = mcpTools.find((tool: { name: string }) => tool.name === "user");
+    expect(await tool.success.encode(value)).toEqual({ ok: true, value: { name: "user" } });
+    expect((await tool.success.input["~standard"].validate(value)).issues).toBeDefined();
+  });
+
+  test("limits union property encodings and numeric overrides to eligible scalar branches", async () => {
+    const source = `
+      import "@typespec/http";
+      import "@typespex/mcp";
+      using TypeSpec.Http;
+      using TypeSpex.Mcp;
+      @service @server("https://api.example.test")
+      @mcpServer(#{ version: "1.0.0" }) namespace MixedChoices {
+        @pattern("^CODE:") scalar Code extends string;
+        model Payload { @minValue(1) count: int32 | Code; @encode("base64url") value: bytes | Code; }
+        @tool @post @route("/echo") op echo(@body input: Payload): Payload;
+      }
+    `;
+    const result = compileFixture("mixed-union-options", source);
+    const { mcpTools } = await import(`${result.outputDir}/mixed-choices/mcp-operations.ts`);
+    const tool = mcpTools[0];
+    const wire = { count: "CODE:A", value: "CODE:B" };
+    expect(await tool.input.input["~standard"].validate({ input: wire })).toEqual({
+      value: { input: wire },
+    });
+    expect(await tool.success.encode(wire)).toEqual({ ok: true, value: wire });
+    for (const count of [0, "lowercase"])
+      expect(
+        (await tool.input.input["~standard"].validate({ input: { ...wire, count } })).issues,
+      ).toBeDefined();
+    const semantic = { count: 1, value: new Uint8Array([255, 239]) };
+    expect(await tool.success.encode(semantic)).toEqual({
+      ok: true,
+      value: { count: 1, value: "_-8" },
+    });
+    expect(
+      await tool.input.input["~standard"].validate({ input: { count: 1, value: "_-8" } }),
+    ).toEqual({ value: { input: semantic } });
+
+    const bridge = compileFixture(
+      "mixed-union-options-bridge",
+      source,
+      "    mode: [http-bridge]\n    launchers: []\n",
+    );
+    const bridgeCode = bridge.read("mixed-choices", "mcp-http-bridge.ts");
+    expect(bridgeCode).toContain('"base64url"');
+    const { mcpTools: bridgeTools } = await import(
+      `${bridge.outputDir}/mixed-choices/mcp-operations.ts`
+    );
+    expect(await bridgeTools[0].input.input["~standard"].validate({ input: wire })).toEqual({
+      value: { input: wire },
+    });
+    expect(
+      (
+        await bridgeTools[0].input.input["~standard"].validate({
+          input: { ...wire, count: "lowercase" },
+        })
+      ).issues,
+    ).toBeDefined();
+  });
+
   test("propagates property bounds and encodings through nullable union branches", async () => {
     const result = compileFixture(
       "nullable-numerics",

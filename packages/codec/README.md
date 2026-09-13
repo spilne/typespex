@@ -14,6 +14,13 @@ produce different semantic or wire values, conversion reports an ambiguity inste
 fields according to declaration order. Use a discriminator when alternatives have incompatible
 interpretations. Equivalent alternatives remain valid, including bytes, dates, and files.
 
+Ambiguous cases include `string | bytes` for valid base64, `string | utcDateTime` in Date or
+Temporal mode for date-like strings, and object variants that supply different defaults for the
+same omitted property. A wider handler object also fails when removing its extra fields would
+produce different valid projections. Wrap overlapping scalars in objects with distinct literal
+discriminators, or return the precise declared object shape. A nested conversion failure never
+falls back to dropping that declared field. Defaults are decoded independently for each item.
+
 A union branch can carry a `wireSchema` fragment. Pass `validateWire` in `createValueCodec` options
 to resolve and validate those fragments against their containing JSON Schema document; the MCP
 runtime supplies this callback automatically. Standalone codecs without a callback only check
