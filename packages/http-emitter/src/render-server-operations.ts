@@ -53,14 +53,14 @@ export function renderServerOperations(plan: ServerPlan): string {
   }
   lines.push('} from "@typespex/http-server";');
   lines.push(`import * as ServerHints from "./${plan.fileNames.serverHints}.js";`);
-  if (plan.modelImports.length > 0) {
+  if (plan.operationModelImports.length > 0) {
     lines.push(
-      `import type { ${plan.modelImports.join(", ")} } from "./${plan.fileNames.models}.js";`,
+      `import type { ${plan.operationModelImports.join(", ")} } from "./${plan.fileNames.models}.js";`,
     );
   }
   lines.push("");
-  if (plan.payloadTypeAliases.length > 0) {
-    lines.push(...plan.payloadTypeAliases);
+  if (plan.operationPayloadTypeAliases.length > 0) {
+    lines.push(...plan.operationPayloadTypeAliases);
     lines.push("");
   }
   if (plan.jsonSerializerDeclarations.length > 0) {

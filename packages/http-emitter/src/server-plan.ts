@@ -27,18 +27,16 @@ import {
 } from "./server-input-decoders.js";
 import { buildResponseEncoder } from "./server-response-encoder.js";
 import { getXmlCodecDeclarations } from "./xml-wire-codecs.js";
+import { createHttpPlanningState } from "./planning-state.js";
 
 export interface ServerPlan {
   readonly serviceName: string;
   readonly fileNames: GeneratedFileNames;
-  readonly modelImports: readonly string[];
+  readonly operationModelImports: readonly string[];
   readonly handlerModelImports: readonly string[];
   readonly inputDecoderImports: readonly string[];
-  /**
-   * Complete snapshot for the handler signatures below. Building the groups
-   * materializes every input and result type before this snapshot is captured.
-   */
-  readonly payloadTypeAliases: readonly string[];
+  readonly operationPayloadTypeAliases: readonly string[];
+  readonly handlerPayloadTypeAliases: readonly string[];
   readonly jsonSerializerDeclarations: readonly string[];
   readonly xmlCodecDeclarations: readonly string[];
   readonly groups: readonly ServerGroupPlan[];
@@ -75,6 +73,11 @@ export interface ServerNamespacePlan {
 }
 
 export function buildServerPlan(ctx: EmitterCtx, httpOperations: HttpOperation[]): ServerPlan {
+  // A plan owns all mutable registries used to construct it. Starting from a
+  // fresh state makes repeated planning with the same service context
+  // deterministic and prevents aliases from leaking between plans.
+  ctx.planningState = createHttpPlanningState(ctx.program, ctx.typeNames);
+
   const operationIds = allocateOperationIds(ctx, httpOperations);
   const routeSelections = getRouteSelections(ctx, httpOperations);
   const rawGroups = groupOperations(ctx, httpOperations);
@@ -108,6 +111,10 @@ export function buildServerPlan(ctx: EmitterCtx, httpOperations: HttpOperation[]
       };
     }),
   );
+  // Handler signatures only need aliases materialized while their input and
+  // result contracts are built. Decoders and encoders can add private aliases
+  // later; emitting those into server.ts would also require their dependencies.
+  const handlerPayloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
 
   const responseEncoders = new Map<HttpOperation, string>();
   for (const group of plannedContracts.value) {
@@ -151,16 +158,17 @@ export function buildServerPlan(ctx: EmitterCtx, httpOperations: HttpOperation[]
   // codecs can register JSON serializers, and both can finish payload aliases.
   const xmlCodecDeclarations = getXmlCodecDeclarations(ctx);
   const jsonSerializerDeclarations = getJsonWireSerializerDeclarations(ctx);
-  const payloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
+  const operationPayloadTypeAliases = getPayloadTypeAliasDeclarations(ctx);
   const availableModelImports = new Set(modelImports);
 
   return {
     serviceName: ctx.serviceName,
     fileNames: ctx.fileNames,
-    modelImports,
+    operationModelImports: modelImports,
     handlerModelImports: plannedContracts.names.filter((name) => availableModelImports.has(name)),
     inputDecoderImports: getServerInputDecoderImports(ctx, httpOperations),
-    payloadTypeAliases,
+    operationPayloadTypeAliases,
+    handlerPayloadTypeAliases,
     jsonSerializerDeclarations,
     xmlCodecDeclarations,
     groups,

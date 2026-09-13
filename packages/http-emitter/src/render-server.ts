@@ -15,8 +15,8 @@ export function renderServer(plan: ServerPlan): string {
     lines.push(`} from "./${plan.fileNames.models}.js";`);
     lines.push("");
   }
-  if (plan.payloadTypeAliases.length > 0) {
-    lines.push(...plan.payloadTypeAliases);
+  if (plan.handlerPayloadTypeAliases.length > 0) {
+    lines.push(...plan.handlerPayloadTypeAliases);
     lines.push("");
   }
 

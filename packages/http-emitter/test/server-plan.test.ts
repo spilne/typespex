@@ -40,12 +40,12 @@ describe("server planning", () => {
     const plan = buildServerPlan(ctx, service.operations);
     const serverBeforeOperations = renderServer(plan);
 
-    expect(plan.payloadTypeAliases.length).toBeGreaterThan(0);
+    expect(plan.handlerPayloadTypeAliases.length).toBeGreaterThan(0);
     expect(missingPayloadAliasDeclarations(serverBeforeOperations)).toEqual([]);
 
     renderServerOperations(plan);
 
-    expect(getPayloadTypeAliasDeclarations(ctx)).toEqual(plan.payloadTypeAliases);
+    expect(getPayloadTypeAliasDeclarations(ctx)).toEqual(plan.operationPayloadTypeAliases);
     expect(renderServer(plan)).toBe(serverBeforeOperations);
   });
 
@@ -75,12 +75,48 @@ describe("server planning", () => {
     const cloned = structuredClone(plan);
     const expected = renderArtifacts(plan, ["server", "operations", "router"]);
 
-    expect(plan.modelImports).toEqual(["Owner", "Pet"]);
+    expect(plan.operationModelImports).toEqual(["Owner", "Pet"]);
     expect(plan.handlerModelImports).toEqual(["Pet"]);
     expect(Object.keys(plan.groups[0]!.operations[0]!)).not.toContain("httpOperation");
     expect(renderArtifacts(cloned, ["router", "operations", "server"])).toEqual(expected);
     expect(renderArtifacts(cloned, ["server", "operations", "router"])).toEqual(expected);
     expect(renderArtifacts(cloned, ["server", "operations", "router"])).toEqual(expected);
+  });
+
+  test("rebuilds a plan without retaining aliases from the previous build", async () => {
+    const host = await createTestHost({ libraries: [HttpTestLibrary] });
+    const runner = await createTestRunner(host);
+    const [, diagnostics] = await runner.compileAndDiagnose(`
+      using TypeSpec.Http;
+
+      @service namespace RepeatApi {
+        model Owner { name: string; }
+
+        @error model NotFound {
+          @statusCode _: 404;
+          owner: Owner;
+          cause?: NotFound;
+        }
+
+        @get @route("/pets/{id}")
+        op read(@path id: string): NotFound;
+      }
+    `);
+    expect(diagnostics).toHaveLength(0);
+
+    const [services, httpDiagnostics] = getAllHttpServices(runner.program);
+    expect(httpDiagnostics).toHaveLength(0);
+    const service = services[0];
+    if (!service) throw new Error("Expected an HTTP service.");
+
+    const ctx = createEmitterContext(runner.program, service, {});
+    const first = buildServerPlan(ctx, service.operations);
+    const second = buildServerPlan(ctx, service.operations);
+
+    expect(second).toEqual(first);
+    expect(renderArtifacts(second, ["router", "server", "operations"])).toEqual(
+      renderArtifacts(first, ["server", "operations", "router"]),
+    );
   });
 });
 
