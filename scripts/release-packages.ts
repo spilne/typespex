@@ -148,7 +148,7 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
     peerDependencies: ["@modelcontextprotocol/server"],
   },
   "@typespex/http-emitter": {
-    dependencies: ["oxfmt"],
+    dependencies: ["@typespex/compiler-core", "oxfmt"],
     peerDependencies: [
       "@js-temporal/polyfill",
       "@typespec/compiler",

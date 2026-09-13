@@ -29,10 +29,17 @@ const sharedBuildInputs = [
   resolve(repoRoot, "bun.lock"),
   resolve(repoRoot, "tsconfig.base.json"),
 ];
+const compilerDependencies = ["codec", "compiler-core"] as const;
+const compilerDependencyInputs = compilerDependencies.flatMap((directory) => [
+  resolve(repoRoot, `packages/${directory}/src`),
+  resolve(repoRoot, `packages/${directory}/package.json`),
+  resolve(repoRoot, `packages/${directory}/tsconfig.json`),
+]);
 const emitterBuildInputs = [
   emitterSourceDir,
   resolve(repoRoot, "packages/http-emitter/package.json"),
   resolve(repoRoot, "packages/http-emitter/tsconfig.json"),
+  ...compilerDependencyInputs,
   ...sharedBuildInputs,
 ];
 const runtimeBuildInputs = [
@@ -58,6 +65,16 @@ export function cleanupFixtures(): void {
 
 export function buildEmitter(): void {
   if (emitterBuildReady) return;
+  for (const directory of compilerDependencies) {
+    ensureTestBuild(
+      `@typespex/${directory}`,
+      [...compilerDependencyInputs, ...sharedBuildInputs],
+      resolve(repoRoot, `packages/${directory}/dist/index.d.ts`),
+      resolve(repoRoot, `packages/${directory}/dist/.test-build-complete`),
+      resolve(repoRoot, `.context/test-build-locks/${directory}`),
+      directory,
+    );
+  }
   ensureTestBuild(
     "@typespex/http-emitter",
     emitterBuildInputs,

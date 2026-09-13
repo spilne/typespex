@@ -1,9 +1,4 @@
 import {
-  getEncode,
-  getMaxValueAsNumeric,
-  getMaxValueExclusiveAsNumeric,
-  getMinValueAsNumeric,
-  getMinValueExclusiveAsNumeric,
   serializeValueAsJson,
   type DiagnosticTarget,
   type EncodeData,
@@ -14,6 +9,12 @@ import {
 } from "@typespec/compiler";
 import type { ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema } from "./plans.js";
+import {
+  getEffectiveScalarEncoding,
+  getScalarEncodingIssue,
+  getScalarIntrinsicName,
+  isJsonSafeIntegerRange,
+} from "./scalar-policy.js";
 
 interface ScalarPlannerOptions {
   readonly datetimeMode?: "string" | "date" | "temporal";
@@ -36,16 +37,6 @@ const NUMBER_INTEGER_INTRINSICS: ReadonlySet<string> = new Set([
 const NUMBER_INTRINSICS: ReadonlySet<string> = new Set([
   ...NUMBER_INTEGER_INTRINSICS,
   ...FLOAT_INTRINSICS,
-]);
-const INTEGER_INTRINSICS: ReadonlySet<string> = new Set([
-  ...NUMBER_INTEGER_INTRINSICS,
-  ...BIGINT_INTRINSICS,
-]);
-
-const NUMERIC_INTRINSICS: ReadonlySet<string> = new Set([
-  ...INTEGER_INTRINSICS,
-  ...FLOAT_INTRINSICS,
-  ...DECIMAL_INTRINSICS,
 ]);
 const DATE_TIME_INTRINSICS: ReadonlySet<string> = new Set([
   "plainDate",
@@ -72,17 +63,8 @@ export class ScalarPlanner {
     private readonly options: ScalarPlannerOptions,
   ) {}
 
-  private intrinsicName(scalar: Scalar): string {
-    let current: Scalar | undefined = scalar;
-    while (current) {
-      if (this.program.checker.isStdType(current)) return current.name;
-      current = current.baseScalar;
-    }
-    return scalar.name;
-  }
-
   semanticType(scalar: Scalar): string {
-    const intrinsic = this.intrinsicName(scalar);
+    const intrinsic = getScalarIntrinsicName(this.program, scalar);
     switch (intrinsic) {
       case "int64":
       case "uint64":
@@ -141,8 +123,8 @@ export class ScalarPlanner {
   }
 
   schema(scalar: Scalar, encodingTarget: ModelProperty | Scalar): JsonSchema {
-    const intrinsic = this.intrinsicName(scalar);
-    const declaredEncode = this.effectiveEncoding(scalar, encodingTarget);
+    const intrinsic = getScalarIntrinsicName(this.program, scalar);
+    const declaredEncode = getEffectiveScalarEncoding(this.program, scalar, encodingTarget)?.data;
     if (
       this.options.canonicalJsonWire &&
       declaredEncode &&
@@ -151,13 +133,14 @@ export class ScalarPlanner {
       return false;
     }
     const encode = this.options.canonicalJsonWire ? undefined : declaredEncode;
-    const wireIntrinsic = encode ? this.intrinsicName(encode.type) : undefined;
+    const wireIntrinsic = encode ? getScalarIntrinsicName(this.program, encode.type) : undefined;
     const encodedAsString = wireIntrinsic === "string";
     const declaredAsString =
-      declaredEncode !== undefined && this.intrinsicName(declaredEncode.type) === "string";
+      declaredEncode !== undefined &&
+      getScalarIntrinsicName(this.program, declaredEncode.type) === "string";
 
     if (BIGINT_INTRINSICS.has(intrinsic)) {
-      if (this.isJsonSafeIntegerRange(scalar, encodingTarget) && !encodedAsString) {
+      if (isJsonSafeIntegerRange(this.program, scalar, encodingTarget) && !encodedAsString) {
         return { type: "integer" };
       }
       if (encodedAsString || (this.options.canonicalJsonWire && declaredAsString)) {
@@ -272,16 +255,17 @@ export class ScalarPlanner {
   }
 
   codec(scalar: Scalar, encodingTarget: ModelProperty | Scalar): ValueCodecSpec {
-    const intrinsic = this.intrinsicName(scalar);
-    const declaredEncode = this.effectiveEncoding(scalar, encodingTarget);
+    const intrinsic = getScalarIntrinsicName(this.program, scalar);
+    const declaredEncode = getEffectiveScalarEncoding(this.program, scalar, encodingTarget)?.data;
     const encode = this.options.canonicalJsonWire ? undefined : declaredEncode;
-    const wireIntrinsic = encode ? this.intrinsicName(encode.type) : undefined;
+    const wireIntrinsic = encode ? getScalarIntrinsicName(this.program, encode.type) : undefined;
     const encodedAsString = wireIntrinsic === "string";
     const declaredAsString =
-      declaredEncode !== undefined && this.intrinsicName(declaredEncode.type) === "string";
+      declaredEncode !== undefined &&
+      getScalarIntrinsicName(this.program, declaredEncode.type) === "string";
     if (
       BIGINT_INTRINSICS.has(intrinsic) &&
-      this.isJsonSafeIntegerRange(scalar, encodingTarget) &&
+      isJsonSafeIntegerRange(this.program, scalar, encodingTarget) &&
       !encodedAsString
     ) {
       return { kind: "bigint-number" };
@@ -341,7 +325,7 @@ export class ScalarPlanner {
       case "ScalarValue": {
         // Only standard date/time constructors have an unambiguous JSON representation.
         // Opaque constructors must not silently inherit their first argument's wire shape.
-        const intrinsic = this.intrinsicName(value.scalar);
+        const intrinsic = getScalarIntrinsicName(this.program, value.scalar);
         if (value.value.name !== "fromISO" || !DATE_TIME_INTRINSICS.has(intrinsic)) {
           return undefined;
         }
@@ -353,60 +337,10 @@ export class ScalarPlanner {
           resolvedScalar,
           this.options.canonicalJsonWire
             ? undefined
-            : this.effectiveEncoding(resolvedScalar, target),
+            : getEffectiveScalarEncoding(this.program, resolvedScalar, target)?.data,
         );
       }
     }
-  }
-
-  private effectiveEncoding(
-    scalar: Scalar,
-    target: ModelProperty | Scalar,
-  ): EncodeData | undefined {
-    if (target.kind === "ModelProperty") {
-      const propertyEncode = getEncode(this.program, target);
-      if (propertyEncode) return propertyEncode;
-    }
-    let current: Scalar | undefined = scalar;
-    while (current) {
-      const encode = getEncode(this.program, current);
-      if (encode) return encode;
-      current = current.baseScalar;
-    }
-    return undefined;
-  }
-
-  private isJsonSafeIntegerRange(scalar: Scalar, target: ModelProperty | Scalar): boolean {
-    const scalarMinimum =
-      target === scalar
-        ? undefined
-        : (getMinValueAsNumeric(this.program, scalar) ??
-          getMinValueExclusiveAsNumeric(this.program, scalar));
-    const scalarMaximum =
-      target === scalar
-        ? undefined
-        : (getMaxValueAsNumeric(this.program, scalar) ??
-          getMaxValueExclusiveAsNumeric(this.program, scalar));
-    const minimum =
-      getMinValueAsNumeric(this.program, target) ??
-      getMinValueExclusiveAsNumeric(this.program, target) ??
-      scalarMinimum;
-    const maximum =
-      getMaxValueAsNumeric(this.program, target) ??
-      getMaxValueExclusiveAsNumeric(this.program, target) ??
-      scalarMaximum;
-    const min = minimum?.asNumber();
-    const max = maximum?.asNumber();
-    return (
-      min !== undefined &&
-      min !== null &&
-      max !== undefined &&
-      max !== null &&
-      Number.isSafeInteger(min) &&
-      Number.isSafeInteger(max) &&
-      min >= Number.MIN_SAFE_INTEGER &&
-      max <= Number.MAX_SAFE_INTEGER
-    );
   }
 
   private validateCanonicalProtocolEncoding(
@@ -414,10 +348,10 @@ export class ScalarPlanner {
     encode: EncodeData,
     target: ModelProperty | Scalar,
   ): boolean {
-    const semantic = this.intrinsicName(scalar);
-    const wire = this.intrinsicName(encode.type);
+    const semantic = getScalarIntrinsicName(this.program, scalar);
+    const wire = getScalarIntrinsicName(this.program, encode.type);
     const encoding = encode.encoding;
-    if (this.isCanonicalEncodingSupported(semantic, wire, encoding)) return true;
+    if (getScalarEncodingIssue(semantic, wire, encoding) === undefined) return true;
     this.options.report(
       "unsupported-encoding",
       `Scalar encoding ${JSON.stringify(encoding ?? "string")} is not supported for ${semantic} encoded as ${wire}.`,
@@ -431,8 +365,10 @@ export class ScalarPlanner {
     target: ModelProperty | Scalar | undefined,
   ): boolean {
     if (this.options.canonicalJsonWire || !scalar || !target) return false;
-    const encoding = this.effectiveEncoding(scalar, target);
-    return encoding !== undefined && this.intrinsicName(encoding.type) === "string";
+    const encoding = getEffectiveScalarEncoding(this.program, scalar, target)?.data;
+    return (
+      encoding !== undefined && getScalarIntrinsicName(this.program, encoding.type) === "string"
+    );
   }
 
   private numericDefaultUsesString(
@@ -443,37 +379,11 @@ export class ScalarPlanner {
     if (!this.options.canonicalJsonWire) {
       return this.usesDeclaredStringEncoding(scalar, target);
     }
-    const intrinsic = this.intrinsicName(scalar);
+    const intrinsic = getScalarIntrinsicName(this.program, scalar);
     return (
       DECIMAL_INTRINSICS.has(intrinsic) ||
-      (BIGINT_INTRINSICS.has(intrinsic) && !this.isJsonSafeIntegerRange(scalar, target))
+      (BIGINT_INTRINSICS.has(intrinsic) && !isJsonSafeIntegerRange(this.program, scalar, target))
     );
-  }
-
-  private isCanonicalEncodingSupported(
-    semantic: string,
-    wire: string,
-    encoding: EncodeData["encoding"],
-  ): boolean {
-    switch (encoding) {
-      case undefined:
-        return wire === "string" && (semantic === "boolean" || NUMERIC_INTRINSICS.has(semantic));
-      case "rfc3339":
-      case "rfc7231":
-        return wire === "string" && (semantic === "utcDateTime" || semantic === "offsetDateTime");
-      case "unixTimestamp":
-        return semantic === "utcDateTime" && INTEGER_INTRINSICS.has(wire);
-      case "ISO8601":
-        return semantic === "duration" && wire === "string";
-      case "seconds":
-      case "milliseconds":
-        return semantic === "duration" && NUMERIC_INTRINSICS.has(wire);
-      case "base64":
-      case "base64url":
-        return semantic === "bytes" && wire === "string";
-      default:
-        return false;
-    }
   }
 
   private dateTimeCodec(intrinsic: string): ValueCodecSpec | undefined {

@@ -1,19 +1,19 @@
 import {
-  getEncode,
-  getMaxValueAsNumeric,
-  getMaxValueExclusiveAsNumeric,
-  getMinValueAsNumeric,
-  getMinValueExclusiveAsNumeric,
   isArrayModelType,
   resolveEncodedName,
   walkPropertiesInherited,
-  type EncodeData,
   type Model,
   type ModelProperty,
   type Program,
   type Type,
 } from "@typespec/compiler";
 import type { HttpWireValuePlan } from "@typespex/http-client";
+import {
+  getEffectiveScalarEncoding,
+  isIntegerIntrinsic,
+  isNumericIntrinsic,
+  isJsonSafeIntegerRange,
+} from "@typespex/compiler-core/unstable";
 import type { HttpValueContext } from "./http-media.js";
 import { scalarIntrinsic } from "./http-type-utils.js";
 
@@ -134,7 +134,7 @@ function createHttpWireValuePlanInner(
       if (intrinsic === "boolean") return { kind: "boolean" };
       if (
         ["int64", "uint64", "integer"].includes(intrinsic) &&
-        integerRangeIsJsonSafe(program, type, encodingTarget ?? type)
+        isJsonSafeIntegerRange(program, type, encodingTarget ?? type)
       ) {
         return { kind: "number", integer: true };
       }
@@ -242,7 +242,7 @@ function scalarHttpEncodingPlan(
   context: HttpValueContext,
 ): HttpWireValuePlan | undefined {
   const intrinsic = scalarIntrinsic(program, scalar);
-  const encode = effectiveEncode(program, scalar, target);
+  const encode = getEffectiveScalarEncoding(program, scalar, target)?.data;
   if (!encode) {
     return context === "header" && ["utcDateTime", "offsetDateTime"].includes(intrinsic)
       ? { kind: "scalar-encoding", encoding: "rfc7231" }
@@ -258,7 +258,7 @@ function scalarHttpEncodingPlan(
       if (
         ["numeric", "decimal", "decimal128"].includes(intrinsic) ||
         (["int64", "uint64", "integer"].includes(intrinsic) &&
-          !integerRangeIsJsonSafe(program, scalar, target ?? scalar))
+          !isJsonSafeIntegerRange(program, scalar, target ?? scalar))
       ) {
         return { kind: "string" };
       }
@@ -286,77 +286,6 @@ function scalarHttpEncodingPlan(
     default:
       return undefined;
   }
-}
-
-function effectiveEncode(
-  program: Program,
-  scalar: import("@typespec/compiler").Scalar,
-  target: ModelProperty | import("@typespec/compiler").Scalar | undefined,
-): EncodeData | undefined {
-  if (target?.kind === "ModelProperty") {
-    const property = getEncode(program, target);
-    if (property) return property;
-  }
-  let current: import("@typespec/compiler").Scalar | undefined = scalar;
-  while (current) {
-    const encode = getEncode(program, current);
-    if (encode) return encode;
-    current = current.baseScalar;
-  }
-  return undefined;
-}
-
-function isNumericIntrinsic(name: string): boolean {
-  return (
-    isIntegerIntrinsic(name) ||
-    ["float", "float32", "float64", "numeric", "decimal", "decimal128"].includes(name)
-  );
-}
-
-function isIntegerIntrinsic(name: string): boolean {
-  return [
-    "int8",
-    "uint8",
-    "int16",
-    "uint16",
-    "int32",
-    "uint32",
-    "int64",
-    "uint64",
-    "integer",
-    "safeint",
-  ].includes(name);
-}
-
-function integerRangeIsJsonSafe(
-  program: Program,
-  scalar: import("@typespec/compiler").Scalar,
-  target: ModelProperty | import("@typespec/compiler").Scalar,
-): boolean {
-  const minimum =
-    getMinValueAsNumeric(program, target) ??
-    getMinValueExclusiveAsNumeric(program, target) ??
-    (target === scalar
-      ? undefined
-      : (getMinValueAsNumeric(program, scalar) ?? getMinValueExclusiveAsNumeric(program, scalar)));
-  const maximum =
-    getMaxValueAsNumeric(program, target) ??
-    getMaxValueExclusiveAsNumeric(program, target) ??
-    (target === scalar
-      ? undefined
-      : (getMaxValueAsNumeric(program, scalar) ?? getMaxValueExclusiveAsNumeric(program, scalar)));
-  const min = minimum?.asNumber();
-  const max = maximum?.asNumber();
-  return (
-    min !== undefined &&
-    min !== null &&
-    max !== undefined &&
-    max !== null &&
-    Number.isSafeInteger(min) &&
-    Number.isSafeInteger(max) &&
-    min >= Number.MIN_SAFE_INTEGER &&
-    max <= Number.MAX_SAFE_INTEGER
-  );
 }
 
 function isHttpFileModel(model: Model): boolean {
