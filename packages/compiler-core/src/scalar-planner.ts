@@ -348,7 +348,7 @@ export class ScalarPlanner {
           ? String(value.value)
           : value.value;
       case "NumericValue": {
-        const bounds = getNumericBounds(this.program, scalar, encodingTarget);
+        const bounds = scalar ? getNumericBounds(this.program, scalar, encodingTarget) : {};
         const issue = numericConstraintIssue(
           value.value.toString(),
           Object.fromEntries(Object.entries(bounds).map(([key, bound]) => [key, bound.toString()])),
