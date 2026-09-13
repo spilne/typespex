@@ -17,6 +17,16 @@ The package is ESM, targets ES2022, and requires Fetch, URL, Web Streams, Blob, 
 Node.js `>=22.12 <23` or `>=24 <25` is supported. Applications must install the matching
 `@typespex/mcp-server` peer alongside this package.
 
+## Operational errors
+
+HTTP request and response-reading failures become `McpToolError` instances. The bridge selects
+their messages from `HttpClientError.code`, independently of the HTTP client's diagnostic
+wording. The original error is retained as `cause` for application-side inspection; its message
+is not copied into the tool result. Existing `McpToolError` instances are preserved.
+
+Limit and redirect messages describe the policy failure without embedding the configured bound
+or rejected origin. Authentication, redirect policies, cancellation, and result shapes are unchanged.
+
 ## License
 
 MIT
