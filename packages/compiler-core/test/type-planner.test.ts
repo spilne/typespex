@@ -433,6 +433,49 @@ describe("TypePlanner", () => {
     expect(isVoidType(operation(namespace(global, "Api"), "nothing").returnType)).toBe(true);
   });
 
+  test("keeps scalar defaults aligned with canonical JSON representations", async () => {
+    const program = await compile(`
+      @minValue(-10) @maxValue(10)
+      scalar BoundedId extends int64;
+
+      @encode(string) scalar LargeId extends int64;
+      @encode(string) scalar Money extends decimal;
+      @encode(string) scalar BooleanText extends boolean;
+
+      model Defaults {
+        bounded: BoundedId = 5;
+        large: LargeId = 9007199254740993;
+        money: Money = 12.50;
+        flag: BooleanText = true;
+        @encode(string) count: int32 = 7;
+        instant: utcDateTime = utcDateTime.fromISO("2024-01-02T03:04:05Z");
+      }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const issues: CompilerIssue[] = [];
+    const planner = new TypePlanner(program, {
+      canonicalJsonWire: true,
+      onIssue: (issue) => issues.push(issue),
+    });
+
+    const schema = planner.createWirePlan(model(global, "Defaults")).schema as {
+      $defs: {
+        Defaults: {
+          properties: Record<string, { default?: unknown }>;
+        };
+      };
+    };
+    const properties = schema.$defs.Defaults.properties;
+
+    expect(properties.bounded?.default).toBe(5);
+    expect(properties.large?.default).toBe("9007199254740993");
+    expect(properties.money?.default).toBe("12.5");
+    expect(properties.flag?.default).toBe(true);
+    expect(properties.count?.default).toBe(7);
+    expect(properties.instant?.default).toBe("2024-01-02T03:04:05Z");
+    expect(issues).toEqual([]);
+  });
+
   test("rejects unprepared names and reports unsafe native numeric representations once", async () => {
     const program = await compile(`
       scalar UnknownScalar;
