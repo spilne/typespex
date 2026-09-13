@@ -307,4 +307,44 @@ describe("HTTP union conversion", () => {
       }
     }
   });
+  test("does not let an ambiguous field hide another field's invalid value", () => {
+    const nullable = (kind: "number" | "string"): HttpWireValuePlan => ({
+      kind: "union",
+      variants: [
+        { kind: "object", properties: { id: { sourceName: "id", value: { kind } } } },
+        { kind: "null" },
+      ],
+    });
+    const count: HttpWireValuePlan = {
+      kind: "union",
+      variants: [{ kind: "scalar-encoding", encoding: "integer-string" }, { kind: "string" }],
+    };
+    const good: HttpWireValuePlan = {
+      kind: "object",
+      properties: {
+        count: { sourceName: "count", value: { kind: "string" } },
+        item: { sourceName: "item", value: nullable("string") },
+      },
+    };
+    const value = { count: "1", item: { id: "r1" } };
+    for (const names of [
+      ["count", "item"],
+      ["item", "count"],
+    ]) {
+      const bad: HttpWireValuePlan = {
+        kind: "object",
+        properties: Object.fromEntries(
+          names.map((name) => [
+            name,
+            { sourceName: name, value: name === "count" ? count : nullable("number") },
+          ]),
+        ),
+      };
+      for (const variants of [
+        [bad, good],
+        [good, bad],
+      ])
+        expect(decodeHttpWireValue(value, { kind: "union", variants })).toEqual(value);
+    }
+  });
 });

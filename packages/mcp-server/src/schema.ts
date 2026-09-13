@@ -484,6 +484,7 @@ async function projectUncheckedValue(
     throw (
       errors.find((error) => error.reason === "shape") ??
       errors.find((error) => error.reason === "projection") ??
+      errors.find((error) => error.reason !== "ambiguous") ??
       errors[0]
     );
   return output;

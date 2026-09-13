@@ -213,4 +213,37 @@ describe("union schemas", () => {
       }
     }
   });
+  test("does not let an ambiguous field hide another field's invalid value", async () => {
+    const object = (properties: Record<string, unknown>) => ({
+      type: "object",
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false,
+    });
+    const nullable = (type: string) => ({ anyOf: [object({ id: { type } }), { type: "null" }] });
+    const count = { anyOf: [object({ a: { type: "number" } }), object({ b: { type: "number" } })] };
+    const good = object({ count: true, item: nullable("string") });
+    const projected = { count: { a: 1, b: 2 }, item: { id: "r1" } };
+    for (const names of [
+      ["count", "item"],
+      ["item", "count"],
+    ]) {
+      const bad = object(
+        Object.fromEntries(
+          names.map((name) => [name, name === "count" ? count : nullable("number")]),
+        ),
+      );
+      for (const anyOf of [
+        [bad, good],
+        [good, bad],
+      ]) {
+        const schema = createSchema({ schema: { anyOf } });
+        const value =
+          names[0] === "count"
+            ? { ...projected, extra: true }
+            : { item: projected.item, count: projected.count, extra: true };
+        expect(await schema.encode(value)).toEqual({ ok: true, value: projected });
+      }
+    }
+  });
 });

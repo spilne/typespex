@@ -440,7 +440,10 @@ function convertObject(
         (error) => error instanceof UnionConversionError && error.reason === "projection",
       ) ??
       errors.find(
-        (error) => !(error instanceof UnionConversionError) || error.reason === "coercion",
+        (error) =>
+          !(error instanceof UnionConversionError) ||
+          error.reason === "coercion" ||
+          error.reason === "invalid-value",
       ) ??
       errors[0]
     );
