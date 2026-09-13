@@ -688,8 +688,7 @@ bun run bench:matchers
 ```
 
 The HTTP benchmark uses Autocannon against Bare Bun, Hono, Hono with Zod validation, Elysia with
-input validation, and TypeSpex. Recorded comparisons and their raw trials are in
-[bench/RESULTS.md](bench/RESULTS.md).
+input validation, and TypeSpex.
 Every timed cell gets a fresh server process and the same bounded, deterministic pet fixture. The
 timed scenarios cover list, successful and missing read, and create. DELETE remains bound in every
 server so their route tables stay equivalent, but it is not load-tested because repeated deletion
