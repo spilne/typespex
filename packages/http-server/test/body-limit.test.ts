@@ -50,6 +50,22 @@ function expectTooLarge(result: Awaited<ReturnType<typeof decodeBody>>): Request
 }
 
 describe("request body limits", () => {
+  test("verified bodies expose their stream only when rejection requires draining", async () => {
+    const request = new Request("http://localhost/body", { method: "POST", body: "hello" });
+    const body = request.body;
+    let bodyReads = 0;
+    Object.defineProperty(request, "body", {
+      get() {
+        bodyReads++;
+        return body;
+      },
+    });
+    expect(enforceRequestBodyLimit(request, 5, 5)).toBe(request);
+    expect(bodyReads).toBe(0);
+    expect(() => enforceRequestBodyLimit(request, 4)).toThrow(RequestBodyTooLargeError);
+    expect(bodyReads).toBe(1);
+  });
+
   test("verified transport lengths retain native bodies and preserve tighter policies", async () => {
     const request = new Request("http://localhost/body", {
       method: "POST",

@@ -44,8 +44,9 @@ remained the dominant bottleneck. This batch did not establish a lead over Hono+
 This run contains 80 measured cells. The baseline is master `6ede99c`. The candidate
 preserves native Bun buffering for verified fixed-length bodies, avoids a second JSON
 parse and object copy for ordinary input, and reduces JSON quoting/header allocations.
-The adapter API was subsequently adjusted to keep `handle(request)` compatible and bind
-transport facts to the original Request; final-source confirmation is reported separately.
+The adapter API was subsequently adjusted to keep `handle(request)` and wrapper behavior compatible, bind
+transport facts to the original Request, and defer native body access. Later measurements
+are reported separately below.
 
 | Scenario                |       Hono+Zod |         Elysia | TypeSpex first batch | TypeSpex candidate |
 | ----------------------- | -------------: | -------------: | -------------------: | -----------------: |
@@ -53,6 +54,19 @@ transport facts to the original Request; final-source confirmation is reported s
 | GET /pets/:id (success) | 79,725 ± 1,011 | 87,418 ± 2,976 |       67,878 ± 1,478 |     67,426 ± 4,050 |
 | GET /pets/:id (404)     | 78,842 ± 7,142 | 84,608 ± 6,426 |       65,510 ± 2,373 |     65,733 ± 5,973 |
 | POST /pets (create)     | 57,210 ± 1,837 | 72,506 ± 3,347 |         18,672 ± 515 |     44,611 ± 1,229 |
+
+## Confirmation at b0723c4
+
+[Raw trials, schedule, metadata, and aggregates](results/2026-09-14-runtime-confirmation.json).
+Five further paired trials (40 measured cells) compare `b0723c4` against master `6ede99c`.
+This predates the final router-wrapper guard and deferred native body access.
+
+| Scenario                | TypeSpex master 6ede99c | TypeSpex b0723c4 |
+| ----------------------- | ----------------------: | ---------------: |
+| GET /pets?limit=10      |            48,141 ± 899 |   50,150 ± 1,286 |
+| GET /pets/:id (success) |          71,198 ± 1,128 |   75,648 ± 1,715 |
+| GET /pets/:id (404)     |          71,392 ± 1,363 |     72,115 ± 608 |
+| POST /pets (create)     |            19,178 ± 226 |     48,442 ± 803 |
 
 ## Reproduce
 

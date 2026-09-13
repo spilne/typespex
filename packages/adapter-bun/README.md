@@ -13,7 +13,8 @@ unexpected failures to a logged 500 response.
 
 When used directly by `Bun.serve`, the adapter preserves native buffering for
 fixed-length request bodies while enforcing the router's configured byte limit.
-Chunked bodies and synthetic requests retain streamed byte counting.
+Chunked bodies and synthetic requests retain streamed byte counting. Custom routers
+and wrappers continue through their ordinary `handle(request)` method.
 
 The optional second `fetch` argument is reserved for Bun's native callback with
 an unmodified request. For manual calls, or wrappers that rewrite request

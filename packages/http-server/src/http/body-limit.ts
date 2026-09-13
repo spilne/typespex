@@ -31,6 +31,9 @@ interface RequestBodyLimitState {
   readonly verifiedBodyLength?: number;
   received: number;
   readonly source: ReadableStream<Uint8Array> | null;
+  // Preserve native buffering without creating Request.body's stream wrapper.
+  // Read it only when a rejected request needs draining.
+  readonly nativeRequest?: Request;
   reader?: ReadableStreamDefaultReader<Uint8Array>;
   reading: boolean;
   draining: boolean;
@@ -110,7 +113,8 @@ export function enforceRequestBodyLimit(
       maximum,
       verifiedBodyLength,
       received: 0,
-      source: request.body,
+      source: verifiedBodyLength === undefined ? request.body : null,
+      nativeRequest: verifiedBodyLength === undefined ? undefined : request,
       reading: false,
       draining: false,
       drainRequested: false,
@@ -152,7 +156,8 @@ function createLimitedRequest(
     maximum,
     verifiedBodyLength,
     received: 0,
-    source: request.body,
+    source: verifiedBodyLength === undefined ? request.body : null,
+    nativeRequest: verifiedBodyLength === undefined ? undefined : request,
     reading: false,
     draining: false,
     drainRequested: false,
@@ -167,7 +172,7 @@ function createLimitedRequest(
   }
   // Verified HTTP framing already bounds this body. Retaining the native
   // Request lets its consumer use the transport's buffered-body fast path.
-  if (request.body === null || verifiedBodyLength !== undefined) {
+  if (verifiedBodyLength !== undefined || request.body === null) {
     requestBodyLimitStates.set(request, state);
     return request;
   }
@@ -274,12 +279,14 @@ function contentLengthError(
  */
 function beginSafeDrain(state: RequestBodyLimitState): void {
   state.drainRequested = true;
-  if (state.reading || state.draining || state.source === null) return;
+  if (state.reading || state.draining) return;
+  const source = state.source ?? state.nativeRequest?.body;
+  if (!source) return;
   state.draining = true;
 
   void (async () => {
     try {
-      const reader = (state.reader ??= state.source!.getReader());
+      const reader = (state.reader ??= source.getReader());
       for (;;) {
         const next = await reader.read();
         if (next.done) break;

@@ -8,6 +8,7 @@ import {
   decodeBody,
   Decoders,
   emptyHints,
+  handleRequestWithTransport,
   type HttpRouter,
   type ServerOperation,
 } from "@typespex/http-server";
@@ -22,7 +23,11 @@ function mockRouter(handle: (request: Request) => Promise<Response>): HttpRouter
   return { handle, tryHandle: handle };
 }
 
-function bodyRouter(decoderLimit?: number | false, maximum = 5): HttpRouter {
+function bodyRouter(
+  decoderLimit?: number | false,
+  maximum = 5,
+  decodedRequests?: Request[],
+): HttpRouter {
   const operation: ServerOperation<string, string> = {
     endpoint: {
       service: { name: "BodyService", hints: emptyHints() },
@@ -36,6 +41,7 @@ function bodyRouter(decoderLimit?: number | false, maximum = 5): HttpRouter {
       },
     },
     decodeInput(request) {
+      decodedRequests?.push(request);
       return decodeBody(
         request,
         { text: Decoders.string },
@@ -68,6 +74,45 @@ function rawHttp(port: number, message: string): Promise<string> {
 }
 
 describe("toBunHandler", () => {
+  test("native transport handling cannot bypass spread, inherited, or replaced handle guards", async () => {
+    for (const wrapping of ["spread", "inherited", "replaced"] as const) {
+      const base = bodyRouter();
+      const originalHandle = base.handle;
+      const guardedHandle = (request: Request) =>
+        request.headers.has("authorization")
+          ? originalHandle(request)
+          : Promise.resolve(new Response("Unauthorized", { status: 401 }));
+      const router =
+        wrapping === "spread"
+          ? { ...base, handle: guardedHandle }
+          : wrapping === "inherited"
+            ? (Object.assign(Object.create(base), { handle: guardedHandle }) as HttpRouter)
+            : base;
+      const handler = toBunHandler(router, { logger: silentLogger });
+      if (wrapping === "replaced") router.handle = guardedHandle;
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...handler });
+      try {
+        const url = `http://127.0.0.1:${server.port}/body`;
+        const denied = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: "hello",
+        });
+        expect(denied.status).toBe(401);
+        await denied.text();
+        const allowed = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "text/plain", authorization: "test" },
+          body: "hello",
+        });
+        expect(allowed.status).toBe(200);
+        expect(await allowed.text()).toBe("hello");
+      } finally {
+        await server.stop(true);
+      }
+    }
+  });
+
   test("native framing conflicts cannot admit an oversized body", async () => {
     const router = bodyRouter();
     const handler = toBunHandler(router, { logger: silentLogger });
@@ -163,7 +208,7 @@ describe("toBunHandler", () => {
       body: "hello!",
     });
     const router = bodyRouter();
-    const response = await router.handleWithTransport!(replacement, {
+    const response = await handleRequestWithTransport(router, replacement, {
       request: original,
       verifiedBodyLength: 5,
     });
@@ -172,22 +217,19 @@ describe("toBunHandler", () => {
   });
 
   test("native fixed-length requests keep body limits and other requests retain counting", async () => {
-    const lengths: (number | undefined)[] = [];
-    const router = bodyRouter();
-    const handler = toBunHandler(
-      {
-        handle(request) {
-          lengths.push(undefined);
-          return router.handle(request);
-        },
-        handleWithTransport(request, transport) {
-          lengths.push(transport.verifiedBodyLength);
-          return router.handleWithTransport!(request, transport);
-        },
+    const decodedRequests: Request[] = [];
+    const nativeRequests: Request[] = [];
+    const handler = toBunHandler(bodyRouter(undefined, 5, decodedRequests), {
+      logger: silentLogger,
+    });
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request, server) {
+        nativeRequests.push(request);
+        return handler.fetch(request, server);
       },
-      { logger: silentLogger },
-    );
-    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...handler });
+    });
     try {
       const url = `http://127.0.0.1:${server.port}/body`;
       const exact = await fetch(url, {
@@ -197,6 +239,7 @@ describe("toBunHandler", () => {
       });
       expect(exact.status).toBe(200);
       expect(await exact.text()).toBe("hello");
+      expect(decodedRequests[0]).toBe(nativeRequests[0]);
 
       const over = await fetch(url, {
         method: "POST",
@@ -249,7 +292,7 @@ describe("toBunHandler", () => {
       );
       expect(manual.status).toBe(413);
       await manual.text();
-      expect(lengths).toEqual([5, 6, undefined, undefined, undefined, undefined]);
+      expect(decodedRequests[1]).not.toBe(nativeRequests[2]);
     } finally {
       await server.stop(true);
     }

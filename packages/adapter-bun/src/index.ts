@@ -1,5 +1,6 @@
 import {
   consoleLogger,
+  handleRequestWithTransport,
   type HttpRequestTransportInfo,
   type HttpRouter,
   type Logger,
@@ -35,10 +36,8 @@ export function toBunHandler(
   return {
     async fetch(request: Request, server?: unknown): Promise<Response> {
       try {
-        if (router.handleWithTransport) {
-          const transport = verifiedRequestBody(request, server);
-          if (transport) return await router.handleWithTransport(request, transport);
-        }
+        const transport = verifiedRequestBody(request, server);
+        if (transport) return await handleRequestWithTransport(router, request, transport);
         return await router.handle(request);
       } catch (error) {
         logger.error("Unhandled error in request handler", {
