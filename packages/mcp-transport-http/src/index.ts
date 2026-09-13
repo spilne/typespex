@@ -25,7 +25,7 @@ export interface McpHttpServerOptions {
   readonly allowedHosts?: readonly string[];
   /** Exact HTTP(S) origins accepted in the Origin header. Requests without Origin are allowed. */
   readonly allowedOrigins?: readonly string[];
-  /** Verifies inbound authentication and supplies SDK AuthInfo to tool handlers. */
+  /** Verifies every request, including loopback. Returning undefined rejects it with 401. */
   readonly verifyAuth?: InboundAuthVerifier;
   readonly legacy?: "stateless" | "reject";
   readonly responseMode?: PerRequestResponseMode;
@@ -96,7 +96,8 @@ export function createMcpHttpHandler(
         }
       }
 
-      if (resolved.requiresAuth && !authInfo) return unauthorizedResponse();
+      if ((resolved.requiresAuth || resolved.verifyAuth) && !authInfo)
+        return unauthorizedResponse();
       return handler.fetch(request, { ...requestOptions, authInfo });
     },
   };
