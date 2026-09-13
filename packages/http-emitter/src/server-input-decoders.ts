@@ -81,8 +81,8 @@ export interface InputDecoderEntry {
   readonly lines: readonly string[];
 }
 
-/** Result of emitting one operation's decoder. */
-export interface DecoderEmission {
+/** Complete renderer input for one operation's request decoder. */
+export interface InputDecoderPlan {
   /** Entries for the group's input decoder object. */
   readonly inputEntries: readonly InputDecoderEntry[];
   /** The decode expression (used as arrow body). */
@@ -95,16 +95,14 @@ export interface DecoderEmission {
   readonly hoistedDecoders: readonly string[];
 }
 
-/**
- * Emits the decoder for one HTTP operation.
- * Returns input decoder entries and a decode expression.
- */
-export function emitDecoder(
+/** Builds the complete request-decoder input consumed by the server renderer. */
+export function buildInputDecoderPlan(
   ctx: EmitterCtx,
   op: HttpOperation,
+  inputType: string,
   inputsRef: string,
   opName: string,
-): DecoderEmission {
+): InputDecoderPlan {
   const dec = createDecoderEmitContext(inputsRef, opName);
   const parameters = getHandlerRequestParameters(ctx, op);
   const pathParams = parameters.filter((p) => p.type === "path");
@@ -118,8 +116,6 @@ export function emitDecoder(
   const hasBody = op.parameters.body != null;
   const hasRequestInput =
     pathParams.length + queryParams.length + headerParams.length + cookieParams.length > 0;
-  const inputType = buildInputType(ctx, op);
-
   // Build request input decoder entries.
   const requestEntries: Array<{ name: string; expr: string }> = [];
   for (const param of pathParams) {

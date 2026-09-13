@@ -21,6 +21,7 @@ import {
   getGeneratedTypeName,
   getNamespaceFullName,
   hasGeneratedTypeNameCollision,
+  recordTypeReference,
   type EmitterCtx,
 } from "./ctx.js";
 import { getDateTimeMode } from "./datetime-mode.js";
@@ -100,7 +101,7 @@ export function typeToTs(ctx: EmitterCtx, type: Type): string {
 
     case "Enum": {
       if (hasGeneratedTypeNameCollision(ctx, type)) {
-        return getGeneratedTypeName(ctx, type, "Enum");
+        return recordTypeReference(ctx, getGeneratedTypeName(ctx, type, "Enum"));
       }
       const members = [...type.members.values()];
       return members.map((member) => enumMemberLiteralExpression(ctx.program, member)).join(" | ");
@@ -197,6 +198,7 @@ function templatedNamedTypeToTs(
   fallback: string,
 ): string {
   const name = getGeneratedTypeName(ctx, type, fallback);
+  recordTypeReference(ctx, name);
   const args = type.templateMapper?.args.map((arg) => templateArgumentToTs(ctx, arg)) ?? [];
   return args.length > 0 ? `${name}<${args.join(", ")}>` : name;
 }
