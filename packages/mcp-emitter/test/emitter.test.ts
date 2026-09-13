@@ -76,6 +76,9 @@ describe("@typespex/mcp emitter", () => {
       ok: true,
       value: { years: "42", name: "Ada" },
     });
+    for (const extra of [1, undefined]) {
+      expect((await tool.success.encode({ age: 42, extra })).ok).toBe(false);
+    }
   });
 
   test("keeps model names separate from operation aliases and runtime types", () => {
@@ -92,11 +95,13 @@ describe("@typespex/mcp emitter", () => {
           model Uint8Array { label: string; }
           model File { label: string; }
           model McpToolDefinition { label: string; }
+          model Record { label: string; }
           @tool op echo(
             value: EchoInput, date: Date, array: ReadonlyArray, buffer: Uint8Array,
-            file: File, definition: McpToolDefinition, payload: bytes,
+            file: File, definition: McpToolDefinition, record: Record, payload: bytes,
             attachment: TypeSpec.Http.File, times: utcDateTime[],
           ): utcDateTime;
+          @tool op ping(): void;
         }
       `,
       `    datetime-mode: date\n    launchers: []\n`,
@@ -106,7 +111,7 @@ describe("@typespex/mcp emitter", () => {
       const label = { label: "user model" };
       const input: EchoInput = {
         value: { value: "hello" }, date: label, array: label, buffer: label,
-        file: label, definition: label, payload: new Uint8Array(),
+        file: label, definition: label, record: label, payload: new Uint8Array(),
         attachment: new File([], "example.txt"), times: [new Date()],
       };
       const output: EchoSuccess = new Date();
@@ -333,7 +338,13 @@ describe("@typespex/mcp emitter", () => {
           op createPet(@body pet: Pet): Pet;
         }
       `,
-      `    mode: [http-bridge]\n    launchers: []\n`,
+      `    mode: [http-bridge]\n    application-module: "../../../../application.js"\n    launchers: [node]\n`,
+      {
+        "application.ts": `
+          import { definePetApiMcpApplication } from "./generated/@typespex/mcp-emitter/pet-api/mcp-server.js";
+          export default definePetApiMcpApplication({ kind: "http-bridge", bridge: {} });
+        `,
+      },
     );
     const bridge = result.read("pet-api", "mcp-http-bridge.ts");
     expect(bridge).toContain('method: "GET"');

@@ -517,67 +517,78 @@ export class TypePlanner {
     }
   }
 
-  private projectionChangesType(
-    type: Type,
-    projection: RegisteredProjection,
-    visiting = new Set<Type>(),
-  ): boolean {
-    const substituted = this.types.substitute(type);
-    if (substituted !== type) {
-      return this.projectionChangesType(substituted, projection, visiting);
-    }
+  private projectionChangesType(type: Type, projection: RegisteredProjection): boolean {
     const cached = projection.changes.get(type);
     if (cached !== undefined) return cached;
-    if (visiting.has(type)) return false;
-    visiting.add(type);
-    let changed = false;
-    switch (type.kind) {
-      case "Model":
-        if (this.types.isFile(type)) break;
-        if (this.types.isStream(type)) {
-          const element = this.types.streamElement(type);
-          changed = element ? this.projectionChangesType(element, projection, visiting) : false;
-          break;
-        }
-        if (isArrayModelType(this.program, type)) {
-          changed = this.projectionChangesType(type.indexer.value, projection, visiting);
-          break;
-        }
-        for (const property of walkPropertiesInherited(type)) {
-          if (!projection.propertyFilter(property)) {
-            changed = true;
+    const pending = [type];
+    const visited = new Set<Type>();
+    const parents = new Map<Type, Set<Type>>();
+    const changed = new Set<Type>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const known = projection.changes.get(current);
+      if (known !== undefined) {
+        if (known) changed.add(current);
+        continue;
+      }
+      const children: Type[] = [];
+      const substituted = this.types.substitute(current);
+      if (substituted !== current) {
+        children.push(substituted);
+      } else {
+        switch (current.kind) {
+          case "Model": {
+            if (this.types.isFile(current)) break;
+            if (this.types.isStream(current)) {
+              const element = this.types.streamElement(current);
+              if (element) children.push(element);
+              break;
+            }
+            if (isArrayModelType(this.program, current)) {
+              children.push(current.indexer.value);
+              break;
+            }
+            for (const property of walkPropertiesInherited(current)) {
+              if (projection.propertyFilter(property)) children.push(property.type);
+              else changed.add(current);
+            }
+            const additional = this.types.indexer(current)?.value;
+            if (additional) children.push(additional);
             break;
           }
-          if (this.projectionChangesType(property.type, projection, visiting)) {
-            changed = true;
+          case "Union":
+            children.push(...this.unionVariants(current));
             break;
-          }
+          case "UnionVariant":
+          case "ModelProperty":
+            children.push(current.type);
+            break;
+          case "Tuple":
+            children.push(...current.values);
+            break;
         }
-        const additional = this.types.indexer(type)?.value;
-        if (!changed && additional) {
-          changed = this.projectionChangesType(additional, projection, visiting);
-        }
-        break;
-      case "Union":
-        changed = this.unionVariants(type).some((variant) =>
-          this.projectionChangesType(variant, projection, visiting),
-        );
-        break;
-      case "UnionVariant":
-      case "ModelProperty":
-        changed = this.projectionChangesType(type.type, projection, visiting);
-        break;
-      case "Tuple":
-        changed = type.values.some((item) =>
-          this.projectionChangesType(item, projection, visiting),
-        );
-        break;
+      }
+      for (const child of children) {
+        const dependents = parents.get(child) ?? new Set<Type>();
+        dependents.add(current);
+        parents.set(child, dependents);
+        pending.push(child);
+      }
     }
-    visiting.delete(type);
-    // A nested false result may have stopped at a back edge whose remaining
-    // properties have not been examined yet. Only root false results are final.
-    if (changed || visiting.size === 0) projection.changes.set(type, changed);
-    return changed;
+    // Propagate changed leaves back through cycles before caching any false
+    // result. Each declaration and edge is examined a bounded number of times.
+    pending.push(...changed);
+    while (pending.length > 0) {
+      for (const parent of parents.get(pending.pop()!) ?? []) {
+        if (changed.has(parent)) continue;
+        changed.add(parent);
+        pending.push(parent);
+      }
+    }
+    for (const current of visited) projection.changes.set(current, changed.has(current));
+    return changed.has(type);
   }
 
   private getProjectionTypeName(type: Model | Union, projection: RegisteredProjection): string {
