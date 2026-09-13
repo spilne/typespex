@@ -260,9 +260,16 @@ export class JsonPlanner {
       JsonSchema
     >;
     const required: string[] = [];
+    const excludedNames = new Set<string>();
     for (const property of walkPropertiesInherited(model)) {
-      if (propertyFilter && !propertyFilter(property)) continue;
       const wireName = resolveEncodedName(this.program, property, "application/json");
+      if (propertyFilter && !propertyFilter(property)) {
+        if (this.types.indexer(model)) {
+          excludedNames.add(property.name);
+          excludedNames.add(wireName);
+        }
+        continue;
+      }
       let propertySchema = this.schemaForType(property.type, state, property, false);
       const defaultValue = this.propertyDefaultValue(property);
       const description = getDoc(this.program, property) ?? getSummary(this.program, property);
@@ -276,6 +283,9 @@ export class JsonPlanner {
       }
       properties[wireName] = propertySchema;
       if (!property.optional && !defaultValue.present) required.push(wireName);
+    }
+    for (const name of excludedNames) {
+      if (!Object.hasOwn(properties, name)) properties[name] = false;
     }
     return {
       type: "object",
@@ -395,8 +405,18 @@ export class JsonPlanner {
       string,
       ObjectPropertyCodecSpec
     >;
+    const excludedProperties: Record<string, string> = Object.create(null);
     for (const property of walkPropertiesInherited(model)) {
-      if (propertyFilter && !propertyFilter(property)) continue;
+      if (propertyFilter && !propertyFilter(property)) {
+        if (this.types.indexer(model)) {
+          excludedProperties[property.name] = resolveEncodedName(
+            this.program,
+            property,
+            "application/json",
+          );
+        }
+        continue;
+      }
       const defaultValue = this.propertyDefaultValue(property);
       properties[property.name] = {
         wireName: resolveEncodedName(this.program, property, "application/json"),
@@ -408,6 +428,7 @@ export class JsonPlanner {
     return {
       kind: "object",
       properties,
+      ...(Object.keys(excludedProperties).length > 0 ? { excludedProperties } : {}),
       ...(this.types.indexer(model)?.value
         ? {
             additionalProperties: this.codecForType(
@@ -631,6 +652,7 @@ function codecDocumentRequiresTransform(document: ValueCodecDocument): boolean {
         return spec.variants.some(requiresTransform);
       case "object":
         return (
+          Object.keys(spec.excludedProperties ?? {}).length > 0 ||
           Object.entries(spec.properties).some(
             ([semanticName, property]) =>
               property.wireName !== semanticName ||
