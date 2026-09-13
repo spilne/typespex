@@ -7,7 +7,7 @@ import {
   type Scalar,
   type Value,
 } from "@typespec/compiler";
-import type { ValueCodecSpec } from "@typespex/codec";
+import { numericConstraintIssue, type ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema } from "./plans.js";
 import {
   getEffectiveScalarEncoding,
@@ -247,6 +247,7 @@ export class ScalarPlanner {
           maximum: Number.MAX_SAFE_INTEGER,
         };
       case "float32":
+        return { type: "number", minimum: -3.4e38, maximum: 3.4e38 };
       case "float64":
       case "float":
         return { type: "number" };
@@ -346,11 +347,18 @@ export class ScalarPlanner {
         return this.usesDeclaredStringEncoding(scalar, encodingTarget)
           ? String(value.value)
           : value.value;
-      case "NumericValue":
+      case "NumericValue": {
+        const bounds = getNumericBounds(this.program, scalar, encodingTarget);
+        const issue = numericConstraintIssue(
+          value.value.toString(),
+          Object.fromEntries(Object.entries(bounds).map(([key, bound]) => [key, bound.toString()])),
+        );
+        if (issue) throw new Error(issue);
         if (this.numericDefaultUsesString(scalar, encodingTarget)) {
           return value.value.toString();
         }
         return value.value.asNumber() ?? value.value.toString();
+      }
       case "ScalarValue": {
         // Only standard date/time constructors have an unambiguous JSON representation.
         // Opaque constructors must not silently inherit their first argument's wire shape.

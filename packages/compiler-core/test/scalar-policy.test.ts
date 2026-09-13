@@ -132,6 +132,7 @@ describe("shared scalar policy", () => {
         @minValue(-9007199254740993) @maxValue(9007199254740993) unsafe: int64;
         @minValue(-10) missingMaximum: int64;
         @maxValue(10) missingMinimum: int64;
+        @maxValue(100) unsignedMissingMinimum: uint64;
         unbounded: int64;
         @minValue(0.5) @maxValue(10) fractional: float64;
       }

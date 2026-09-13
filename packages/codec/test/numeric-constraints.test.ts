@@ -1,7 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { createValueCodec, type NumericConstraints, type ValueCodecSpec } from "../src/index.js";
+import {
+  compareNumericStrings,
+  createValueCodec,
+  type NumericConstraints,
+  type ValueCodecSpec,
+} from "../src/index.js";
 
 describe("exact numeric constraints", () => {
+  test("orders signed zero and nearby decimals exactly", () => {
+    const ordered = ["-1", "-0.1", "-0.01", "0", "0.001", "0.01", "0.1", "1"];
+    for (let left = 0; left < ordered.length; left++) {
+      for (let right = 0; right < ordered.length; right++) {
+        expect(Math.sign(compareNumericStrings(ordered[left]!, ordered[right]!))).toBe(
+          Math.sign(left - right),
+        );
+      }
+    }
+    expect(compareNumericStrings("-0.0e99999", "0")).toBe(0);
+    expect(() => compareNumericStrings("invalid", "0")).toThrow(TypeError);
+  });
+
+  test("handles long coefficients and exponent carries without expensive numeric parsing", () => {
+    const zeros = "0".repeat(20_000);
+    expect(compareNumericStrings(`0.${zeros}1`, `0.${zeros}2`)).toBe(-1);
+    const nines = "9".repeat(10_000);
+    const powerOfTen = `1${"0".repeat(10_000)}`;
+    expect(compareNumericStrings(`10e${nines}`, `1e${powerOfTen}`)).toBe(0);
+    expect(compareNumericStrings(`1e-${nines}`, `10e-${powerOfTen}`)).toBe(0);
+    expect(compareNumericStrings(`1e${nines}`, "1")).toBe(1);
+    expect(compareNumericStrings(`1e-${nines}`, "1")).toBe(-1);
+  });
+
   test("enforces integer limits without losing precision on either boundary", async () => {
     const codec = createValueCodec<bigint>({
       root: {

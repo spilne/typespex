@@ -22,8 +22,9 @@ they provide a compatible `globalThis.Temporal` implementation.
 
 Numeric contracts retain intrinsic, inherited, and property bounds when encoded as strings.
 Generated runtime checks enforce these bounds for tool inputs, native outputs, and HTTP bridge
-outputs. If TypeSpec resolves a numeric decorator literal with lost precision, generation reports
-a diagnostic instead of emitting an incorrect bound.
+outputs. If TypeSpec resolves a numeric literal written directly in a bound decorator with lost
+precision, generation reports a diagnostic instead of emitting an incorrect bound. This check does
+not currently detect precision loss through `const` references or custom decorators.
 
 ## License
 

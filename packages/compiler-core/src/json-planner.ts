@@ -479,17 +479,20 @@ export class JsonPlanner {
         : target.kind === "ModelProperty" && target.type.kind === "Scalar"
           ? target.type
           : undefined;
-    const bounds = scalar
-      ? getNumericBounds(this.program, scalar, target as ModelProperty | Scalar)
-      : {
-          minimum: getMinValueAsNumeric(this.program, target),
-          maximum: getMaxValueAsNumeric(this.program, target),
-          exclusiveMinimum: getMinValueExclusiveAsNumeric(this.program, target),
-          exclusiveMaximum: getMaxValueExclusiveAsNumeric(this.program, target),
-        };
+    const bounds =
+      scalar && schema.$ref === undefined
+        ? getNumericBounds(this.program, scalar, target as ModelProperty | Scalar, {
+            includeIntrinsic: false,
+          })
+        : {
+            minimum: getMinValueAsNumeric(this.program, target),
+            maximum: getMaxValueAsNumeric(this.program, target),
+            exclusiveMinimum: getMinValueExclusiveAsNumeric(this.program, target),
+            exclusiveMaximum: getMaxValueExclusiveAsNumeric(this.program, target),
+          };
     const numericWire =
       !scalar ||
-      (Object.keys(bounds).length > 0 &&
+      (Object.values(bounds).some((value) => value !== undefined) &&
         this.scalars.wireType(scalar, target as ModelProperty | Scalar) === "number");
     const min = numericWire ? bounds.minimum?.asNumber() : undefined;
     const max = numericWire ? bounds.maximum?.asNumber() : undefined;

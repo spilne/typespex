@@ -15,7 +15,7 @@ import {
   type Scalar,
 } from "@typespec/compiler";
 import { SyntaxKind } from "@typespec/compiler/ast";
-import type { NumericConstraints } from "@typespex/codec";
+import { compareNumericStrings, type NumericConstraints } from "@typespex/codec";
 
 type NumericBounds = { readonly [Key in keyof NumericConstraints]?: Numeric };
 
@@ -74,7 +74,11 @@ export function getNumericBoundIssue(
               : undefined;
         // A later custom decorator may intentionally replace the bound. Only
         // diagnose the standard decorator's own incorrectly resolved literal.
-        if (resolved?.equals(bound) && !resolved.equals(Numeric(argument.node.valueAsString))) {
+        if (
+          resolved &&
+          compareNumericStrings(resolved.toString(), bound.toString()) === 0 &&
+          compareNumericStrings(resolved.toString(), argument.node.valueAsString) !== 0
+        ) {
           return `TypeSpec resolved the numeric bound ${argument.node.valueAsString} as ${resolved.toString()}. Its precision was lost before TypeSpex planning; this bound cannot be emitted safely.`;
         }
       }
@@ -92,12 +96,13 @@ export function getNumericBounds(
   program: Program,
   scalar: Scalar,
   target: ModelProperty | Scalar = scalar,
+  options: { readonly includeIntrinsic?: boolean } = {},
 ): NumericBounds {
   const intrinsic = getScalarIntrinsicName(program, scalar);
   if (!isNumericIntrinsic(intrinsic)) return {};
   const bounds: { -readonly [Key in keyof NumericBounds]?: Numeric } = {};
   const intrinsicRange = intrinsicBounds[intrinsic];
-  if (intrinsicRange) {
+  if (intrinsicRange && options.includeIntrinsic !== false) {
     bounds.minimum = Numeric(intrinsicRange[0]);
     bounds.maximum = Numeric(intrinsicRange[1]);
   }
@@ -112,7 +117,13 @@ export function getNumericBounds(
       if (!value) continue;
       const previous = bounds[key];
       const lower = key === "minimum" || key === "exclusiveMinimum";
-      if (!previous || (lower ? value.gt(previous) : value.lt(previous))) bounds[key] = value;
+      if (
+        !previous ||
+        (lower
+          ? compareNumericStrings(value.toString(), previous.toString()) > 0
+          : compareNumericStrings(value.toString(), previous.toString()) < 0)
+      )
+        bounds[key] = value;
     }
   }
   return bounds;
@@ -227,13 +238,17 @@ export function isJsonSafeIntegerRange(
   scalar: Scalar,
   target: ModelProperty | Scalar,
 ): boolean {
-  const bounds = getNumericBounds(program, scalar, target);
+  const bounds = getNumericBounds(program, scalar, target, { includeIntrinsic: false });
   const minimum =
-    bounds.exclusiveMinimum && (!bounds.minimum || bounds.exclusiveMinimum.gt(bounds.minimum))
+    bounds.exclusiveMinimum &&
+    (!bounds.minimum ||
+      compareNumericStrings(bounds.exclusiveMinimum.toString(), bounds.minimum.toString()) > 0)
       ? bounds.exclusiveMinimum
       : bounds.minimum;
   const maximum =
-    bounds.exclusiveMaximum && (!bounds.maximum || bounds.exclusiveMaximum.lt(bounds.maximum))
+    bounds.exclusiveMaximum &&
+    (!bounds.maximum ||
+      compareNumericStrings(bounds.exclusiveMaximum.toString(), bounds.maximum.toString()) < 0)
       ? bounds.exclusiveMaximum
       : bounds.maximum;
   const min = minimum?.asNumber();

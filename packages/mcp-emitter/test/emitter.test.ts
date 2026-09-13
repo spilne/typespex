@@ -10,6 +10,55 @@ beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
+  test("intersects zero-adjacent bounds on encoded and native scalars", async () => {
+    const result = compileFixture(
+      "zero-adjacent-bounds",
+      `
+      import "@typespex/mcp";
+      using TypeSpex.Mcp;
+      @mcpServer(#{ version: "1.0.0" }) namespace NearZero {
+        @encode(string) @minValue(0.01) scalar Lower extends decimal;
+        @encode(string) @maxValue(0) scalar Upper extends decimal;
+        @encode(string) @minValueExclusive(0.01) scalar LowerExclusive extends decimal;
+        @encode(string) @maxValueExclusive(0) scalar UpperExclusive extends decimal;
+        @minValue(0.01) scalar NativeLower extends float64;
+        @maxValue(0) scalar NativeUpper extends float64;
+        @minValueExclusive(0.01) scalar NativeLowerExclusive extends float64;
+        @maxValueExclusive(0) scalar NativeUpperExclusive extends float64;
+        @tool op lower(@minValue(0) value: Lower): Lower;
+        @tool op upper(@maxValue(0.05) value: Upper): Upper;
+        @tool op lowerExclusive(@minValueExclusive(0) value: LowerExclusive): LowerExclusive;
+        @tool op upperExclusive(@maxValueExclusive(0.05) value: UpperExclusive): UpperExclusive;
+        @tool op nativeLower(@minValue(0) value: NativeLower): NativeLower;
+        @tool op nativeUpper(@maxValue(0.05) value: NativeUpper): NativeUpper;
+        @tool op nativeLowerExclusive(@minValueExclusive(0) value: NativeLowerExclusive): NativeLowerExclusive;
+        @tool op nativeUpperExclusive(@maxValueExclusive(0.05) value: NativeUpperExclusive): NativeUpperExclusive;
+
+      }
+    `,
+    );
+    const { mcpTools } = await import(`${result.outputDir}/near-zero/mcp-operations.ts`);
+    for (const prefix of ["", "native"]) {
+      for (const [name, accepted, rejected] of [
+        ["lower", "0.01", "0.001"],
+        ["upper", "0", "0.03"],
+        ["lowerExclusive", "0.02", "0.01"],
+        ["upperExclusive", "-0.01", "0"],
+      ]) {
+        const toolName = prefix ? `${prefix}${name![0]!.toUpperCase()}${name!.slice(1)}` : name;
+        const tool = mcpTools.find((value: { name: string }) => value.name === toolName);
+        const valid = prefix ? Number(accepted) : accepted;
+        const invalid = prefix ? Number(rejected) : rejected;
+        expect(
+          (await tool.input.input["~standard"].validate({ value: valid })).issues,
+        ).toBeUndefined();
+        expect(
+          (await tool.input.input["~standard"].validate({ value: invalid })).issues,
+        ).toBeDefined();
+      }
+    }
+  });
+
   test("enforces intrinsic, inherited, and property bounds on encoded numeric values", async () => {
     const result = compileFixture(
       "numeric-bounds",
@@ -130,6 +179,7 @@ describe("@typespex/mcp emitter", () => {
           model Values {
             @encode(string) @minValue(1) @maxValue(10) count: int32;
             @encode(string) large: uint64;
+            @encode(string) @maxValue(100) small: uint64;
           }
           @tool @post @route("/values") op echo(@body value: Values): Values;
         }
@@ -138,10 +188,12 @@ describe("@typespex/mcp emitter", () => {
     );
     const { mcpTools } = await import(`${result.outputDir}/bridge-numbers/mcp-operations.ts`);
     const success = mcpTools[0].success;
-    const valid = { count: 10, large: "18446744073709551615" };
+    const valid = { count: 10, large: "18446744073709551615", small: "100" };
     expect(await success.validateWire(valid)).toEqual({ ok: true, value: valid });
     for (const value of [
       { ...valid, count: 11 },
+      { ...valid, small: 100 },
+      { ...valid, small: "101" },
       { ...valid, large: "18446744073709551616" },
     ]) {
       expect((await success.validateWire(value)).ok).toBe(false);

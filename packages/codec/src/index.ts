@@ -1,6 +1,7 @@
 import { numericConstraintIssue, type NumericConstraints } from "./numeric-constraints.js";
 
 export type { NumericConstraints } from "./numeric-constraints.js";
+export { compareNumericStrings, numericConstraintIssue } from "./numeric-constraints.js";
 export { bytesToBase64 } from "./base64.js";
 export {
   ScalarEncodings,
