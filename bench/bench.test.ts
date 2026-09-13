@@ -125,6 +125,18 @@ describe("HTTP benchmark validation", () => {
     expect(signal?.aborted).toBeTrue();
   });
 
+  test("validation connections close while retaining the scenario's request headers", async () => {
+    const headers = new Headers({ "content-type": "application/json", connection: "keep-alive" });
+    const boundedFetch = fetchWithTimeout(1000, async (_input, init) => {
+      const received = new Headers(init?.headers);
+      expect(received.get("connection")).toBe("close");
+      expect(received.get("content-type")).toBe("application/json");
+      return new Response("ok");
+    });
+    await boundedFetch("http://127.0.0.1/check", { headers });
+    expect(headers.get("connection")).toBe("keep-alive");
+  });
+
   test("timed validation accepts exact success and modeled-error distributions", () => {
     const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
     const notFound = SCENARIOS.find((scenario) => scenario.id === "not-found")!;
