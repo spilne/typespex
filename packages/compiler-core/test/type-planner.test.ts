@@ -188,8 +188,10 @@ describe("TypePlanner", () => {
 
     const projected = planner.createWirePlan(node, { projection });
     expect(projected.semanticType).toBe("NodeInput");
-    expect(projected.wireType).toBe("NodeInput");
-    expect(projected.codec).toBeUndefined();
+    expect(projected.wireType).toBe("NodeInputWire");
+    expect(projected.codec?.definitions?.Node).toMatchObject({
+      excludedProperties: { count: "count" },
+    });
     expect(projected.schema).toEqual({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $ref: "#/$defs/Node",
@@ -257,8 +259,10 @@ describe("TypePlanner", () => {
 
     const projected = planner.createWirePlan(outer, { projection: input });
     expect(projected.semanticType).toBe("OuterInput");
-    expect(projected.wireType).toBe("OuterInput");
-    expect(projected.codec).toBeUndefined();
+    expect(projected.wireType).toBe("OuterInputWire");
+    expect(projected.codec?.definitions?.Node).toMatchObject({
+      excludedProperties: { count: "count" },
+    });
     expect(JSON.stringify(projected.schema)).not.toContain('"count"');
     expect(projected.schema).toMatchObject({
       $defs: { Node: { properties: { next: { $ref: "#/$defs/Node" } } } },

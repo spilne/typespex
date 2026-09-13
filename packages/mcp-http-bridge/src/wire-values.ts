@@ -134,7 +134,8 @@ function convertUnion(
           if (error instanceof UnionConversionError) {
             if (error.reason === "ambiguous" || error.reason === "invalid-value") fatal = error;
             else {
-              mismatch = error;
+              if (error.reason === "projection" || mismatch?.reason !== "projection")
+                mismatch = error;
               continue;
             }
           }

@@ -289,4 +289,32 @@ describe("union conversion", () => {
         [1, "value"],
       ]);
   });
+  test("preserves projection needs alongside ineligible open alternatives in either order", async () => {
+    const node: ValueCodecSpec = {
+      kind: "object",
+      properties: {
+        value: { wireName: "value", codec: { kind: "primitive", type: "string" } },
+        child: { wireName: "child", optional: true, codec: { kind: "ref", name: "Node" } },
+      },
+    };
+    const other: ValueCodecSpec = {
+      kind: "object",
+      additionalProperties: true,
+      properties: { other: { wireName: "other", codec: { kind: "primitive", type: "string" } } },
+    };
+    const input = { value: "v", child: { value: "leaf", extra: true } };
+    for (const variants of [
+      [node, other],
+      [other, node],
+    ]) {
+      const codec = createValueCodec({
+        root: { kind: "ref", name: "Node" },
+        definitions: { Node: { kind: "union", variants } },
+      });
+      expect(await codec.encode(input)).toEqual({
+        ok: true,
+        value: { value: "v", child: { value: "leaf" } },
+      });
+    }
+  });
 });

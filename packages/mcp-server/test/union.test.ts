@@ -161,4 +161,28 @@ describe("union schemas", () => {
       expect(reads).toBeLessThanOrEqual(depth * 8);
     }
   });
+  test("preserves projection needs alongside ineligible open alternatives in either order", async () => {
+    const node = {
+      type: "object",
+      properties: { value: { type: "string" }, child: { $ref: "#/$defs/Node" } },
+      required: ["value"],
+      additionalProperties: false,
+    };
+    const other = {
+      type: "object",
+      properties: { other: { type: "string" } },
+      required: ["other"],
+      additionalProperties: true,
+    };
+    for (const anyOf of [
+      [node, other],
+      [other, node],
+    ]) {
+      const schema = createSchema({ schema: { $ref: "#/$defs/Node", $defs: { Node: { anyOf } } } });
+      expect(await schema.encode({ value: "v", child: { value: "leaf", extra: true } })).toEqual({
+        ok: true,
+        value: { value: "v", child: { value: "leaf" } },
+      });
+    }
+  });
 });

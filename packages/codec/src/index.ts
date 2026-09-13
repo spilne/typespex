@@ -747,12 +747,16 @@ async function convertUnion(
         issues: coveredFailure.map((issue) => ({ ...issue, code: "invalid-union-value" })),
       };
   }
+  const projectionFailures = failures.filter((issues) =>
+    issues.some((issue) => issue.code === "unknown-property"),
+  );
+  const relevantFailures = projectionFailures.length ? projectionFailures : failures;
   return {
     ok: false,
     issues:
-      failures.length === 0
+      relevantFailures.length === 0
         ? [{ path, message: "No union variant is defined." }]
-        : failures.reduce((smallest, current) =>
+        : relevantFailures.reduce((smallest, current) =>
             current.length < smallest.length ? current : smallest,
           ),
   };

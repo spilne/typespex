@@ -370,7 +370,8 @@ async function projectUncheckedValue(
           );
         } catch (error) {
           if (!(error instanceof WireProjectionError)) throw error;
-          projectionError = error;
+          if (error.reason === "projection" || projectionError?.reason !== "projection")
+            projectionError = error;
           if (error.reason === "ambiguous" || error.reason === "invalid-value") fatal = error;
           else if (
             error.reason !== "shape" &&

@@ -247,4 +247,31 @@ describe("HTTP union conversion", () => {
       }
     }
   });
+  test("preserves projection needs alongside ineligible open alternatives in either order", () => {
+    const node: HttpWireValuePlan = {
+      kind: "object",
+      properties: {
+        value: { sourceName: "value", value: { kind: "string" } },
+        child: { sourceName: "child", optional: true, value: { kind: "ref", name: "Node" } },
+      },
+    };
+    const other: HttpWireValuePlan = {
+      kind: "object",
+      additional: { kind: "identity" },
+      properties: { other: { sourceName: "other", value: { kind: "string" } } },
+    };
+    const input = { value: "v", child: { value: "leaf", extra: true } };
+    for (const variants of [
+      [node, other],
+      [other, node],
+    ]) {
+      const plan: HttpWireValuePlan = {
+        kind: "definition",
+        name: "Node",
+        value: { kind: "union", variants },
+      };
+      for (const convert of [encodeHttpWireValue, decodeHttpWireValue])
+        expect(convert(input, plan)).toEqual({ value: "v", child: { value: "leaf" } });
+    }
+  });
 });
