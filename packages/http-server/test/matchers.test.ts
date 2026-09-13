@@ -38,6 +38,18 @@ function matcherSuite(name: string, create: typeof createRegexMatcher) {
       expect(m!.pathParams).toEqual({ petId: "abc-123" });
     });
 
+    test("alternates ordinary and encoded paths without changing raw captures", () => {
+      const m = create(routes);
+      for (const userId of ["plain", "%61lice", "again", "%F0%9F%98%80", "last"]) {
+        expect(m.match("GET", `/users/${userId}/posts/p-1`)).toEqual({
+          route: "readPost",
+          pathParams: { userId, postId: "p-1" },
+        });
+        expect(m.match("GET", "/health")!.route).toBe("health");
+        expect(m.match("GET", "/users//posts/p-1")).toBeNull();
+      }
+    });
+
     test("multiple concrete patterns can target one logical route", () => {
       const optional = create([
         {

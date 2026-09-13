@@ -74,6 +74,26 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ value: "AQL/" });
   });
 
+  test("variant response headers stay independent and explicit content types take precedence", () => {
+    const plain = ResponseEncoders.variant({ status: 200 });
+    const first = plain.encode({ id: 1 });
+    first.headers.set("content-type", "text/plain");
+    first.headers.set("x-response", "first");
+    const second = plain.encode({ id: 2 });
+    expect(second.headers.get("content-type")).toBe("application/json");
+    expect(second.headers.has("x-response")).toBe(false);
+
+    const explicit = ResponseEncoders.variant({
+      status: 200,
+      headers: [["mediaType", "content-type"]],
+      contentType: "application/json",
+    });
+    expect(
+      explicit.encode({ mediaType: "application/custom+json" }).headers.get("content-type"),
+    ).toBe("application/custom+json");
+    expect(explicit.encode({}).headers.get("content-type")).toBe("application/json");
+  });
+
   test("json rejects circular values", () => {
     const value: Record<string, unknown> = {};
     value.self = value;

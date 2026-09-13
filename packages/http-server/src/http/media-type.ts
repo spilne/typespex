@@ -7,15 +7,10 @@ export function parseMediaType(header: string | null | undefined): string | unde
   if (!header) return undefined;
   const semi = header.indexOf(";");
   const raw = (semi === -1 ? header : header.substring(0, semi)).trim().toLowerCase();
-  const slash = raw.indexOf("/");
-  if (slash <= 0 || slash !== raw.lastIndexOf("/")) return undefined;
-
-  const type = raw.substring(0, slash);
-  const subtype = raw.substring(slash + 1);
-  return MEDIA_TYPE_TOKEN.test(type) && MEDIA_TYPE_TOKEN.test(subtype) ? raw : undefined;
+  return MEDIA_TYPE_PATTERN.test(raw) ? raw : undefined;
 }
 
-const MEDIA_TYPE_TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
+const MEDIA_TYPE_PATTERN = /^[!#$%&'*+\-.^_`|~0-9a-z]+\/[!#$%&'*+\-.^_`|~0-9a-z]+$/;
 
 /**
  * Returns true when `received` matches one of `declared`. Each declared
@@ -29,8 +24,7 @@ export function isContentTypeAccepted(
   if (declared.length === 0) return true;
   const receivedMedia = parseMediaType(received);
   if (!receivedMedia) return false;
-  const [receivedType, receivedSubtype] = receivedMedia.split("/", 2);
-  if (receivedType === "*" || receivedSubtype === "*") return false;
+  if (receivedMedia.startsWith("*/") || receivedMedia.endsWith("/*")) return false;
   for (const allowed of declared) {
     if (matchesMediaType(receivedMedia, allowed)) return true;
   }
@@ -38,6 +32,7 @@ export function isContentTypeAccepted(
 }
 
 function matchesMediaType(received: string, declared: string): boolean {
+  if (declared === received) return true;
   const declaredMedia = parseMediaType(declared);
   if (!declaredMedia) return false;
   if (declaredMedia === received) return true;

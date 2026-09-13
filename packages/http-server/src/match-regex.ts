@@ -16,7 +16,7 @@ import {
   type RouteSegmentKind,
   selectRouteVariant,
 } from "./match-common.js";
-import { canonicalizePathname, rawPathSlice } from "./match-path.js";
+import { canonicalizePathname, rawPathSlice, type CanonicalPathname } from "./match-path.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze(Object.create(null));
 
@@ -27,6 +27,8 @@ interface RouteGroupInfo<R> {
 
 interface CompiledMethodRouter<R> {
   readonly regex: RegExp;
+  /** Capture offsets are only needed to map percent-encoded paths back to raw values. */
+  indexedRegex?: RegExp;
   /** Sparse: groupIndex → route metadata, set only at each route's first group. */
   readonly groupToRoute: Array<RouteGroupInfo<R> | undefined>;
 }
@@ -121,7 +123,7 @@ function compileMethodRoutes<R>(
   }
 
   return {
-    regex: new RegExp(`^(?:${alternatives.join("|")})$`, "du"),
+    regex: new RegExp(`^(?:${alternatives.join("|")})$`, "u"),
     groupToRoute,
   };
 }
@@ -132,9 +134,18 @@ function regexLookup<R>(
   headers?: Headers,
   query?: URLSearchParams,
 ): RouteMatch<R> | null {
-  const canonical = canonicalizePathname(pathname);
-  if (!canonical) return null;
-  const match = compiled.regex.exec(canonical.value);
+  if (!pathname.startsWith("/") || pathname.includes("//")) return null;
+  let canonical: CanonicalPathname | undefined;
+  if (pathname.includes("%")) {
+    canonical = canonicalizePathname(pathname);
+    if (!canonical) return null;
+  }
+  // Ordinary paths already have canonical text and raw captures. Avoid building
+  // segment arrays and capture-offset arrays that would immediately be discarded.
+  const regex = canonical
+    ? (compiled.indexedRegex ??= new RegExp(compiled.regex.source, "du"))
+    : compiled.regex;
+  const match = regex.exec(canonical?.value ?? pathname);
   if (!match) return null;
 
   for (let index = 1; index < match.length; index++) {
@@ -148,10 +159,11 @@ function regexLookup<R>(
       return { route: selected.route, pathParams: EMPTY_PARAMS };
     }
     const pathParams: Record<string, string> = Object.create(null);
-    const indices = match.indices!;
     for (let parameter = 0; parameter < selected.parameterNames.length; parameter++) {
-      const range = indices[info.firstGroup + parameter]!;
-      pathParams[selected.parameterNames[parameter]!] = rawPathSlice(canonical, range[0], range[1]);
+      const group = info.firstGroup + parameter;
+      const range = canonical ? match.indices![group]! : undefined;
+      pathParams[selected.parameterNames[parameter]!] =
+        canonical && range ? rawPathSlice(canonical, range[0], range[1]) : match[group]!;
     }
     return { route: selected.route, pathParams };
   }
