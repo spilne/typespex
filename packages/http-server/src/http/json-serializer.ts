@@ -130,12 +130,13 @@ function recordJsonSerializer<A>(
 ): JsonSerializer<Record<string, A>> {
   return JsonSerializer.of((value, path) => {
     const source = expectPlainObject(value, path);
+    // A null prototype makes arbitrary keys, including __proto__, safe to assign directly.
     const output: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(source)) {
-      defineDataProperty(
-        output,
-        key,
-        serializeNested(valueSerializer, source[key] as A, appendPropertyPath(path, key)),
+      output[key] = serializeNested(
+        valueSerializer,
+        source[key] as A,
+        appendPropertyPath(path, key),
       );
     }
     return output;
@@ -160,6 +161,7 @@ function objectJsonSerializer<A extends object>(
 
   return JsonSerializer.of((value, path) => {
     const source = expectObject(value, path);
+    // Wire and additional property names may include __proto__.
     const output: Record<string, unknown> = Object.create(null);
 
     for (const property of erased) {
@@ -170,11 +172,7 @@ function objectJsonSerializer<A extends object>(
         if (property.optional) continue;
         throw new JsonSerializationError(propertyPath, "Required property is missing.");
       }
-      defineDataProperty(
-        output,
-        property.wireName,
-        serializeNested(property.serializer, propertyValue, propertyPath),
-      );
+      output[property.wireName] = serializeNested(property.serializer, propertyValue, propertyPath);
     }
 
     if (additionalProperties) {
@@ -188,10 +186,10 @@ function objectJsonSerializer<A extends object>(
         }
         const propertyValue = source[key];
         if (propertyValue === undefined) continue;
-        defineDataProperty(
-          output,
-          key,
-          serializeNested(additionalProperties, propertyValue, appendPropertyPath(path, key)),
+        output[key] = serializeNested(
+          additionalProperties,
+          propertyValue,
+          appendPropertyPath(path, key),
         );
       }
     }
@@ -555,15 +553,6 @@ function appendPropertyPath(path: string, property: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(property)
     ? `${path}.${property}`
     : `${path}[${JSON.stringify(property)}]`;
-}
-
-function defineDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: true,
-  });
 }
 
 export const JsonSerializers = {

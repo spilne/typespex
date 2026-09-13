@@ -355,6 +355,37 @@ describe("TypePlanner", () => {
     expect(models).toContain(`export interface ${declaredName}`);
   });
 
+  test("avoids semantic and wire name collisions across incremental projections", async () => {
+    const program = await compile(`
+      model Pet { id: string; internal: string; }
+      model PetInput { value: string; }
+      model PetOutputWire { value: string; }
+      model PetViewWire { value: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const pet = model(global, "Pet");
+    const planner = new TypePlanner(program);
+    planner.prepare([pet, model(global, "PetInput"), model(global, "PetOutputWire")]);
+    const propertyFilter: TypeProjection["propertyFilter"] = (property) =>
+      property.name !== "internal";
+
+    expect(
+      planner.createWirePlan(pet, { projection: { key: "input", propertyFilter } }).semanticType,
+    ).toBe("PetInput2");
+    expect(
+      planner.createWirePlan(pet, { projection: { key: "output", propertyFilter } }).semanticType,
+    ).toBe("PetOutput2");
+
+    planner.prepare([model(global, "PetViewWire")]);
+    expect(
+      planner.createWirePlan(pet, { projection: { key: "view", propertyFilter } }).semanticType,
+    ).toBe("PetView2");
+    expect(
+      planner.createWirePlan(pet, { projection: { key: "input", propertyFilter } }).semanticType,
+    ).toBe("PetInput2");
+    expect(new Set(planner.emittedTypeNames).size).toBe(planner.emittedTypeNames.length);
+  });
+
   test("plans semantic models, projected views, schemas, codecs, and defaults", async () => {
     const program = await compile(`
       @doc("A constrained identifier.")

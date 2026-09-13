@@ -416,13 +416,10 @@ async function decodeObject(
 ): Promise<CodecResult<unknown>> {
   if (!isPlainObject(input)) return failure(path, "Expected a plain object.");
   const output: Record<string, unknown> = {};
-  const issues = duplicateWireNameIssues(spec, path);
-  const knownWireNames = new Set<string>();
-  const knownSemanticNames = new Set(Object.keys(spec.properties));
+  const { properties, semanticNames, wireNames, issues } = inspectObjectProperties(spec, path);
   const excludedWireNames = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
-  for (const [propertyName, property] of Object.entries(spec.properties)) {
-    knownWireNames.add(property.wireName);
+  for (const [propertyName, property] of properties) {
     if (!Object.prototype.hasOwnProperty.call(input, property.wireName)) {
       if (property.hasDefault) {
         const decodedDefault = await decodeValue(
@@ -455,7 +452,7 @@ async function decodeObject(
   }
 
   for (const [wireName, wireValue] of Object.entries(input)) {
-    if (knownWireNames.has(wireName)) continue;
+    if (wireNames.has(wireName)) continue;
     if (excludedWireNames.has(wireName)) {
       issues.push({
         path: [...path, wireName],
@@ -464,7 +461,7 @@ async function decodeObject(
       continue;
     }
     if (spec.additionalProperties === undefined) continue;
-    if (knownSemanticNames.has(wireName)) {
+    if (semanticNames.has(wireName)) {
       issues.push({
         path: [...path, wireName],
         message: "Additional wire property collides with a declared semantic property.",
@@ -498,14 +495,10 @@ async function encodeObject(
 ): Promise<CodecResult<unknown>> {
   if (!isPlainObject(value)) return failure(path, "Expected a plain object.");
   const output: Record<string, unknown> = {};
-  const issues = duplicateWireNameIssues(spec, path);
-  const knownProperties = new Set(Object.keys(spec.properties));
-  const knownWireNames = new Set(
-    Object.values(spec.properties).map((property) => property.wireName),
-  );
+  const { properties, semanticNames, wireNames, issues } = inspectObjectProperties(spec, path);
   const excludedProperties = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
-  for (const [propertyName, property] of Object.entries(spec.properties)) {
+  for (const [propertyName, property] of properties) {
     if (
       !Object.prototype.hasOwnProperty.call(value, propertyName) ||
       value[propertyName] === undefined
@@ -527,10 +520,10 @@ async function encodeObject(
   }
 
   for (const [propertyName, propertyValue] of Object.entries(value)) {
-    if (knownProperties.has(propertyName)) continue;
+    if (semanticNames.has(propertyName)) continue;
     if (excludedProperties.has(propertyName)) continue;
     if (spec.additionalProperties === undefined) continue;
-    if (knownWireNames.has(propertyName)) {
+    if (wireNames.has(propertyName)) {
       issues.push({
         path: [...path, propertyName],
         message: "Additional semantic property collides with a declared wire property.",
@@ -555,24 +548,28 @@ async function encodeObject(
   return issues.length === 0 ? success(output) : { ok: false, issues };
 }
 
-function duplicateWireNameIssues(
+/** Collect property names and collision issues in one pass for either codec direction. */
+function inspectObjectProperties(
   spec: Extract<ValueCodecSpec, { kind: "object" }>,
   path: readonly (string | number)[],
-): CodecIssue[] {
-  const propertiesByWireName = new Map<string, string>();
+) {
+  const properties = Object.entries(spec.properties);
+  const semanticNames = new Set<string>();
+  const wireNames = new Map<string, string>();
   const issues: CodecIssue[] = [];
-  for (const [semanticName, property] of Object.entries(spec.properties)) {
-    const existing = propertiesByWireName.get(property.wireName);
+  for (const [semanticName, property] of properties) {
+    semanticNames.add(semanticName);
+    const existing = wireNames.get(property.wireName);
     if (existing !== undefined) {
       issues.push({
         path: [...path, property.wireName],
         message: `Declared properties ${JSON.stringify(existing)} and ${JSON.stringify(semanticName)} share the same wire name.`,
       });
     } else {
-      propertiesByWireName.set(property.wireName, semanticName);
+      wireNames.set(property.wireName, semanticName);
     }
   }
-  return issues;
+  return { properties, semanticNames, wireNames, issues };
 }
 
 async function decodeTemporal(
