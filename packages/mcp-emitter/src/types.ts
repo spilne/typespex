@@ -17,6 +17,7 @@ export interface ResolvedModes {
 export interface PlannedServer {
   readonly plan: ServicePlan;
   readonly modelModule: TypeScriptModulePlan;
+  readonly schemaDocument: SchemaDocumentPlan;
   readonly symbolName: string;
   readonly outputDir: string;
   readonly fileNames: OutputFileNames;
@@ -27,6 +28,15 @@ export interface PlannedServer {
   readonly websiteUrl?: string;
   readonly applicationModule?: string;
   readonly modes: ResolvedModes;
+}
+
+/** Fully resolved schema/codec names and references, ready for serialization. */
+export interface SchemaDocumentPlan {
+  readonly $schema?: string;
+  readonly schemas: Readonly<Record<string, unknown>>;
+  readonly $defs?: Readonly<Record<string, unknown>>;
+  readonly codecs?: Readonly<Record<string, unknown>>;
+  readonly codecDefinitions?: Readonly<Record<string, unknown>>;
 }
 
 export interface PlannedTool {

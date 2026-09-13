@@ -11,6 +11,7 @@ import {
 import { createServerArtifacts } from "../src/artifacts.js";
 import type { McpEmitterOptions } from "../src/lib.js";
 import { loadBridgePlanningContext, planServer } from "../src/planning.js";
+import { planSchemaDocument } from "../src/schema-document-planner.js";
 import type { PlannedServer, PlannedTool } from "../src/types.js";
 
 describe("MCP planning boundary", () => {
@@ -158,6 +159,7 @@ function createPlanningFixture(input: JsonWirePlan): PlannedServer {
         "export interface Phantom { id: string; }",
       ],
     },
+    schemaDocument: planSchemaDocument([tool]),
     symbolName: "Test",
     outputDir: "test",
     fileNames: {

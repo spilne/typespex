@@ -30,6 +30,7 @@ import { analyzeBridgeStreams, createHttpWireOperationPlan } from "./http-planne
 import { $lib, type McpEmitterOptions, type McpMode } from "./lib.js";
 import { normalizeIcons } from "./render-metadata.js";
 import { schemasDefinitelyDisjoint } from "./schema-analysis.js";
+import { planSchemaDocument } from "./schema-document-planner.js";
 import type { BridgePlanningContext, PlannedServer, PlannedTool, ResolvedModes } from "./types.js";
 
 const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
@@ -278,6 +279,7 @@ export function planServer(
   return {
     plan: servicePlan,
     modelModule: planner.createModelModulePlan(),
+    schemaDocument: planSchemaDocument(plannedTools),
     symbolName,
     outputDir,
     fileNames,
