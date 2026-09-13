@@ -3,6 +3,34 @@ import { Temporal } from "@js-temporal/polyfill";
 import { createValueCodec } from "../src/index.js";
 
 describe("protocol-neutral value codec", () => {
+  test("keeps excluded semantic and wire names out of open objects", async () => {
+    const codec = createValueCodec<Record<string, string>>({
+      root: {
+        kind: "object",
+        properties: {
+          name: { wireName: "wireName", codec: { kind: "primitive", type: "string" } },
+        },
+        excludedProperties: { secret: "wireSecret" },
+        additionalProperties: { kind: "primitive", type: "string" },
+      },
+    });
+    expect(
+      await codec.encode({
+        name: "Ada",
+        secret: "private",
+        wireSecret: "private",
+        extra: "public",
+      }),
+    ).toEqual({ ok: true, value: { wireName: "Ada", extra: "public" } });
+    for (const key of ["secret", "wireSecret"]) {
+      expect((await codec.decode({ wireName: "Ada", [key]: "private" })).ok).toBe(false);
+    }
+    expect(await codec.decode({ wireName: "Ada", extra: "public" })).toEqual({
+      ok: true,
+      value: { name: "Ada", extra: "public" },
+    });
+  });
+
   test("applies encoded names, defaults, dates, bytes, and lossless integers", async () => {
     const codec = createValueCodec<{
       count: bigint;

@@ -45,6 +45,8 @@ export type ValueCodecSpec =
       readonly kind: "object";
       readonly properties: Readonly<Record<string, ObjectPropertyCodecSpec>>;
       readonly additionalProperties?: ValueCodecSpec | true;
+      /** Semantic-to-wire names excluded from this projection, even in open objects. */
+      readonly excludedProperties?: Readonly<Record<string, string>>;
     }
   | { readonly kind: "union"; readonly variants: readonly ValueCodecSpec[] }
   | { readonly kind: "ref"; readonly name: string }
@@ -380,6 +382,7 @@ async function decodeObject(
   const issues = duplicateWireNameIssues(spec, path);
   const knownWireNames = new Set<string>();
   const knownSemanticNames = new Set(Object.keys(spec.properties));
+  const excludedWireNames = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
   for (const [propertyName, property] of Object.entries(spec.properties)) {
     knownWireNames.add(property.wireName);
@@ -416,6 +419,13 @@ async function decodeObject(
 
   for (const [wireName, wireValue] of Object.entries(input)) {
     if (knownWireNames.has(wireName)) continue;
+    if (excludedWireNames.has(wireName)) {
+      issues.push({
+        path: [...path, wireName],
+        message: "Property is excluded from this projection.",
+      });
+      continue;
+    }
     if (spec.additionalProperties === undefined) continue;
     if (knownSemanticNames.has(wireName)) {
       issues.push({
@@ -456,6 +466,7 @@ async function encodeObject(
   const knownWireNames = new Set(
     Object.values(spec.properties).map((property) => property.wireName),
   );
+  const excludedProperties = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
   for (const [propertyName, property] of Object.entries(spec.properties)) {
     if (
@@ -480,6 +491,7 @@ async function encodeObject(
 
   for (const [propertyName, propertyValue] of Object.entries(value)) {
     if (knownProperties.has(propertyName)) continue;
+    if (excludedProperties.has(propertyName)) continue;
     if (spec.additionalProperties === undefined) continue;
     if (knownWireNames.has(propertyName)) {
       issues.push({
