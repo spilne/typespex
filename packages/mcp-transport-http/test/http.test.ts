@@ -239,6 +239,45 @@ describe("MCP Streamable HTTP transport", () => {
     expect(response.status).not.toBe(401);
   });
 
+  test("requires a supplied verifier to authenticate loopback requests", async () => {
+    let createdServers = 0;
+    let verifiedRequests = 0;
+    const denied = createMcpHttpHandler(
+      () => {
+        createdServers++;
+        return factory();
+      },
+      {
+        verifyAuth: () => {
+          verifiedRequests++;
+          return undefined;
+        },
+      },
+    );
+    handlers.push(denied);
+    const untrustedAuth = { token: "unverified", clientId: "client", scopes: [] };
+    const initialization = await denied.fetch(protocolRequest(), { authInfo: untrustedAuth });
+    expect(initialization.status).toBe(401);
+    expect(initialization.headers.get("www-authenticate")).toBe("Bearer");
+    const toolRequest = new Request(protocolRequest(), {
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "echo", arguments: { value: "secret" } },
+      }),
+    });
+    expect((await denied.fetch(toolRequest)).status).toBe(401);
+    expect(verifiedRequests).toBe(2);
+    expect(createdServers).toBe(0);
+
+    const allowed = createMcpHttpHandler(factory, {
+      verifyAuth: () => ({ token: "verified", clientId: "client", scopes: [] }),
+    });
+    handlers.push(allowed);
+    expect((await allowed.fetch(protocolRequest())).status).toBe(200);
+  });
+
   test("supports verifier responses and sanitizes verifier failures", async () => {
     const denied = createMcpHttpHandler(factory, {
       host: "0.0.0.0",
