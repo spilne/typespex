@@ -353,7 +353,11 @@ describe("TypePlanner", () => {
         @encode(string) scalar FloatText extends float64;
         @encode("base64url") scalar Token extends bytes;
         @encode("rfc3339") scalar Timestamp extends utcDateTime;
+        @encode("rfc7231") scalar HttpTimestamp extends utcDateTime;
+        @encode("unixTimestamp", int64) scalar EpochTimestamp extends utcDateTime;
         @encode("ISO8601") scalar Period extends duration;
+        @encode("seconds", float64) scalar PeriodSeconds extends duration;
+        @encode("milliseconds", int64) scalar PeriodMilliseconds extends duration;
         @encode("rot13") scalar InvalidText extends string;
 
         model Original { original: string; }
@@ -371,7 +375,11 @@ describe("TypePlanner", () => {
           float: FloatText;
           token: Token;
           timestamp: Timestamp;
+          httpTimestamp: HttpTimestamp;
+          epochTimestamp: EpochTimestamp;
           period: Period;
+          periodSeconds: PeriodSeconds;
+          periodMilliseconds: PeriodMilliseconds;
           invalid: InvalidText;
           original: Original;
           batch: Batch;
@@ -409,7 +417,7 @@ describe("TypePlanner", () => {
     expect(JSON.stringify(plan.schema)).toContain('"contentEncoding":"base64"');
     expect(JSON.stringify(plan.codec)).toContain('"kind":"file"');
     expect(issues.some((issue) => issue.code === "unsupported-stream")).toBe(true);
-    expect(issues.some((issue) => issue.code === "unsupported-encoding")).toBe(true);
+    expect(issues.filter((issue) => issue.code === "unsupported-encoding")).toHaveLength(1);
 
     // Multiple roots exercise the union document wrapper and false-root metadata path.
     const multi = planner.createWirePlan([
