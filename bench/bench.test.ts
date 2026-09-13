@@ -134,6 +134,7 @@ describe("HTTP benchmark validation", () => {
       return new Response("ok");
     });
     await boundedFetch("http://127.0.0.1/check", { headers });
+    await boundedFetch(new Request("http://127.0.0.1/check", { headers }));
     expect(headers.get("connection")).toBe("keep-alive");
   });
 

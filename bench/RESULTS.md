@@ -68,6 +68,23 @@ This predates the final router-wrapper guard and deferred native body access.
 | GET /pets/:id (404)     |          71,392 ± 1,363 |     72,115 ± 608 |
 | POST /pets (create)     |            19,178 ± 226 |     48,442 ± 803 |
 
+## Final POST comparison
+
+[Raw trials, schedule, metadata, and aggregates](results/2026-09-14-post-final.json).
+Five trials (20 measured cells) remeasure the final POST implementation, including wrapper
+compatibility and deferred native body access, against master `6ede99c`, Hono+Zod and Elysia.
+The artifact records the final runtime source commit and SHA-256 hashes. An earlier attempt
+was aborted by a baseline postflight socket error; its incomplete samples are excluded.
+Validation connections now close explicitly; timed connections are unchanged. Only POST changed
+in the native transport path after the four-scenario comparison above.
+
+| Server                       | POST requests/second, median ± MAD |
+| ---------------------------- | ---------------------------------: |
+| TypeSpex before              |                        19,283 ± 77 |
+| TypeSpex final runtime       |                       51,549 ± 422 |
+| Hono+Zod                     |                     62,630 ± 1,533 |
+| Elysia with input validation |                     84,762 ± 2,502 |
+
 ## Reproduce
 
 Install the pinned Bun 1.3.14 runtime, run `bun install --frozen-lockfile`, then

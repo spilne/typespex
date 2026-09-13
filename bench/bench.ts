@@ -111,7 +111,9 @@ export function fetchWithTimeout(
   return (input, init) => {
     // Validation requests sit idle throughout warmup and measurement. Do not
     // reuse a connection that the server may close during that interval.
-    const headers = new Headers(init?.headers);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
     headers.set("connection", "close");
     return fetchRequest(input, {
       ...init,
