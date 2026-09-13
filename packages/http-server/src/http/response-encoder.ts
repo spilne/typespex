@@ -384,8 +384,9 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   const src = value as Record<string, unknown>;
   const isObject = typeof value === "object" && value !== null;
   const status = resolveVariantStatus(src, isObject, variant.status);
-  const responseHeaders = new Headers();
-  if (isObject) {
+  const responseHeaders =
+    variant.headers?.length || variant.kind === "file" ? new Headers() : undefined;
+  if (isObject && responseHeaders) {
     for (const [property, header, explode, transform] of variant.headers ?? []) {
       const v = src[property];
       if (v !== undefined) {
@@ -399,9 +400,11 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   }
 
   const contentType = variant.contentType ?? defaultContentTypeForKind(variant.kind);
-  if (contentType && !responseHeaders.has("content-type")) {
+  if (responseHeaders && contentType && !responseHeaders.has("content-type")) {
     responseHeaders.set("content-type", contentType);
   }
+
+  const headers = responseHeaders ?? (contentType ? { "content-type": contentType } : undefined);
 
   const resolvedBody =
     variant.kind === "file" && variant.body === undefined
@@ -412,14 +415,14 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   if (variant.kind === "text") {
     return new Response(String(body ?? ""), {
       status,
-      headers: responseHeaders,
+      headers,
     });
   }
 
   if (variant.kind === "xml") {
     return new Response(String(body ?? ""), {
       status,
-      headers: responseHeaders,
+      headers,
     });
   }
 
@@ -427,21 +430,27 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     const bytes = body instanceof Uint8Array ? body : new Uint8Array();
     return new Response(new Uint8Array(bytes).buffer, {
       status,
-      headers: responseHeaders,
+      headers,
     });
   }
 
   if (variant.kind === "file") {
-    return encodeFileResponse(body, status, responseHeaders, variant.contentTypes ?? [], {
-      requireContentType: variant.requireFileContentType,
-      requireFileName: variant.requireFileName,
-      emitContentDisposition: variant.emitFileContentDisposition,
-    });
+    return encodeFileResponse(
+      body,
+      status,
+      responseHeaders ?? new Headers(),
+      variant.contentTypes ?? [],
+      {
+        requireContentType: variant.requireFileContentType,
+        requireFileName: variant.requireFileName,
+        emitContentDisposition: variant.emitFileContentDisposition,
+      },
+    );
   }
 
   return new Response(body === undefined ? null : stringifyJson(body), {
     status,
-    headers: responseHeaders,
+    headers,
   });
 }
 

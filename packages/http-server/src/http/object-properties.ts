@@ -4,6 +4,12 @@ export function defineDataProperty(
   key: string,
   value: unknown,
 ): void {
+  // An absent key cannot hit an inherited setter. Retain defineProperty for
+  // existing/inherited names, including __proto__ and constructor.
+  if (!(key in target)) {
+    target[key] = value;
+    return;
+  }
   Object.defineProperty(target, key, {
     configurable: true,
     enumerable: true,

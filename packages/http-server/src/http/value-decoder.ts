@@ -507,6 +507,8 @@ function objectDecoder<A extends object>(
   const allowUnknown = options?.allowUnknown ?? false;
   const additionalProperties = options?.additionalProperties;
   const forbiddenProperties = new Set(options?.forbiddenProperties);
+  const inspectUnknown =
+    !allowUnknown || additionalProperties !== undefined || forbiddenProperties.size > 0;
 
   return Decoder.of((input) => {
     const object = expectPlainObject(input);
@@ -532,28 +534,30 @@ function objectDecoder<A extends object>(
       }
     }
 
-    for (const key of Object.keys(object.right)) {
-      if (declaredProperties.has(key)) continue;
+    if (inspectUnknown) {
+      for (const key of Object.keys(object.right)) {
+        if (declaredProperties.has(key)) continue;
 
-      if (forbiddenProperties.has(key)) {
-        (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
-        continue;
-      }
-
-      if (additionalProperties) {
-        const decoded = additionalProperties.decode(object.right[key]);
-        if (isLeft(decoded)) {
-          for (const issue of decoded.left) {
-            (issues ??= []).push({
-              path: `.${key}${issue.path}`,
-              message: issue.message,
-            });
-          }
-        } else {
-          defineDataProperty(result, key, decoded.right);
+        if (forbiddenProperties.has(key)) {
+          (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
+          continue;
         }
-      } else if (!allowUnknown) {
-        (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
+
+        if (additionalProperties) {
+          const decoded = additionalProperties.decode(object.right[key]);
+          if (isLeft(decoded)) {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({
+                path: `.${key}${issue.path}`,
+                message: issue.message,
+              });
+            }
+          } else {
+            defineDataProperty(result, key, decoded.right);
+          }
+        } else if (!allowUnknown) {
+          (issues ??= []).push({ path: `.${key}`, message: "Unexpected field." });
+        }
       }
     }
 
