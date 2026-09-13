@@ -9,7 +9,9 @@ Import compiler-author APIs from `@typespex/compiler-core/unstable`.
 ## Entry points
 
 - `@typespex/compiler-core` exposes the compiler plan-format version.
-- `@typespex/compiler-core/unstable` exposes compiler-author planning, naming, schema, layout, and atomic artifact utilities.
+- `@typespex/compiler-core/unstable` exposes compiler-author planning, naming, schema, scalar policy, layout, and atomic artifact utilities.
+
+Shared scalar policy resolves declared encoding inheritance, numeric domains, encoding compatibility, and JSON-safe integer bounds. It does not choose handler types or protocol defaults: canonical MCP JSON and HTTP header, text, and binary representations remain emitter decisions.
 
 ## Runtime requirements
 

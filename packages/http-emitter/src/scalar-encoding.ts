@@ -1,5 +1,8 @@
-import type { EncodeData, ModelProperty, Scalar } from "@typespec/compiler";
-import { getEncode } from "@typespec/compiler";
+import type { ModelProperty, Scalar } from "@typespec/compiler";
+import {
+  getEffectiveScalarEncoding,
+  getScalarEncodingIssue,
+} from "@typespex/compiler-core/unstable";
 import type { EmitterCtx } from "./ctx.js";
 import { emitDateTimeDecoder, emitDateTimeSerializer } from "./datetime-mode.js";
 import { getIntrinsicScalarName } from "./scalar-map.js";
@@ -38,11 +41,6 @@ export type ScalarEncodingResolution =
       readonly reason: string;
     };
 
-interface EffectiveEncode {
-  readonly data: EncodeData;
-  readonly source: Scalar | ModelProperty;
-}
-
 /** Resolve property overrides first, then the nearest encoding in the scalar inheritance chain. */
 export function resolveScalarEncoding(
   ctx: EmitterCtx,
@@ -50,7 +48,7 @@ export function resolveScalarEncoding(
   target?: ModelProperty,
   context: ScalarEncodingContext = "value",
 ): ScalarEncodingResolution {
-  const effective = findEffectiveEncode(ctx, scalar, target);
+  const effective = getEffectiveScalarEncoding(ctx.program, scalar, target);
   if (!effective) return resolveDefaultEncoding(ctx, scalar, context);
 
   const semanticName = getIntrinsicScalarName(scalar);
@@ -241,25 +239,6 @@ export function numericScalarShape(scalar: Scalar): NumericScalarShape | undefin
   }
 }
 
-function findEffectiveEncode(
-  ctx: EmitterCtx,
-  scalar: Scalar,
-  target?: ModelProperty,
-): EffectiveEncode | undefined {
-  if (target) {
-    const propertyEncode = getEncode(ctx.program, target);
-    if (propertyEncode) return { data: propertyEncode, source: target };
-  }
-
-  let current: Scalar | undefined = scalar;
-  while (current) {
-    const data = getEncode(ctx.program, current);
-    if (data) return { data, source: current };
-    current = current.baseScalar;
-  }
-  return undefined;
-}
-
 function resolveDefaultEncoding(
   ctx: EmitterCtx,
   scalar: Scalar,
@@ -305,42 +284,27 @@ function resolveSupportedKind(
   wireName: string,
   encoding: string | undefined,
 ): { readonly kind: ScalarEncodingKind } | { readonly reason: string } {
+  const reason = getScalarEncodingIssue(semanticName, wireName, encoding);
+  if (reason !== undefined) return { reason };
+
   switch (encoding) {
     case undefined:
-      if (wireName !== "string") {
-        return { reason: 'the string encoding must encode as TypeSpec "string"' };
-      }
       if (semanticName === "boolean") return { kind: "boolean-string" };
-      if (semanticName === "int64" || semanticName === "uint64") {
-        return { kind: "bigint-string" };
-      }
-      if (isNumericIntrinsic(semanticName)) return { kind: "number-string" };
-      return {
-        reason: `the string encoding is not supported for semantic scalar ${JSON.stringify(semanticName)}`,
-      };
+      if (semanticName === "int64" || semanticName === "uint64") return { kind: "bigint-string" };
+      return { kind: "number-string" };
     case "rfc3339":
     case "rfc7231":
-      return isDateTimeIntrinsic(semanticName) && wireName === "string"
-        ? { kind: encoding }
-        : { reason: `${encoding} requires utcDateTime or offsetDateTime encoded as string` };
-    case "unixTimestamp":
-      return semanticName === "utcDateTime" && isIntegerIntrinsic(wireName)
-        ? { kind: "unix-timestamp" }
-        : { reason: "unixTimestamp requires utcDateTime encoded as an integer scalar" };
-    case "ISO8601":
-      return semanticName === "duration" && wireName === "string"
-        ? { kind: "duration-iso8601" }
-        : { reason: "ISO8601 requires duration encoded as string" };
-    case "seconds":
-    case "milliseconds":
-      return semanticName === "duration" && isNumericIntrinsic(wireName)
-        ? { kind: encoding === "seconds" ? "duration-seconds" : "duration-milliseconds" }
-        : { reason: `${encoding} requires duration encoded as a numeric scalar` };
     case "base64":
     case "base64url":
-      return semanticName === "bytes" && wireName === "string"
-        ? { kind: encoding }
-        : { reason: `${encoding} requires bytes encoded as string` };
+      return { kind: encoding };
+    case "unixTimestamp":
+      return { kind: "unix-timestamp" };
+    case "ISO8601":
+      return { kind: "duration-iso8601" };
+    case "seconds":
+      return { kind: "duration-seconds" };
+    case "milliseconds":
+      return { kind: "duration-milliseconds" };
     default:
       return { reason: `custom encoding ${JSON.stringify(encoding)} is not supported` };
   }
@@ -364,44 +328,4 @@ function numericWireOptionsExpression(scalar: Scalar): string {
   if (shape.min) fields.push(`min: ${shape.min}`);
   if (shape.max) fields.push(`max: ${shape.max}`);
   return `{ ${fields.join(", ")} }`;
-}
-
-function isDateTimeIntrinsic(name: string): boolean {
-  return name === "utcDateTime" || name === "offsetDateTime";
-}
-
-function isNumericIntrinsic(name: string): boolean {
-  return (
-    name === "int8" ||
-    name === "uint8" ||
-    name === "int16" ||
-    name === "uint16" ||
-    name === "int32" ||
-    name === "uint32" ||
-    name === "int64" ||
-    name === "uint64" ||
-    name === "integer" ||
-    name === "safeint" ||
-    name === "float32" ||
-    name === "float64" ||
-    name === "float" ||
-    name === "numeric" ||
-    name === "decimal" ||
-    name === "decimal128"
-  );
-}
-
-function isIntegerIntrinsic(name: string): boolean {
-  return (
-    name === "int8" ||
-    name === "uint8" ||
-    name === "int16" ||
-    name === "uint16" ||
-    name === "int32" ||
-    name === "uint32" ||
-    name === "int64" ||
-    name === "uint64" ||
-    name === "integer" ||
-    name === "safeint"
-  );
 }

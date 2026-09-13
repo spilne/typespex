@@ -1,4 +1,7 @@
 import type { Program, Type } from "@typespec/compiler";
+import { getScalarIntrinsicName as scalarIntrinsic } from "@typespex/compiler-core/unstable";
+
+export { scalarIntrinsic };
 
 export function isScalarLike(program: Program, type: Type): boolean {
   switch (type.kind) {
@@ -35,16 +38,4 @@ export function isBytesLike(program: Program, type: Type): boolean {
     default:
       return false;
   }
-}
-
-export function scalarIntrinsic(
-  program: Program,
-  scalar: import("@typespec/compiler").Scalar,
-): string {
-  let current: import("@typespec/compiler").Scalar | undefined = scalar;
-  while (current) {
-    if (program.checker.isStdType(current)) return current.name;
-    current = current.baseScalar;
-  }
-  return scalar.name;
 }

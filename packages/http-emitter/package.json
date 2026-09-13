@@ -47,6 +47,7 @@
     "test": "bun test --timeout 30000"
   },
   "dependencies": {
+    "@typespex/compiler-core": "workspace:*",
     "oxfmt": "0.66.0"
   },
   "devDependencies": {

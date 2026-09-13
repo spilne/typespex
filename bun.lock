@@ -150,6 +150,7 @@
       "name": "@typespex/http-emitter",
       "version": "0.1.1",
       "dependencies": {
+        "@typespex/compiler-core": "workspace:*",
         "oxfmt": "0.66.0",
       },
       "devDependencies": {
