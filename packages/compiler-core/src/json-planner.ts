@@ -1,7 +1,6 @@
 import {
   getDeprecated,
   getDoc,
-  getEncode,
   getFormat,
   getMaxItems,
   getMaxLength,
@@ -28,7 +27,7 @@ import {
 import type { ObjectPropertyCodecSpec, ValueCodecDocument, ValueCodecSpec } from "@typespex/codec";
 import type { CompilerIssue, JsonSchema, JsonWirePlan } from "./plans.js";
 import type { ScalarPlanner } from "./scalar-planner.js";
-import { getNumericBounds, hasNumericBounds } from "./scalar-policy.js";
+import { getNumericBounds, hasUseSiteValueOverrides } from "./scalar-policy.js";
 import { isNamedType, type NamedType, type TypeRegistry } from "./type-registry.js";
 
 type SchemaObject = Record<string, unknown>;
@@ -79,7 +78,10 @@ export class JsonPlanner {
         ? this.codecForType(types[0]!, state, undefined, false)
         : ({
             kind: "union",
-            variants: types.map((item) => this.codecForType(item, state, undefined, false)),
+            variants: types.map((item) => ({
+              ...this.codecForType(item, state, undefined, false),
+              wireSchema: this.schemaForType(item, state, undefined, false),
+            })),
           } satisfies ValueCodecSpec);
     const schema = withDocumentMetadata(rootSchema, state.schemaDefinitions);
     const codecDocument: ValueCodecDocument = {
@@ -124,12 +126,7 @@ export class JsonPlanner {
     if (substituted !== type) {
       return this.schemaForType(substituted, state, encodingTarget, inlineNamed);
     }
-    const useSiteScalarEncoding =
-      type.kind === "Scalar" &&
-      encodingTarget !== undefined &&
-      encodingTarget !== type &&
-      (getEncode(this.program, encodingTarget) !== undefined ||
-        hasNumericBounds(this.program, encodingTarget));
+    const useSiteScalarEncoding = hasUseSiteValueOverrides(this.program, type, encodingTarget);
     const protocolModel =
       type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
@@ -161,7 +158,7 @@ export class JsonPlanner {
       case "Union":
         schema = {
           anyOf: [...type.variants.values()].map((variant) =>
-            this.schemaForType(variant.type, state, undefined, false),
+            this.schemaForType(variant.type, state, encodingTarget, false),
           ),
         };
         break;
@@ -218,7 +215,11 @@ export class JsonPlanner {
         schema = {};
         break;
     }
-    return this.applySchemaMetadata(schema, encodingTarget ?? type);
+    return this.applySchemaMetadata(
+      schema,
+      encodingTarget ?? type,
+      type.kind === "Scalar" ? type : undefined,
+    );
   }
 
   private modelSchema(model: Model, state: DocumentState): JsonSchema {
@@ -309,12 +310,7 @@ export class JsonPlanner {
     if (substituted !== type) {
       return this.codecForType(substituted, state, encodingTarget, inlineNamed);
     }
-    const useSiteScalarEncoding =
-      type.kind === "Scalar" &&
-      encodingTarget !== undefined &&
-      encodingTarget !== type &&
-      (getEncode(this.program, encodingTarget) !== undefined ||
-        hasNumericBounds(this.program, encodingTarget));
+    const useSiteScalarEncoding = hasUseSiteValueOverrides(this.program, type, encodingTarget);
     const protocolModel =
       type.kind === "Model" && (this.types.isFile(type) || this.types.isStream(type));
     if (
@@ -362,9 +358,10 @@ export class JsonPlanner {
       case "Union":
         return {
           kind: "union",
-          variants: [...type.variants.values()].map((variant) =>
-            this.codecForType(variant.type, state, undefined, false),
-          ),
+          variants: [...type.variants.values()].map((variant) => ({
+            ...this.codecForType(variant.type, state, encodingTarget, false),
+            wireSchema: this.schemaForType(variant.type, state, encodingTarget, false),
+          })),
         };
       case "UnionVariant":
       case "ModelProperty":
@@ -411,13 +408,11 @@ export class JsonPlanner {
     const excludedProperties: Record<string, string> = Object.create(null);
     for (const property of walkPropertiesInherited(model)) {
       if (propertyFilter && !propertyFilter(property)) {
-        if (this.types.indexer(model)) {
-          excludedProperties[property.name] = resolveEncodedName(
-            this.program,
-            property,
-            "application/json",
-          );
-        }
+        excludedProperties[property.name] = resolveEncodedName(
+          this.program,
+          property,
+          "application/json",
+        );
         continue;
       }
       const defaultValue = this.propertyDefaultValue(property);
@@ -465,7 +460,11 @@ export class JsonPlanner {
     state.buildingCodecs.delete(type);
   }
 
-  private applySchemaMetadata(schema: JsonSchema, target: Type): JsonSchema {
+  private applySchemaMetadata(
+    schema: JsonSchema,
+    target: Type,
+    scalarOverride?: Scalar,
+  ): JsonSchema {
     if (!isSchemaObject(schema)) return schema;
     const additions: SchemaObject = {};
     const description = getDoc(this.program, target) ?? getSummary(this.program, target);
@@ -474,11 +473,12 @@ export class JsonPlanner {
     const minItems = getMinItems(this.program, target);
     const maxItems = getMaxItems(this.program, target);
     const scalar =
-      target.kind === "Scalar"
+      scalarOverride ??
+      (target.kind === "Scalar"
         ? target
         : target.kind === "ModelProperty" && target.type.kind === "Scalar"
           ? target.type
-          : undefined;
+          : undefined);
     const bounds =
       scalar && schema.$ref === undefined
         ? getNumericBounds(this.program, scalar, target as ModelProperty | Scalar, {
@@ -490,10 +490,12 @@ export class JsonPlanner {
             exclusiveMinimum: getMinValueExclusiveAsNumeric(this.program, target),
             exclusiveMaximum: getMaxValueExclusiveAsNumeric(this.program, target),
           };
-    const numericWire =
-      !scalar ||
-      (Object.values(bounds).some((value) => value !== undefined) &&
-        this.scalars.wireType(scalar, target as ModelProperty | Scalar) === "number");
+    const unionTarget =
+      target.kind === "Union" || (target.kind === "ModelProperty" && target.type.kind === "Union");
+    const numericWire = scalar
+      ? Object.values(bounds).some((value) => value !== undefined) &&
+        this.scalars.wireType(scalar, target as ModelProperty | Scalar) === "number"
+      : !unionTarget;
     const min = numericWire ? bounds.minimum?.asNumber() : undefined;
     const max = numericWire ? bounds.maximum?.asNumber() : undefined;
     const minExclusive = numericWire ? bounds.exclusiveMinimum?.asNumber() : undefined;

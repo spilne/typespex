@@ -13,6 +13,7 @@ import {
   type ModelProperty,
   type Program,
   type Scalar,
+  type Type,
 } from "@typespec/compiler";
 import { SyntaxKind } from "@typespec/compiler/ast";
 import { compareNumericStrings, type NumericConstraints } from "@typespex/codec";
@@ -104,6 +105,47 @@ export function hasNumericBounds(program: Program, target: ModelProperty | Scala
   return Object.values(numericBoundGetters).some((get) => get(program, target) !== undefined);
 }
 
+/** Scalar options on a union property apply to its scalar alternatives at that use site. */
+export function hasUseSiteValueOverrides(
+  program: Program,
+  type: Type,
+  target?: ModelProperty | Scalar,
+): boolean {
+  if (!target || target === type) return false;
+  if (type.kind === "Union")
+    return getEncode(program, target) !== undefined || hasNumericBounds(program, target);
+  return (
+    type.kind === "Scalar" &&
+    (getUseSiteEncoding(program, type, target) !== undefined ||
+      (isNumericIntrinsic(getScalarIntrinsicName(program, type)) &&
+        hasNumericBounds(program, target)))
+  );
+}
+
+function getUseSiteEncoding(
+  program: Program,
+  scalar: Scalar,
+  target: ModelProperty | Scalar,
+): EncodeData | undefined {
+  const data = getEncode(program, target);
+  if (!data || target.kind !== "ModelProperty" || target.type.kind !== "Union") return data;
+  const wire = getScalarIntrinsicName(program, data.type);
+  const applicable = (type: Scalar) =>
+    getScalarEncodingIssue(getScalarIntrinsicName(program, type), wire, data.encoding) ===
+    undefined;
+  // TypeSpec validates known encodings against any eligible union alternative.
+  // Other alternatives retain their own encoding. If none is eligible, keep the
+  // declaration so unsupported/custom encodings still produce diagnostics.
+  if (
+    !applicable(scalar) &&
+    [...target.type.variants.values()].some(
+      (variant) => variant.type.kind === "Scalar" && applicable(variant.type),
+    )
+  )
+    return undefined;
+  return data;
+}
+
 /** Intersect intrinsic, inherited, and property bounds without rounding them. */
 export function getNumericBounds(
   program: Program,
@@ -164,7 +206,7 @@ export function getEffectiveScalarEncoding(
   target?: ModelProperty | Scalar,
 ): ScalarEncodingDeclaration | undefined {
   if (target?.kind === "ModelProperty") {
-    const data = getEncode(program, target);
+    const data = getUseSiteEncoding(program, scalar, target);
     if (data) return { data, source: target };
   }
   let current: Scalar | undefined = scalar;

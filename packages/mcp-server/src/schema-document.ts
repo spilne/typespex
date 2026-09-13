@@ -1,4 +1,5 @@
-import type { ValueCodecSpec } from "@typespex/codec";
+import type { ValueCodecDocument, ValueCodecSpec } from "@typespex/codec";
+import { reachableCodecSpecs } from "./codec-graph.js";
 import { createSchema, type Schema } from "./schema.js";
 
 type JsonSchema = boolean | Readonly<Record<string, unknown>>;
@@ -39,17 +40,18 @@ export function createSchemaDocument<const Schemas extends Readonly<Record<strin
         throw new TypeError(`Schema ${JSON.stringify(name)} is not defined.`);
       }
 
-      const codec = ownValue(definition.codecs, name);
+      const rootCodec = ownValue(definition.codecs, name);
+      const codec = rootCodec
+        ? { root: rootCodec, ...withCodecDefinitions(rootCodec, definition.codecDefinitions) }
+        : undefined;
       const schema = createSchema<Wire, Semantic>({
-        schema: hydrateJsonSchema(definition.schemas[name]!, definition.$schema, definition.$defs),
-        ...(codec
-          ? {
-              codec: {
-                root: codec,
-                ...withCodecDefinitions(codec, definition.codecDefinitions),
-              },
-            }
-          : {}),
+        schema: hydrateJsonSchema(
+          definition.schemas[name]!,
+          definition.$schema,
+          definition.$defs,
+          codec,
+        ),
+        ...(codec ? { codec } : {}),
       });
       cache.set(name, schema);
       return schema;
@@ -63,10 +65,18 @@ function hydrateJsonSchema(
   root: JsonSchema,
   dialect: string | undefined,
   sharedDefinitions: Readonly<Record<string, JsonSchema>> | undefined,
+  codec?: ValueCodecDocument,
 ): Readonly<Record<string, unknown>> {
   const rootDefinitions = isSchemaRecord(root) ? schemaDefinitions(root.$defs) : undefined;
   const definitions = mergeDefinitions(sharedDefinitions, rootDefinitions);
-  const reachableDefinitions = selectSchemaDefinitions(root, definitions);
+  const branchReferences: string[] = [];
+  if (codec) {
+    for (const spec of reachableCodecSpecs(codec.root, codec.definitions)) {
+      if (spec.wireSchema !== undefined)
+        branchReferences.push(...localSchemaReferences(spec.wireSchema));
+    }
+  }
+  const reachableDefinitions = selectSchemaDefinitions(root, definitions, branchReferences);
   const rootSchema =
     typeof root === "boolean"
       ? { allOf: [root] }
@@ -86,9 +96,10 @@ function hydrateJsonSchema(
 function selectSchemaDefinitions(
   root: JsonSchema,
   definitions: Readonly<Record<string, JsonSchema>>,
+  branchReferences: readonly string[],
 ): Readonly<Record<string, JsonSchema>> {
   const selected = Object.create(null) as Record<string, JsonSchema>;
-  const pending = localSchemaReferences(root);
+  const pending = [...localSchemaReferences(root), ...branchReferences];
   const visited = new Set<string>();
 
   while (pending.length > 0) {
@@ -149,38 +160,12 @@ function selectCodecDefinitions(
   definitions: Readonly<Record<string, ValueCodecSpec>>,
 ): Readonly<Record<string, ValueCodecSpec>> {
   const selected = Object.create(null) as Record<string, ValueCodecSpec>;
-  const pending = codecReferences(root);
-  const visited = new Set<string>();
-
-  while (pending.length > 0) {
-    const name = pending.pop()!;
-    if (visited.has(name)) continue;
-    visited.add(name);
-    if (!Object.hasOwn(definitions, name)) continue;
-    const codec = definitions[name]!;
-    defineDataProperty(selected, name, codec);
-    pending.push(...codecReferences(codec));
+  for (const spec of reachableCodecSpecs(root, definitions)) {
+    if (spec.kind === "ref" && Object.hasOwn(definitions, spec.name)) {
+      defineDataProperty(selected, spec.name, definitions[spec.name]!);
+    }
   }
-
   return selected;
-}
-
-function codecReferences(value: unknown): string[] {
-  const references: string[] = [];
-  const visit = (current: unknown): void => {
-    if (Array.isArray(current)) {
-      for (const item of current) visit(item);
-      return;
-    }
-    if (!isSchemaRecord(current)) return;
-    if (current.kind === "ref" && typeof current.name === "string") {
-      references.push(current.name);
-      return;
-    }
-    for (const item of Object.values(current)) visit(item);
-  };
-  visit(value);
-  return references;
 }
 
 function mergeDefinitions<T>(
