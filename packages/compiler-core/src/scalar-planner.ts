@@ -19,6 +19,33 @@ interface ScalarPlannerOptions {
   readonly report: (code: CompilerIssue["code"], message: string, target: DiagnosticTarget) => void;
 }
 
+const BIGINT_INTRINSICS: ReadonlySet<string> = new Set(["int64", "uint64", "integer"]);
+const DECIMAL_INTRINSICS: ReadonlySet<string> = new Set(["numeric", "decimal", "decimal128"]);
+const FLOAT_INTRINSICS: ReadonlySet<string> = new Set(["float", "float32", "float64"]);
+const NUMBER_INTEGER_INTRINSICS: ReadonlySet<string> = new Set([
+  "int8",
+  "uint8",
+  "int16",
+  "uint16",
+  "int32",
+  "uint32",
+  "safeint",
+]);
+const NUMBER_INTRINSICS: ReadonlySet<string> = new Set([
+  ...NUMBER_INTEGER_INTRINSICS,
+  ...FLOAT_INTRINSICS,
+]);
+const INTEGER_INTRINSICS: ReadonlySet<string> = new Set([
+  ...NUMBER_INTEGER_INTRINSICS,
+  ...BIGINT_INTRINSICS,
+]);
+
+const NUMERIC_INTRINSICS: ReadonlySet<string> = new Set([
+  ...INTEGER_INTRINSICS,
+  ...FLOAT_INTRINSICS,
+  ...DECIMAL_INTRINSICS,
+]);
+
 /** Maps TypeSpec scalars to semantic types, JSON wire schemas, and codecs. */
 export class ScalarPlanner {
   constructor(
@@ -110,7 +137,7 @@ export class ScalarPlanner {
     const declaredAsString =
       declaredEncode !== undefined && this.intrinsicName(declaredEncode.type) === "string";
 
-    if (["int64", "uint64", "integer"].includes(intrinsic)) {
+    if (BIGINT_INTRINSICS.has(intrinsic)) {
       if (this.isJsonSafeIntegerRange(scalar, encodingTarget) && !encodedAsString) {
         return { type: "integer" };
       }
@@ -127,7 +154,7 @@ export class ScalarPlanner {
       );
       return false;
     }
-    if (["numeric", "decimal", "decimal128"].includes(intrinsic)) {
+    if (DECIMAL_INTRINSICS.has(intrinsic)) {
       if (!encodedAsString && !(this.options.canonicalJsonWire && declaredAsString)) {
         this.options.report(
           "unsafe-number",
@@ -138,22 +165,8 @@ export class ScalarPlanner {
       }
       return { type: "string", pattern: "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$" };
     }
-    if (
-      encodedAsString &&
-      [
-        "int8",
-        "uint8",
-        "int16",
-        "uint16",
-        "int32",
-        "uint32",
-        "safeint",
-        "float",
-        "float32",
-        "float64",
-      ].includes(intrinsic)
-    ) {
-      const integer = !["float", "float32", "float64"].includes(intrinsic);
+    if (encodedAsString && NUMBER_INTRINSICS.has(intrinsic)) {
+      const integer = !FLOAT_INTRINSICS.has(intrinsic);
       return {
         type: "string",
         pattern: integer
@@ -248,42 +261,28 @@ export class ScalarPlanner {
     const declaredAsString =
       declaredEncode !== undefined && this.intrinsicName(declaredEncode.type) === "string";
     if (
-      ["int64", "uint64", "integer"].includes(intrinsic) &&
+      BIGINT_INTRINSICS.has(intrinsic) &&
       this.isJsonSafeIntegerRange(scalar, encodingTarget) &&
       !encodedAsString
     ) {
       return { kind: "bigint-number" };
     }
     if (
-      ["int64", "uint64", "integer"].includes(intrinsic) &&
+      BIGINT_INTRINSICS.has(intrinsic) &&
       (encodedAsString || (this.options.canonicalJsonWire && declaredAsString))
     ) {
       return { kind: "bigint-string" };
     }
     if (
-      ["numeric", "decimal", "decimal128"].includes(intrinsic) &&
+      DECIMAL_INTRINSICS.has(intrinsic) &&
       (encodedAsString || (this.options.canonicalJsonWire && declaredAsString))
     ) {
       return { kind: "decimal-string" };
     }
-    if (
-      encodedAsString &&
-      [
-        "int8",
-        "uint8",
-        "int16",
-        "uint16",
-        "int32",
-        "uint32",
-        "safeint",
-        "float",
-        "float32",
-        "float64",
-      ].includes(intrinsic)
-    ) {
+    if (encodedAsString && NUMBER_INTRINSICS.has(intrinsic)) {
       return {
         kind: "number-string",
-        integer: !["float", "float32", "float64"].includes(intrinsic),
+        integer: !FLOAT_INTRINSICS.has(intrinsic),
       };
     }
     if (intrinsic === "boolean" && encodedAsString) return { kind: "boolean-string" };
@@ -291,37 +290,8 @@ export class ScalarPlanner {
       const encoding = encode?.encoding === "base64url" ? "base64url" : "base64";
       return { kind: "bytes", encoding };
     }
-    if (
-      ["plainDate", "plainTime", "utcDateTime", "offsetDateTime", "duration"].includes(intrinsic)
-    ) {
-      const format =
-        intrinsic === "plainDate"
-          ? "date"
-          : intrinsic === "plainTime"
-            ? "time"
-            : intrinsic === "duration"
-              ? "duration"
-              : "date-time";
-      return {
-        kind: "date-time",
-        representation: this.options.datetimeMode ?? "string",
-        format,
-        ...(this.options.datetimeMode === "temporal"
-          ? {
-              temporalKind:
-                intrinsic === "plainDate"
-                  ? ("plain-date" as const)
-                  : intrinsic === "plainTime"
-                    ? ("plain-time" as const)
-                    : intrinsic === "duration"
-                      ? ("duration" as const)
-                      : intrinsic === "offsetDateTime"
-                        ? ("zoned-date-time" as const)
-                        : ("instant" as const),
-            }
-          : {}),
-      };
-    }
+    const dateTimeCodec = this.dateTimeCodec(intrinsic);
+    if (dateTimeCodec) return dateTimeCodec;
     if (scalar.baseScalar && !this.program.checker.isStdType(scalar)) {
       return this.codec(scalar.baseScalar, encodingTarget);
     }
@@ -329,20 +299,7 @@ export class ScalarPlanner {
       return { kind: "primitive", type: "string" };
     }
     if (intrinsic === "boolean") return { kind: "primitive", type: "boolean" };
-    if (
-      [
-        "int8",
-        "uint8",
-        "int16",
-        "uint16",
-        "int32",
-        "uint32",
-        "safeint",
-        "float",
-        "float32",
-        "float64",
-      ].includes(intrinsic)
-    ) {
+    if (NUMBER_INTRINSICS.has(intrinsic)) {
       return { kind: "primitive", type: "number" };
     }
     return { kind: "identity" };
@@ -363,20 +320,24 @@ export class ScalarPlanner {
   }
 
   isJsonSafeIntegerRange(scalar: Scalar, target: ModelProperty | Scalar): boolean {
+    const scalarMinimum =
+      target === scalar
+        ? undefined
+        : (getMinValueAsNumeric(this.program, scalar) ??
+          getMinValueExclusiveAsNumeric(this.program, scalar));
+    const scalarMaximum =
+      target === scalar
+        ? undefined
+        : (getMaxValueAsNumeric(this.program, scalar) ??
+          getMaxValueExclusiveAsNumeric(this.program, scalar));
     const minimum =
       getMinValueAsNumeric(this.program, target) ??
       getMinValueExclusiveAsNumeric(this.program, target) ??
-      (target === scalar
-        ? undefined
-        : (getMinValueAsNumeric(this.program, scalar) ??
-          getMinValueExclusiveAsNumeric(this.program, scalar)));
+      scalarMinimum;
     const maximum =
       getMaxValueAsNumeric(this.program, target) ??
       getMaxValueExclusiveAsNumeric(this.program, target) ??
-      (target === scalar
-        ? undefined
-        : (getMaxValueAsNumeric(this.program, scalar) ??
-          getMaxValueExclusiveAsNumeric(this.program, scalar)));
+      scalarMaximum;
     const min = minimum?.asNumber();
     const max = maximum?.asNumber();
     return (
@@ -399,57 +360,67 @@ export class ScalarPlanner {
     const semantic = this.intrinsicName(scalar);
     const wire = this.intrinsicName(encode.type);
     const encoding = encode.encoding;
-    const numeric = [
-      "int8",
-      "uint8",
-      "int16",
-      "uint16",
-      "int32",
-      "uint32",
-      "int64",
-      "uint64",
-      "integer",
-      "safeint",
-      "float",
-      "float32",
-      "float64",
-      "numeric",
-      "decimal",
-      "decimal128",
-    ];
-    const integer = [
-      "int8",
-      "uint8",
-      "int16",
-      "uint16",
-      "int32",
-      "uint32",
-      "int64",
-      "uint64",
-      "integer",
-      "safeint",
-    ];
-    const supported =
-      encoding === undefined
-        ? wire === "string" && (semantic === "boolean" || numeric.includes(semantic))
-        : encoding === "rfc3339" || encoding === "rfc7231"
-          ? wire === "string" && ["utcDateTime", "offsetDateTime"].includes(semantic)
-          : encoding === "unixTimestamp"
-            ? semantic === "utcDateTime" && integer.includes(wire)
-            : encoding === "ISO8601"
-              ? semantic === "duration" && wire === "string"
-              : encoding === "seconds" || encoding === "milliseconds"
-                ? semantic === "duration" && numeric.includes(wire)
-                : encoding === "base64" || encoding === "base64url"
-                  ? semantic === "bytes" && wire === "string"
-                  : false;
-    if (supported) return true;
+    if (this.isCanonicalEncodingSupported(semantic, wire, encoding)) return true;
     this.options.report(
       "unsupported-encoding",
       `Scalar encoding ${JSON.stringify(encoding ?? "string")} is not supported for ${semantic} encoded as ${wire}.`,
       target,
     );
     return false;
+  }
+
+  private isCanonicalEncodingSupported(
+    semantic: string,
+    wire: string,
+    encoding: EncodeData["encoding"],
+  ): boolean {
+    switch (encoding) {
+      case undefined:
+        return wire === "string" && (semantic === "boolean" || NUMERIC_INTRINSICS.has(semantic));
+      case "rfc3339":
+      case "rfc7231":
+        return wire === "string" && (semantic === "utcDateTime" || semantic === "offsetDateTime");
+      case "unixTimestamp":
+        return semantic === "utcDateTime" && INTEGER_INTRINSICS.has(wire);
+      case "ISO8601":
+        return semantic === "duration" && wire === "string";
+      case "seconds":
+      case "milliseconds":
+        return semantic === "duration" && NUMERIC_INTRINSICS.has(wire);
+      case "base64":
+      case "base64url":
+        return semantic === "bytes" && wire === "string";
+      default:
+        return false;
+    }
+  }
+
+  private dateTimeCodec(intrinsic: string): ValueCodecSpec | undefined {
+    switch (intrinsic) {
+      case "plainDate":
+        return this.createDateTimeCodec("date", "plain-date");
+      case "plainTime":
+        return this.createDateTimeCodec("time", "plain-time");
+      case "utcDateTime":
+        return this.createDateTimeCodec("date-time", "instant");
+      case "offsetDateTime":
+        return this.createDateTimeCodec("date-time", "zoned-date-time");
+      case "duration":
+        return this.createDateTimeCodec("duration", "duration");
+      default:
+        return undefined;
+    }
+  }
+
+  private createDateTimeCodec(
+    format: "date" | "time" | "date-time" | "duration",
+    temporalKind: "plain-date" | "plain-time" | "instant" | "zoned-date-time" | "duration",
+  ): ValueCodecSpec {
+    const representation = this.options.datetimeMode ?? "string";
+    if (representation === "temporal") {
+      return { kind: "date-time", representation, format, temporalKind };
+    }
+    return { kind: "date-time", representation, format };
   }
 }
 
