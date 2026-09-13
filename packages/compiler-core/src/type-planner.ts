@@ -28,6 +28,8 @@ import { ScalarPlanner } from "./scalar-planner.js";
 import { isNamedType, TypeRegistry, type NamedType } from "./type-registry.js";
 
 export interface TypePlannerOptions {
+  /** Names owned by the consuming protocol's generated declarations or imports. */
+  readonly reservedTypeNames?: readonly string[];
   readonly datetimeMode?: "string" | "date" | "temporal";
   /** Use a canonical, lossless JSON representation independent of protocol-specific encodings. */
   readonly canonicalJsonWire?: boolean;
@@ -76,6 +78,15 @@ export class TypePlanner {
       report: (code, message, target) => this.report(code, message, target),
     });
     this.types = new TypeRegistry(program, {
+      reservedNames: [
+        "Record",
+        "ReadonlyArray",
+        "File",
+        "Uint8Array",
+        ...(options.datetimeMode === "date" ? ["Date"] : []),
+        ...(options.datetimeMode === "temporal" ? ["Temporal"] : []),
+        ...(options.reservedTypeNames ?? []),
+      ],
       streamElementTypes: options.streamElementTypes,
       nativeStreamTypes: options.nativeStreamTypes,
       typeSubstitutions: options.typeSubstitutions,
@@ -298,11 +309,8 @@ export class TypePlanner {
     const properties = [...walkPropertiesInherited(type)]
       .filter(projection.propertyFilter)
       .map((property) => this.emitProjectedModelProperty(property, projection));
-    const additional = this.types.indexer(type)?.value;
-    if (additional) {
-      const object = `{ ${properties.join("; ")} }`;
-      return `${documentation}export type ${name} = ${object} & Record<string, ${this.projectedTypeToTs(additional, projection)}>;`;
-    }
+    const indexer = this.modelIndexSignature(type, projection);
+    if (indexer) properties.push(indexer);
     return `${documentation}export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
   }
 
@@ -329,11 +337,8 @@ export class TypePlanner {
         const wireName = resolveEncodedName(this.program, property, "application/json");
         return `${typescriptProperty(wireName)}${optional}: ${this.projectedWireTypeToTs(property.type, projection, property)}`;
       });
-    const additional = this.types.indexer(type)?.value;
-    if (additional) {
-      const object = `{ ${properties.join("; ")} }`;
-      return `export type ${name} = ${object} & Record<string, ${this.projectedWireTypeToTs(additional, projection)}>;`;
-    }
+    const indexer = this.modelIndexSignature(type, projection, true);
+    if (indexer) properties.push(indexer);
     return `export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
   }
 
@@ -357,11 +362,8 @@ export class TypePlanner {
         const properties = [...walkPropertiesInherited(type)].map((property) =>
           this.emitModelProperty(property),
         );
-        const additional = this.types.indexer(type)?.value;
-        if (additional) {
-          const object = `{ ${properties.join("; ")} }`;
-          return `${documentation}export type ${name} = ${object} & Record<string, ${this.typeToTs(additional)}>;`;
-        }
+        const indexer = this.modelIndexSignature(type);
+        if (indexer) properties.push(indexer);
         return `${documentation}export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
       }
       case "Scalar":
@@ -393,11 +395,8 @@ export class TypePlanner {
           const wireName = resolveEncodedName(this.program, property, "application/json");
           return `${typescriptProperty(wireName)}${optional}: ${this.wireTypeToTs(property.type, property)}`;
         });
-        const additional = this.types.indexer(type)?.value;
-        if (additional) {
-          const object = `{ ${properties.join("; ")} }`;
-          return `export type ${name} = ${object} & Record<string, ${this.wireTypeToTs(additional)}>;`;
-        }
+        const indexer = this.modelIndexSignature(type, undefined, true);
+        if (indexer) properties.push(indexer);
         return `export interface ${name} {\n${properties.map((property) => `  ${property};`).join("\n")}\n}`;
       }
       case "Scalar":
@@ -445,14 +444,9 @@ export class TypePlanner {
       const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
       return `${typescriptProperty(property.name)}${optional}: ${this.typeToTs(property.type)}`;
     });
-    let expression =
-      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.types.indexer(model)?.value;
-    if (additional) {
-      const indexer = `Record<string, ${this.typeToTs(additional)}>`;
-      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
-    }
-    return expression;
+    const indexer = this.modelIndexSignature(model);
+    if (indexer) properties.push(indexer);
+    return properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
   }
 
   private getOrCreateProjection(projection: TypeProjection): RegisteredProjection {
@@ -580,7 +574,9 @@ export class TypePlanner {
         break;
     }
     visiting.delete(type);
-    projection.changes.set(type, changed);
+    // A nested false result may have stopped at a back edge whose remaining
+    // properties have not been examined yet. Only root false results are final.
+    if (changed || visiting.size === 0) projection.changes.set(type, changed);
     return changed;
   }
 
@@ -770,14 +766,9 @@ export class TypePlanner {
       const wireName = resolveEncodedName(this.program, property, "application/json");
       return `${typescriptProperty(wireName)}${optional}: ${this.wireTypeToTs(property.type, property)}`;
     });
-    let expression =
-      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.types.indexer(model)?.value;
-    if (additional) {
-      const indexer = `Record<string, ${this.wireTypeToTs(additional)}>`;
-      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
-    }
-    return expression;
+    const indexer = this.modelIndexSignature(model, undefined, true);
+    if (indexer) properties.push(indexer);
+    return properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
   }
 
   private projectedWireModelExpressionToTs(model: Model, projection: RegisteredProjection): string {
@@ -788,14 +779,9 @@ export class TypePlanner {
         const wireName = resolveEncodedName(this.program, property, "application/json");
         return `${typescriptProperty(wireName)}${optional}: ${this.projectedWireTypeToTs(property.type, projection, property)}`;
       });
-    let expression =
-      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
-    const additional = this.types.indexer(model)?.value;
-    if (additional) {
-      const indexer = `Record<string, ${this.projectedWireTypeToTs(additional, projection)}>`;
-      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
-    }
-    return expression;
+    const indexer = this.modelIndexSignature(model, projection, true);
+    if (indexer) properties.push(indexer);
+    return properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
   }
 
   private projectedModelExpressionToTs(model: Model, projection: RegisteredProjection): string {
@@ -805,14 +791,37 @@ export class TypePlanner {
         const optional = property.optional || property.defaultValue !== undefined ? "?" : "";
         return `${typescriptProperty(property.name)}${optional}: ${this.projectedTypeToTs(property.type, projection)}`;
       });
-    let expression =
-      properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
+    const indexer = this.modelIndexSignature(model, projection);
+    if (indexer) properties.push(indexer);
+    return properties.length > 0 ? `{ ${properties.join("; ")} }` : "Record<string, never>";
+  }
+
+  private modelIndexSignature(
+    model: Model,
+    projection?: RegisteredProjection,
+    wire = false,
+  ): string | undefined {
     const additional = this.types.indexer(model)?.value;
-    if (additional) {
-      const indexer = `Record<string, ${this.projectedTypeToTs(additional, projection)}>`;
-      expression = properties.length > 0 ? `${expression} & ${indexer}` : indexer;
+    if (!additional || (additional.kind === "Intrinsic" && additional.name === "never")) {
+      return undefined;
     }
-    return expression;
+    const render = (type: Type, property?: ModelProperty): string =>
+      projection
+        ? wire
+          ? this.projectedWireTypeToTs(type, projection, property)
+          : this.projectedTypeToTs(type, projection)
+        : wire
+          ? this.wireTypeToTs(type, property)
+          : this.typeToTs(type);
+    // TypeScript index signatures cover declared keys too. Widen just the type
+    // surface; schemas and codecs still constrain additional values separately.
+    const values = new Set([render(additional)]);
+    for (const property of walkPropertiesInherited(model)) {
+      if (projection && !projection.propertyFilter(property)) continue;
+      values.add(render(property.type, property));
+      if (property.optional || property.defaultValue !== undefined) values.add("undefined");
+    }
+    return `[key: string]: ${[...values].join(" | ")}`;
   }
 
   private typeRequiresWireTransform(type: NamedType, projection?: RegisteredProjection): boolean {

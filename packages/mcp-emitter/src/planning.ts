@@ -143,7 +143,24 @@ export function planServer(
     });
   }
 
+  const usedSymbols = new Set<string>();
+  const toolSymbols = tools.map((tool) => {
+    const base = typescriptIdentifier(pascalCase(tool.name || tool.operation.name), "Tool");
+    let symbol = base;
+    let suffix = 2;
+    while (usedSymbols.has(symbol)) symbol = `${base}${suffix++}`;
+    usedSymbols.add(symbol);
+    return symbol;
+  });
   const planner = new TypePlanner(context.program, {
+    reservedTypeNames: [
+      "McpToolDefinition",
+      ...toolSymbols.flatMap((symbol) =>
+        ["Input", "InputWire", "Success", "SuccessWire", "Output", "Error", "ErrorWire"].map(
+          (suffix) => `${symbol}${suffix}`,
+        ),
+      ),
+    ],
     datetimeMode: context.options["datetime-mode"],
     canonicalJsonWire: modes.httpBridge,
     ...(streamAnalysis ? { streamElementTypes: streamAnalysis.elementTypes } : {}),
@@ -165,14 +182,9 @@ export function planServer(
   });
   planner.prepare(roots);
 
-  const usedSymbols = new Set<string>();
-  const plannedTools = tools.map((tool): PlannedTool => {
+  const plannedTools = tools.map((tool, index): PlannedTool => {
     const toolName = tool.name || tool.operation.name;
-    const baseSymbol = typescriptIdentifier(pascalCase(toolName), "Tool");
-    let toolSymbol = baseSymbol;
-    let suffix = 2;
-    while (usedSymbols.has(toolSymbol)) toolSymbol = `${baseSymbol}${suffix++}`;
-    usedSymbols.add(toolSymbol);
+    const toolSymbol = toolSymbols[index]!;
     const { success, errors, allowsVoid } = partitionReturnType(context, tool.operation.returnType);
     const httpOperation = httpOperations.get(tool.operation);
     const http =

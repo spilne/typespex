@@ -41,6 +41,33 @@ function operation(container: Namespace, name: string): Operation {
 }
 
 describe("TypePlanner", () => {
+  test("retains issued semantic, wire, and projection names as roots are added", async () => {
+    const program = await compile(`
+      model Item { data: bytes; secret: string; }
+      model ItemWire { label: string; }
+      model ItemInput { label: string; }
+    `);
+    const global = program.getGlobalNamespaceType();
+    const item = model(global, "Item");
+    const planner = new TypePlanner(program);
+    const initial = planner.createWirePlan(item);
+    const projection = {
+      key: "input",
+      propertyFilter: (property: { name: string }) => property.name !== "secret",
+    };
+    const projected = planner.createWirePlan(item, { projection });
+    planner.prepare([model(global, "ItemWire"), model(global, "ItemInput")]);
+
+    expect(planner.createWirePlan(item)).toEqual(initial);
+    expect(planner.createWirePlan(item, { projection })).toEqual(projected);
+    expect(planner.getGeneratedName(model(global, "ItemWire"))).not.toBe(initial.wireType);
+    expect(planner.getGeneratedName(model(global, "ItemInput"))).not.toBe(projected.semanticType);
+    const names = planner.emittedTypeNames;
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain(initial.wireType);
+    expect(names).toContain(projected.wireType);
+  });
+
   test("omits identity codecs and wire aliases", async () => {
     const program = await compile(`model Pet { id: string; name: string; }`);
     const pet = model(program.getGlobalNamespaceType(), "Pet");
@@ -441,7 +468,8 @@ describe("TypePlanner", () => {
     expect(models).toContain("export interface EverythingInput");
     expect(models).toContain("date: Temporal.PlainDate");
     expect(models).toContain("zoned: Temporal.ZonedDateTime");
-    expect(models).toContain("export type StringMap = { known: Slug } & Record<string, Slug>");
+    expect(models).toContain("export interface StringMap");
+    expect(models).toContain("[key: string]: Slug");
     expect(models).toContain("@deprecated Use NewEverything.");
     expect(issues).toEqual([]);
   });

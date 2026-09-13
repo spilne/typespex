@@ -10,6 +10,137 @@ beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
+  test("keeps recursive projections and mixed records usable by typed consumers", async () => {
+    const result = compileFixture(
+      "recursive-record-types",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        @mcpServer(#{ version: "1.0.0" }) namespace Shapes {
+          model A {
+            b?: B;
+            @visibility(Lifecycle.Create) secret: string;
+            data: bytes;
+          }
+          model B { parent?: A; }
+          model Profile {
+            @encodedName("application/json", "years") @encode(string) age: int32;
+            enabled?: boolean;
+            @visibility(Lifecycle.Create) secret: string;
+            ...Record<string>;
+          }
+          model Tree extends Record<Tree> {}
+          model Closed { age: int32; ...Record<never>; }
+          @tool @parameterVisibility(Lifecycle.Read) @returnTypeVisibility(Lifecycle.Read)
+          op read(value: A, profile: Profile, tree: Tree, closed: Closed,
+            inline: { count: int32; ...Record<string> }): Profile;
+        }
+      `,
+    );
+    result.typecheck(`
+      import type { ReadInput, ReadInputWire, ReadSuccess, ReadSuccessWire } from "./generated/@typespex/mcp-emitter/shapes/mcp-operations.js";
+      const profile: ReadSuccess = { age: 42, enabled: true, name: "Ada" };
+      const output: ReadSuccessWire = { years: "42", enabled: true, name: "Ada" };
+      const input: ReadInput = {
+        value: { data: new Uint8Array(), b: { parent: { data: new Uint8Array() } } },
+        profile, tree: { branch: { leaf: {} } }, closed: { age: 42 }, inline: { count: 1, extra: "ok" },
+      };
+      const wire: ReadInputWire = {
+        ...input, profile: output, value: { data: "", b: { parent: { data: "" } } },
+      };
+      // @ts-expect-error A declared numeric field keeps its specific type.
+      const invalid: ReadSuccess = { age: "42" };
+      // @ts-expect-error Record<never> does not prevent the declared fields from being used, and permits no extras.
+      const closed: ReadInput["closed"] = { age: 42, extra: "no" };
+      void [input, wire, output, invalid, closed];
+    `);
+    const { mcpTools } = await import(`${result.outputDir}/shapes/mcp-operations.ts`);
+    const tool = mcpTools[0];
+    const wire = {
+      value: { data: "", b: { parent: { data: "" } } },
+      profile: { years: "42", name: "Ada" },
+      tree: { branch: { leaf: {} } },
+      closed: { age: 42 },
+      inline: { count: 1, extra: "ok" },
+    };
+    expect((await tool.input.input["~standard"].validate(wire)).issues).toBeUndefined();
+    expect(
+      (
+        await tool.input.input["~standard"].validate({
+          ...wire,
+          profile: { years: "42", extra: 1 },
+        })
+      ).issues,
+    ).toBeDefined();
+    expect(await tool.success.encode({ age: 42, secret: "private", name: "Ada" })).toEqual({
+      ok: true,
+      value: { years: "42", name: "Ada" },
+    });
+  });
+
+  test("keeps model names separate from operation aliases and runtime types", () => {
+    const result = compileFixture(
+      "type-names",
+      `
+        import "@typespex/mcp";
+        import "@typespec/http";
+        using TypeSpex.Mcp;
+        @mcpServer(#{ version: "1.0.0" }) namespace Names {
+          model EchoInput { value: string; }
+          model Date { label: string; }
+          model ReadonlyArray { label: string; }
+          model Uint8Array { label: string; }
+          model File { label: string; }
+          model McpToolDefinition { label: string; }
+          @tool op echo(
+            value: EchoInput, date: Date, array: ReadonlyArray, buffer: Uint8Array,
+            file: File, definition: McpToolDefinition, payload: bytes,
+            attachment: TypeSpec.Http.File, times: utcDateTime[],
+          ): utcDateTime;
+        }
+      `,
+      `    datetime-mode: date\n    launchers: []\n`,
+    );
+    result.typecheck(`
+      import type { EchoInput, EchoSuccess } from "./generated/@typespex/mcp-emitter/names/mcp-operations.js";
+      const label = { label: "user model" };
+      const input: EchoInput = {
+        value: { value: "hello" }, date: label, array: label, buffer: label,
+        file: label, definition: label, payload: new Uint8Array(),
+        attachment: new File([], "example.txt"), times: [new Date()],
+      };
+      const output: EchoSuccess = new Date();
+      // @ts-expect-error The selected datetime mode requires a runtime Date.
+      const invalid: EchoSuccess = { label: "user model" };
+      void [input, output, invalid];
+    `);
+  });
+
+  test("imports Temporal for inline operation parameters and results", () => {
+    const result = compileFixture(
+      "inline-temporal",
+      `
+        import "@typespex/mcp";
+        using TypeSpex.Mcp;
+        @mcpServer(#{ version: "1.0.0" }) namespace Time {
+          model Temporal { label: string; }
+          @tool op echo(at: utcDateTime, value: Temporal): utcDateTime;
+        }
+      `,
+      `    datetime-mode: temporal\n    launchers: []\n`,
+    );
+    result.typecheck(`
+      import { Temporal } from "@js-temporal/polyfill";
+      import type { EchoInput, EchoSuccess } from "./generated/@typespex/mcp-emitter/time/mcp-operations.js";
+      const at = Temporal.Instant.from("2024-01-01T00:00:00Z");
+      const input: EchoInput = { at, value: { label: "user model" } };
+      const output: EchoSuccess = at;
+      // @ts-expect-error Temporal mode does not accept a native Date.
+      const invalid: EchoSuccess = new Date();
+      void [input, output, invalid];
+    `);
+  });
+
   test("preserves visibility in open, renamed, and nested models", async () => {
     const result = compileFixture(
       "open-visibility",
@@ -129,7 +260,13 @@ describe("@typespex/mcp emitter", () => {
           @tool op ping(): void;
         }
       `,
-      `    application-module: "./application.js"\n    launchers: [stdio, node, bun, express, hono]\n`,
+      `    application-module: "../../../../application.js"\n    launchers: [stdio, node, bun, express, hono]\n`,
+      {
+        "application.ts": `
+          import { defineToolsMcpApplication } from "./generated/@typespex/mcp-emitter/tools/mcp-server.js";
+          export default defineToolsMcpApplication({ kind: "native", handlers: { ping: () => {} } });
+        `,
+      },
     );
     expect(result.files("tools")).toEqual([
       "mcp-bun.ts",
