@@ -1,7 +1,9 @@
 import { numericConstraintIssue, type NumericConstraints } from "./numeric-constraints.js";
+import { jsonValuesEqual, semanticValuesEqual } from "./json-values-equal.js";
 
 export type { NumericConstraints } from "./numeric-constraints.js";
 export { compareNumericStrings, numericConstraintIssue } from "./numeric-constraints.js";
+export { jsonValuesEqual } from "./json-values-equal.js";
 export { bytesToBase64 } from "./base64.js";
 export {
   ScalarEncodings,
@@ -13,6 +15,13 @@ export {
 export interface CodecIssue {
   readonly message: string;
   readonly path: readonly (string | number)[];
+  /** Structured union matching information; other conversion issues omit this field. */
+  readonly code?:
+    | "ambiguous-union"
+    | "invalid-union-value"
+    | "unknown-property"
+    | "missing-property"
+    | "literal-mismatch";
 }
 
 export type CodecResult<T> =
@@ -57,6 +66,8 @@ export type ValueCodecSpec = (
   | { readonly kind: "file" }
 ) & {
   readonly numericConstraints?: NumericConstraints;
+  /** Wire schema for selecting this union branch, resolved by the codec's validator callback. */
+  readonly wireSchema?: boolean | Readonly<Record<string, unknown>>;
 };
 
 export interface ObjectPropertyCodecSpec {
@@ -75,7 +86,30 @@ export interface ValueCodecDocument {
 export interface ValueCodec<T> {
   decode(input: unknown): Promise<CodecResult<T>>;
   encode(value: T): Promise<CodecResult<unknown>>;
+  /** Check wire constraints without requiring an unambiguous semantic interpretation. */
+  validateWire(input: unknown): Promise<CodecResult<unknown>>;
 }
+
+export interface ValueCodecOptions {
+  /** Validate a branch against its containing JSON Schema document without converting it. */
+  readonly validateWire?: (
+    schema: boolean | Readonly<Record<string, unknown>>,
+    value: unknown,
+  ) => boolean | Promise<boolean>;
+}
+
+interface CodecContext extends ValueCodecOptions {
+  readonly definitions: Readonly<Record<string, ValueCodecSpec>>;
+  readonly strictObjects?: boolean;
+  readonly wireValidationOnly?: boolean;
+  readonly completed: readonly [ConversionCache, ConversionCache];
+  readonly active: readonly [
+    WeakMap<object, Set<ValueCodecSpec>>,
+    WeakMap<object, Set<ValueCodecSpec>>,
+  ];
+}
+
+type ConversionCache = WeakMap<object, Map<ValueCodecSpec, Map<number, CodecResult<unknown>>>>;
 
 const MAX_CODEC_DEPTH = 256;
 
@@ -84,29 +118,113 @@ const MAX_CODEC_DEPTH = 256;
  * JSON Schema remains responsible for contract validation; this codec performs
  * path-aware structural checks as a defense in depth and applies wire transforms.
  */
-export function createValueCodec<T>(document: ValueCodecDocument): ValueCodec<T> {
-  const definitions = document.definitions ?? {};
+export function createValueCodec<T>(
+  document: ValueCodecDocument,
+  options: ValueCodecOptions = {},
+): ValueCodec<T> {
+  const context = (wireValidationOnly = false): CodecContext => ({
+    ...options,
+    definitions: document.definitions ?? {},
+    wireValidationOnly,
+    completed: [new WeakMap(), new WeakMap()],
+    active: [new WeakMap(), new WeakMap()],
+  });
 
   return {
     async decode(input: unknown): Promise<CodecResult<T>> {
-      return (await decodeValue(document.root, input, definitions, [], 0)) as CodecResult<T>;
+      return (await decodeValue(document.root, input, context(), [], 0)) as CodecResult<T>;
     },
     async encode(value: T): Promise<CodecResult<unknown>> {
-      return encodeValue(document.root, value, definitions, [], 0);
+      return encodeValue(document.root, value, context(), [], 0);
+    },
+    async validateWire(input: unknown): Promise<CodecResult<unknown>> {
+      const result = await decodeValue(document.root, input, context(true), [], 0);
+      return result.ok ? success(input) : result;
     },
   };
+}
+
+async function cachedConversion(
+  spec: ValueCodecSpec,
+  value: unknown,
+  context: CodecContext,
+  path: readonly (string | number)[],
+  depth: number,
+  convert: () => Promise<CodecResult<unknown>>,
+): Promise<CodecResult<unknown>> {
+  if (depth > MAX_CODEC_DEPTH) return failure(path, "Codec nesting limit exceeded.");
+  if (value === null || typeof value !== "object") return convert();
+  const index = context.strictObjects ? 1 : 0;
+  const completed = context.completed[index];
+  const previous = completed.get(value)?.get(spec)?.get(depth);
+  if (previous)
+    return previous.ok
+      ? previous
+      : {
+          ok: false,
+          issues: previous.issues.map((issue) => ({ ...issue, path: [...path, ...issue.path] })),
+        };
+  const active = context.active[index];
+  const pending = active.get(value) ?? new Set<ValueCodecSpec>();
+  if (pending.has(spec)) return failure(path, "Cyclic values cannot be converted as JSON.");
+  pending.add(spec);
+  active.set(value, pending);
+  try {
+    const result = await convert();
+    // Cache failures too: otherwise repeated failing recursive branches double
+    // the work at each level. Relative paths remain correct at other call sites.
+    const values =
+      completed.get(value) ?? new Map<ValueCodecSpec, Map<number, CodecResult<unknown>>>();
+    const depths = values.get(spec) ?? new Map<number, CodecResult<unknown>>();
+    depths.set(
+      depth,
+      result.ok
+        ? result
+        : {
+            ok: false,
+            issues: result.issues.map((issue) => ({
+              ...issue,
+              path: issue.path.slice(path.length),
+            })),
+          },
+    );
+    values.set(spec, depths);
+    completed.set(value, values);
+    return result;
+  } finally {
+    pending.delete(spec);
+  }
 }
 
 async function decodeValue(
   spec: ValueCodecSpec,
   input: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
+  return cachedConversion(spec, input, context, path, depth, () =>
+    decodeCheckedValue(spec, input, context, path, depth),
+  );
+}
+
+async function decodeCheckedValue(
+  spec: ValueCodecSpec,
+  input: unknown,
+  context: CodecContext,
+  path: readonly (string | number)[],
+  depth: number,
+): Promise<CodecResult<unknown>> {
+  if (
+    spec.wireSchema !== undefined &&
+    context.validateWire &&
+    !(await context.validateWire(spec.wireSchema, input))
+  ) {
+    return failure(path, "Value does not match the declared union branch wire schema.");
+  }
   const issue = numericConstraintIssue(input, spec.numericConstraints);
   if (issue) return failure(path, issue);
-  const result = await decodeUncheckedValue(spec, input, definitions, path, depth);
+  const result = await decodeUncheckedValue(spec, input, context, path, depth);
   if (!result.ok) return result;
   const semanticIssue = numericConstraintIssue(result.value, spec.numericConstraints);
   return semanticIssue ? failure(path, semanticIssue) : result;
@@ -115,7 +233,7 @@ async function decodeValue(
 async function decodeUncheckedValue(
   spec: ValueCodecSpec,
   input: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
@@ -131,7 +249,7 @@ async function decodeUncheckedValue(
     case "literal":
       return Object.is(input, spec.value)
         ? success(input)
-        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`);
+        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`, "literal-mismatch");
     case "bigint-string":
       if (typeof input !== "string" || !/^-?(?:0|[1-9]\d*)$/.test(input)) {
         return failure(path, "Expected an integer encoded as a decimal string.");
@@ -213,7 +331,7 @@ async function decodeUncheckedValue(
         const result = await decodeValue(
           spec.item,
           input[index],
-          definitions,
+          context,
           [...path, index],
           depth + 1,
         );
@@ -232,7 +350,7 @@ async function decodeUncheckedValue(
         const result = await decodeValue(
           spec.items[index]!,
           input[index],
-          definitions,
+          context,
           [...path, index],
           depth + 1,
         );
@@ -242,28 +360,13 @@ async function decodeUncheckedValue(
       return issues.length === 0 ? success(output) : { ok: false, issues };
     }
     case "object":
-      return decodeObject(spec, input, definitions, path, depth);
-    case "union": {
-      const failures: CodecIssue[][] = [];
-      for (const variant of spec.variants) {
-        const result = await decodeValue(variant, input, definitions, path, depth + 1);
-        if (result.ok) return result;
-        failures.push([...result.issues]);
-      }
-      return {
-        ok: false,
-        issues:
-          failures.length === 0
-            ? [{ path, message: "No union variant is defined." }]
-            : failures.reduce((smallest, current) =>
-                current.length < smallest.length ? current : smallest,
-              ),
-      };
-    }
+      return decodeObject(spec, input, context, path, depth);
+    case "union":
+      return convertUnion(spec, input, context, path, depth, false);
     case "ref": {
-      const target = definitions[spec.name];
+      const target = context.definitions[spec.name];
       return target
-        ? decodeValue(target, input, definitions, path, depth + 1)
+        ? decodeValue(target, input, context, path, depth + 1)
         : failure(path, `Unknown codec reference ${JSON.stringify(spec.name)}.`);
     }
     case "file":
@@ -274,14 +377,33 @@ async function decodeUncheckedValue(
 async function encodeValue(
   spec: ValueCodecSpec,
   value: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
+  path: readonly (string | number)[],
+  depth: number,
+): Promise<CodecResult<unknown>> {
+  return cachedConversion(spec, value, context, path, depth, () =>
+    encodeCheckedValue(spec, value, context, path, depth),
+  );
+}
+
+async function encodeCheckedValue(
+  spec: ValueCodecSpec,
+  value: unknown,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
   const issue = numericConstraintIssue(value, spec.numericConstraints);
   if (issue) return failure(path, issue);
-  const result = await encodeUncheckedValue(spec, value, definitions, path, depth);
+  const result = await encodeUncheckedValue(spec, value, context, path, depth);
   if (!result.ok) return result;
+  if (
+    spec.wireSchema !== undefined &&
+    context.validateWire &&
+    !(await context.validateWire(spec.wireSchema, result.value))
+  ) {
+    return failure(path, "Value does not match the declared union branch wire schema.");
+  }
   const wireIssue = numericConstraintIssue(result.value, spec.numericConstraints);
   return wireIssue ? failure(path, wireIssue) : result;
 }
@@ -289,7 +411,7 @@ async function encodeValue(
 async function encodeUncheckedValue(
   spec: ValueCodecSpec,
   value: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
@@ -305,7 +427,7 @@ async function encodeUncheckedValue(
     case "literal":
       return Object.is(value, spec.value)
         ? success(value)
-        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`);
+        : failure(path, `Expected the literal ${JSON.stringify(spec.value)}.`, "literal-mismatch");
     case "bigint-string":
       return typeof value === "bigint"
         ? success(value.toString())
@@ -349,7 +471,7 @@ async function encodeUncheckedValue(
         const result = await encodeValue(
           spec.item,
           value[index],
-          definitions,
+          context,
           [...path, index],
           depth + 1,
         );
@@ -368,7 +490,7 @@ async function encodeUncheckedValue(
         const result = await encodeValue(
           spec.items[index]!,
           value[index],
-          definitions,
+          context,
           [...path, index],
           depth + 1,
         );
@@ -378,28 +500,13 @@ async function encodeUncheckedValue(
       return issues.length === 0 ? success(output) : { ok: false, issues };
     }
     case "object":
-      return encodeObject(spec, value, definitions, path, depth);
-    case "union": {
-      const failures: CodecIssue[][] = [];
-      for (const variant of spec.variants) {
-        const result = await encodeValue(variant, value, definitions, path, depth + 1);
-        if (result.ok) return result;
-        failures.push([...result.issues]);
-      }
-      return {
-        ok: false,
-        issues:
-          failures.length === 0
-            ? [{ path, message: "No union variant is defined." }]
-            : failures.reduce((smallest, current) =>
-                current.length < smallest.length ? current : smallest,
-              ),
-      };
-    }
+      return encodeObject(spec, value, context, path, depth);
+    case "union":
+      return convertUnion(spec, value, context, path, depth, true);
     case "ref": {
-      const target = definitions[spec.name];
+      const target = context.definitions[spec.name];
       return target
-        ? encodeValue(target, value, definitions, path, depth + 1)
+        ? encodeValue(target, value, context, path, depth + 1)
         : failure(path, `Unknown codec reference ${JSON.stringify(spec.name)}.`);
     }
     case "file":
@@ -410,7 +517,7 @@ async function encodeUncheckedValue(
 async function decodeObject(
   spec: Extract<ValueCodecSpec, { kind: "object" }>,
   input: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
@@ -425,7 +532,11 @@ async function decodeObject(
         const decodedDefault = await decodeValue(
           property.codec,
           property.defaultValue,
-          definitions,
+          {
+            ...context,
+            completed: [new WeakMap(), new WeakMap()],
+            active: [new WeakMap(), new WeakMap()],
+          },
           [...path, property.wireName],
           depth + 1,
         );
@@ -435,6 +546,7 @@ async function decodeObject(
         issues.push({
           path: [...path, property.wireName],
           message: "Required property is missing.",
+          code: "missing-property",
         });
       }
       continue;
@@ -443,7 +555,7 @@ async function decodeObject(
     const decoded = await decodeValue(
       property.codec,
       input[property.wireName],
-      definitions,
+      context,
       [...path, property.wireName],
       depth + 1,
     );
@@ -451,7 +563,7 @@ async function decodeObject(
     else issues.push(...decoded.issues);
   }
 
-  for (const [wireName, wireValue] of Object.entries(input)) {
+  for (const wireName of Object.keys(input)) {
     if (wireNames.has(wireName)) continue;
     if (excludedWireNames.has(wireName)) {
       issues.push({
@@ -460,7 +572,15 @@ async function decodeObject(
       });
       continue;
     }
-    if (spec.additionalProperties === undefined) continue;
+    if (spec.additionalProperties === undefined) {
+      if (context.strictObjects)
+        issues.push({
+          path: [...path, wireName],
+          message: "Property is not declared by this union branch.",
+          code: "unknown-property",
+        });
+      continue;
+    }
     if (semanticNames.has(wireName)) {
       issues.push({
         path: [...path, wireName],
@@ -468,13 +588,14 @@ async function decodeObject(
       });
       continue;
     }
+    const wireValue = input[wireName];
     if (spec.additionalProperties === true) {
       defineDataProperty(output, wireName, wireValue);
     } else if (spec.additionalProperties) {
       const decoded = await decodeValue(
         spec.additionalProperties,
         wireValue,
-        definitions,
+        context,
         [...path, wireName],
         depth + 1,
       );
@@ -489,7 +610,7 @@ async function decodeObject(
 async function encodeObject(
   spec: Extract<ValueCodecSpec, { kind: "object" }>,
   value: unknown,
-  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  context: CodecContext,
   path: readonly (string | number)[],
   depth: number,
 ): Promise<CodecResult<unknown>> {
@@ -499,19 +620,21 @@ async function encodeObject(
   const excludedProperties = new Set(Object.entries(spec.excludedProperties ?? {}).flat());
 
   for (const [propertyName, property] of properties) {
-    if (
-      !Object.prototype.hasOwnProperty.call(value, propertyName) ||
-      value[propertyName] === undefined
-    ) {
+    const propertyValue = Object.hasOwn(value, propertyName) ? value[propertyName] : undefined;
+    if (propertyValue === undefined) {
       if (!property.optional && !property.hasDefault) {
-        issues.push({ path: [...path, propertyName], message: "Required property is missing." });
+        issues.push({
+          path: [...path, propertyName],
+          message: "Required property is missing.",
+          code: "missing-property",
+        });
       }
       continue;
     }
     const encoded = await encodeValue(
       property.codec,
-      value[propertyName],
-      definitions,
+      propertyValue,
+      context,
       [...path, propertyName],
       depth + 1,
     );
@@ -519,10 +642,18 @@ async function encodeObject(
     else issues.push(...encoded.issues);
   }
 
-  for (const [propertyName, propertyValue] of Object.entries(value)) {
+  for (const propertyName of Object.keys(value)) {
     if (semanticNames.has(propertyName)) continue;
     if (excludedProperties.has(propertyName)) continue;
-    if (spec.additionalProperties === undefined) continue;
+    if (spec.additionalProperties === undefined) {
+      if (context.strictObjects)
+        issues.push({
+          path: [...path, propertyName],
+          message: "Property is not declared by this union branch.",
+          code: "unknown-property",
+        });
+      continue;
+    }
     if (wireNames.has(propertyName)) {
       issues.push({
         path: [...path, propertyName],
@@ -530,13 +661,14 @@ async function encodeObject(
       });
       continue;
     }
+    const propertyValue = value[propertyName];
     if (spec.additionalProperties === true) {
       defineDataProperty(output, propertyName, propertyValue);
     } else if (spec.additionalProperties) {
       const encoded = await encodeValue(
         spec.additionalProperties,
         propertyValue,
-        definitions,
+        context,
         [...path, propertyName],
         depth + 1,
       );
@@ -546,6 +678,143 @@ async function encodeObject(
   }
 
   return issues.length === 0 ? success(output) : { ok: false, issues };
+}
+
+async function convertUnion(
+  spec: Extract<ValueCodecSpec, { kind: "union" }>,
+  value: unknown,
+  context: CodecContext,
+  path: readonly (string | number)[],
+  depth: number,
+  encoding: boolean,
+): Promise<CodecResult<unknown>> {
+  const convert = encoding ? encodeValue : decodeValue;
+  const failures: (readonly CodecIssue[])[] = [];
+  for (const strictObjects of context.strictObjects ? [true] : [true, false]) {
+    let match: { readonly ok: true; readonly value: unknown } | undefined;
+    let fatal: readonly CodecIssue[] | undefined;
+    let coveredFailure: readonly CodecIssue[] | undefined;
+    for (const variant of spec.variants) {
+      const candidate = await convert(
+        variant,
+        value,
+        { ...context, strictObjects },
+        path,
+        depth + 1,
+      );
+      if (!candidate.ok) {
+        failures.push(candidate.issues);
+        if (candidate.issues.length > 0 && candidate.issues.every(isFatalUnionIssue))
+          fatal = candidate.issues;
+        if (
+          strictObjects &&
+          matchesContainer(variant, value, context.definitions) &&
+          !candidate.issues.some(
+            (issue) =>
+              issue.code === "unknown-property" ||
+              ((issue.code === "missing-property" || issue.code === "literal-mismatch") &&
+                issue.path.length <= path.length + 1),
+          )
+        ) {
+          coveredFailure = candidate.issues;
+        }
+        continue;
+      }
+      if (context.wireValidationOnly) return candidate;
+      if (
+        match &&
+        !(encoding
+          ? jsonValuesEqual(match.value, candidate.value)
+          : await semanticValuesEqual(match.value, candidate.value, temporalValuesEqual))
+      ) {
+        fatal = [
+          {
+            path,
+            message: "Value matches multiple union branches with incompatible conversions.",
+            code: "ambiguous-union",
+          },
+        ];
+      }
+      match = candidate;
+    }
+    if (fatal) return { ok: false, issues: fatal };
+    if (match) return match;
+    // A branch covered the supplied fields but could not convert a declared value.
+    // Projecting into a poorer alternative would silently discard that value.
+    if (coveredFailure)
+      return {
+        ok: false,
+        issues: coveredFailure.map((issue) => ({ ...issue, code: "invalid-union-value" })),
+      };
+  }
+  const projectionFailures = failures.filter((issues) =>
+    issues.some((issue) => issue.code === "unknown-property"),
+  );
+  const relevantFailures = projectionFailures.length ? projectionFailures : failures;
+  return {
+    ok: false,
+    issues:
+      relevantFailures.length === 0
+        ? [{ path, message: "No union variant is defined." }]
+        : relevantFailures.reduce((smallest, current) =>
+            current.length < smallest.length ? current : smallest,
+          ),
+  };
+}
+
+function isFatalUnionIssue(issue: CodecIssue): boolean {
+  return issue.code === "ambiguous-union";
+}
+
+function matchesContainer(
+  spec: ValueCodecSpec,
+  value: unknown,
+  definitions: Readonly<Record<string, ValueCodecSpec>>,
+  seen = new Set<ValueCodecSpec>(),
+): boolean {
+  if (seen.has(spec)) return false;
+  seen.add(spec);
+  switch (spec.kind) {
+    case "ref":
+      return (
+        Object.hasOwn(definitions, spec.name) &&
+        matchesContainer(definitions[spec.name]!, value, definitions, seen)
+      );
+    case "union":
+      return spec.variants.some((variant) => matchesContainer(variant, value, definitions, seen));
+    case "object":
+      return isPlainObject(value);
+    case "array":
+    case "tuple":
+      return Array.isArray(value);
+    default:
+      return false;
+  }
+}
+
+async function temporalValuesEqual(left: object, right: object): Promise<boolean> {
+  try {
+    const temporal = (globalThis as { Temporal?: TemporalApi }).Temporal ?? (await temporalPromise);
+    if (!temporal) return false;
+    for (const constructor of [
+      temporal.Instant,
+      temporal.PlainDate,
+      temporal.PlainTime,
+      temporal.ZonedDateTime,
+      temporal.Duration,
+    ]) {
+      if (left instanceof constructor || right instanceof constructor) {
+        return (
+          left instanceof constructor &&
+          right instanceof constructor &&
+          left.toString() === right.toString()
+        );
+      }
+    }
+  } catch {
+    // An unavailable optional Temporal implementation cannot make opaque values equivalent.
+  }
+  return false;
 }
 
 /** Collect property names and collision issues in one pass for either codec direction. */
@@ -758,6 +1027,10 @@ function success<T>(value: T): CodecResult<T> {
   return { ok: true, value };
 }
 
-function failure(path: readonly (string | number)[], message: string): CodecResult<never> {
-  return { ok: false, issues: [{ path, message }] };
+function failure(
+  path: readonly (string | number)[],
+  message: string,
+  code?: CodecIssue["code"],
+): CodecResult<never> {
+  return { ok: false, issues: [{ path, message, ...(code ? { code } : {}) }] };
 }

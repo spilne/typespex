@@ -1,7 +1,6 @@
 import {
   getDeprecated,
   getDoc,
-  getEncode,
   getSummary,
   isArrayModelType,
   resolveEncodedName,
@@ -25,7 +24,7 @@ import {
   type TypePlan,
 } from "./plans.js";
 import { ScalarPlanner } from "./scalar-planner.js";
-import { hasNumericBounds } from "./scalar-policy.js";
+import { hasUseSiteValueOverrides } from "./scalar-policy.js";
 import { isNamedType, TypeRegistry, type NamedType } from "./type-registry.js";
 
 export interface TypePlannerOptions {
@@ -650,12 +649,7 @@ export class TypePlanner {
   private wireTypeToTs(type: Type, encodingTarget?: ModelProperty | Scalar): string {
     const substituted = this.types.substitute(type);
     if (substituted !== type) return this.wireTypeToTs(substituted, encodingTarget);
-    const useSiteScalarEncoding =
-      type.kind === "Scalar" &&
-      encodingTarget !== undefined &&
-      encodingTarget !== type &&
-      (getEncode(this.program, encodingTarget) !== undefined ||
-        hasNumericBounds(this.program, encodingTarget));
+    const useSiteScalarEncoding = hasUseSiteValueOverrides(this.program, type, encodingTarget);
     if (
       !useSiteScalarEncoding &&
       isNamedType(type) &&
@@ -689,7 +683,7 @@ export class TypePlanner {
       case "Union":
         return (
           this.unionVariants(type)
-            .map((variant) => this.wireTypeToTs(variant))
+            .map((variant) => this.wireTypeToTs(variant, encodingTarget))
             .join(" | ") || "never"
         );
       case "UnionVariant":
@@ -745,7 +739,11 @@ export class TypePlanner {
       }
       return this.projectedWireModelExpressionToTs(type, projection);
     }
-    if (type.kind === "Union" && this.types.isUserDefined(type)) {
+    if (
+      type.kind === "Union" &&
+      this.types.isUserDefined(type) &&
+      !hasUseSiteValueOverrides(this.program, type, encodingTarget)
+    ) {
       if (!this.projectionChangesType(type, projection)) {
         return this.typeReference(this.getGeneratedWireName(type));
       }
@@ -755,7 +753,7 @@ export class TypePlanner {
     if (type.kind === "Union") {
       return (
         this.unionVariants(type)
-          .map((variant) => this.projectedWireTypeToTs(variant, projection))
+          .map((variant) => this.projectedWireTypeToTs(variant, projection, encodingTarget))
           .join(" | ") || "never"
       );
     }

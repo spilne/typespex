@@ -26,6 +26,7 @@ export function planSchemaDocument(tools: readonly PlannedTool[]): SchemaDocumen
   const jsonDefinitions = new Map<string, unknown>();
   const jsonEnvironments = new Map<string, DefinitionEnvironment>();
   const usedJsonNames = new Set<string>();
+  const schemaEnvironments = new Map<string, DefinitionEnvironment>();
   const namedSchemas = Object.fromEntries(
     schemas.map(({ name }, index) => {
       const document = jsonDocuments[index]!;
@@ -37,6 +38,7 @@ export function planSchemaDocument(tools: readonly PlannedTool[]): SchemaDocumen
         usedJsonNames,
         rewriteSchemaReferences,
       );
+      schemaEnvironments.set(name, environment);
       const root = rewriteSchemaReferences(document.root, environment.names);
       return [
         name,
@@ -53,7 +55,24 @@ export function planSchemaDocument(tools: readonly PlannedTool[]): SchemaDocumen
   const codecs = Object.fromEntries(
     schemas.flatMap(({ name, plan }) => {
       if (!plan.codec) return [];
-      const definitions = plan.codec.definitions ?? {};
+      const jsonNames = schemaEnvironments.get(name)!.names;
+      const relocateSchemas = (value: unknown) =>
+        mapCodecSpecs(value, (spec) =>
+          spec.wireSchema === undefined
+            ? spec
+            : {
+                ...spec,
+                wireSchema: rewriteSchemaReferences(spec.wireSchema, jsonNames),
+              },
+        );
+      // Relocate branch schemas before deduplication: equal codec shapes can
+      // refer to different projected JSON definitions in different roots.
+      const definitions = Object.fromEntries(
+        Object.entries(plan.codec.definitions ?? {}).map(([key, value]) => [
+          key,
+          relocateSchemas(value),
+        ]),
+      );
       const environment = definitionEnvironment(
         definitions,
         name,
@@ -62,7 +81,7 @@ export function planSchemaDocument(tools: readonly PlannedTool[]): SchemaDocumen
         usedCodecNames,
         rewriteCodecReferences,
       );
-      return [[name, rewriteCodecReferences(plan.codec.root, environment.names)]];
+      return [[name, rewriteCodecReferences(relocateSchemas(plan.codec.root), environment.names)]];
     }),
   );
 
@@ -207,45 +226,45 @@ function rewriteLocalSchemaReference(
 }
 
 function rewriteCodecReferences(value: unknown, names: ReadonlyMap<string, string>): unknown {
+  return mapCodecSpecs(value, (spec) =>
+    spec.kind === "ref" && typeof spec.name === "string"
+      ? { ...spec, name: names.get(spec.name) ?? spec.name }
+      : spec,
+  );
+}
+
+function mapCodecSpecs(
+  value: unknown,
+  map: (spec: Readonly<Record<string, unknown>>) => unknown,
+): unknown {
   if (!isSchemaRecord(value)) return value;
+  const child = (value: unknown) => mapCodecSpecs(value, map);
   switch (value.kind) {
-    case "ref":
-      return {
-        ...value,
-        name: typeof value.name === "string" ? (names.get(value.name) ?? value.name) : value.name,
-      };
     case "array":
-      return { ...value, item: rewriteCodecReferences(value.item, names) };
+      return map({ ...value, item: child(value.item) });
     case "tuple":
-      return {
+      return map({
         ...value,
-        items: Array.isArray(value.items)
-          ? value.items.map((item) => rewriteCodecReferences(item, names))
-          : value.items,
-      };
+        items: Array.isArray(value.items) ? value.items.map(child) : value.items,
+      });
     case "union":
-      return {
+      return map({
         ...value,
-        variants: Array.isArray(value.variants)
-          ? value.variants.map((item) => rewriteCodecReferences(item, names))
-          : value.variants,
-      };
+        variants: Array.isArray(value.variants) ? value.variants.map(child) : value.variants,
+      });
     case "object":
-      return {
+      return map({
         ...value,
         properties: mapRecord(value.properties, (property) =>
-          isSchemaRecord(property)
-            ? { ...property, codec: rewriteCodecReferences(property.codec, names) }
-            : property,
+          isSchemaRecord(property) ? { ...property, codec: child(property.codec) } : property,
         ),
         ...(value.additionalProperties === undefined
           ? {}
-          : {
-              additionalProperties: rewriteCodecReferences(value.additionalProperties, names),
-            }),
-      };
+          : { additionalProperties: child(value.additionalProperties) }),
+      });
     default:
-      return value;
+      // Literal and default values are data; only recurse into codec children.
+      return map(value);
   }
 }
 

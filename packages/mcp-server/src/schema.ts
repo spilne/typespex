@@ -4,7 +4,14 @@ import {
   type StandardSchemaV1,
   type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
-import { createValueCodec, type CodecIssue, type ValueCodecDocument } from "@typespex/codec";
+import {
+  createValueCodec,
+  jsonValuesEqual,
+  type CodecIssue,
+  type ValueCodecDocument,
+} from "@typespex/codec";
+
+import { reachableCodecSpecs } from "./codec-graph.js";
 
 /** Serializable schema and codec definition consumed by the MCP runtime. */
 export interface SchemaDefinition {
@@ -37,7 +44,10 @@ export function createSchema<Wire = unknown, Semantic = Wire>(
 ): Schema<Wire, Semantic> {
   const schema = normalizeJsonSchema(definition.schema);
   const jsonWire = lazyJsonSchema<Wire>(schema);
-  const codec = definition.codec ? createValueCodec<Semantic>(definition.codec) : undefined;
+  const validatesBranch = createBranchValidator(schema);
+  const codec = definition.codec
+    ? createValueCodec<Semantic>(definition.codec, { validateWire: validatesBranch })
+    : undefined;
   const wire: StandardSchemaWithJSON<Wire, Wire> =
     codec && hasNumericConstraints(definition.codec!)
       ? {
@@ -48,7 +58,7 @@ export function createSchema<Wire = unknown, Semantic = Wire>(
               if (validated.issues) return validated;
               // Some semantic bounds cannot be expressed for JSON strings. Run
               // the codec checks while preserving the original wire value.
-              const decoded = await codec.decode(validated.value);
+              const decoded = await codec.validateWire(validated.value);
               return decoded.ok
                 ? validated
                 : { issues: decoded.issues.map(codecIssueToStandardIssue) };
@@ -56,7 +66,7 @@ export function createSchema<Wire = unknown, Semantic = Wire>(
           },
         }
       : jsonWire;
-  const projectWireValue = codec ? undefined : createWireProjector(schema);
+  const projectWireValue = codec ? undefined : createWireProjector(schema, validatesBranch);
   const input: StandardSchemaWithJSON<Wire, Semantic> = {
     "~standard": {
       version: 1,
@@ -116,34 +126,8 @@ async function validate<Wire>(
 }
 
 function hasNumericConstraints(document: ValueCodecDocument): boolean {
-  const pending = [document.root];
-  const seen = new Set<typeof document.root>();
-  while (pending.length > 0) {
-    const spec = pending.pop()!;
-    if (seen.has(spec)) continue;
-    seen.add(spec);
+  for (const spec of reachableCodecSpecs(document.root, document.definitions)) {
     if (spec.numericConstraints !== undefined) return true;
-    switch (spec.kind) {
-      case "ref": {
-        const target = document.definitions?.[spec.name];
-        if (target) pending.push(target);
-        break;
-      }
-      case "array":
-        pending.push(spec.item);
-        break;
-      case "tuple":
-        pending.push(...spec.items);
-        break;
-      case "union":
-        pending.push(...spec.variants);
-        break;
-      case "object":
-        pending.push(...Object.values(spec.properties).map((property) => property.codec));
-        if (spec.additionalProperties && spec.additionalProperties !== true)
-          pending.push(spec.additionalProperties);
-        break;
-    }
   }
   return false;
 }
@@ -207,201 +191,327 @@ function normalizeJsonSchema(
  * undeclared properties from wider handler values. Deriving that projection from JSON Schema keeps
  * generated identity contracts compact instead of emitting a second, mirrored codec document.
  */
-function createWireProjector(
-  rootSchema: Readonly<Record<string, unknown>>,
-): (value: unknown) => Promise<unknown> {
-  const branchValidators = new Map<unknown, StandardSchemaWithJSON<unknown, unknown>>();
-  const validatesBranch = async (schema: JsonSchema, value: unknown): Promise<boolean> => {
-    let validator = branchValidators.get(schema);
+function createBranchValidator(rootSchema: Readonly<Record<string, unknown>>) {
+  const validators = new Map<JsonSchema, StandardSchemaWithJSON<unknown, unknown>>();
+  return async (schema: JsonSchema, value: unknown): Promise<boolean> => {
+    let validator = validators.get(schema);
     if (!validator) {
       validator = lazyJsonSchema<unknown>(branchDocument(schema, rootSchema));
-      branchValidators.set(schema, validator);
+      validators.set(schema, validator);
     }
     const result = await validator["~standard"].validate(value);
     return result.issues === undefined;
   };
+}
+
+function createWireProjector(
+  rootSchema: Readonly<Record<string, unknown>>,
+  validatesBranch: (schema: JsonSchema, value: unknown) => Promise<boolean>,
+): (value: unknown) => Promise<unknown> {
   return (value) =>
     projectJsonValue(
       value,
       rootSchema,
       rootSchema,
-      new WeakMap(),
-      new WeakSet(),
+      {
+        strictObjects: false,
+        strict: { seen: new WeakMap(), active: new WeakMap() },
+        loose: { seen: new WeakMap(), active: new WeakMap() },
+      },
       0,
       validatesBranch,
     );
 }
 
+interface ProjectionContext {
+  readonly strictObjects: boolean;
+  readonly strict: {
+    readonly seen: SeenProjections;
+    readonly active: WeakMap<object, Set<JsonSchema>>;
+  };
+  readonly loose: {
+    readonly seen: SeenProjections;
+    readonly active: WeakMap<object, Set<JsonSchema>>;
+  };
+}
+
 type JsonSchema = boolean | Readonly<Record<string, unknown>>;
-type SeenProjections = WeakMap<object, Map<JsonSchema, unknown>>;
+type ProjectionResult =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: WireProjectionError };
+type SeenProjections = WeakMap<object, Map<JsonSchema, Map<number, ProjectionResult>>>;
 const MAX_WIRE_PROJECTION_DEPTH = 128;
 
-class WireProjectionError extends Error {}
+class WireProjectionError extends Error {
+  constructor(
+    message: string,
+    readonly reason?: "ambiguous" | "invalid-value" | "shape" | "projection",
+  ) {
+    super(message);
+  }
+}
 
 async function projectJsonValue(
   value: unknown,
   schema: JsonSchema,
   rootSchema: Readonly<Record<string, unknown>>,
-  seen: SeenProjections,
-  active: WeakSet<object>,
+  context: ProjectionContext,
   depth: number,
   validatesBranch: (schema: JsonSchema, value: unknown) => Promise<boolean>,
 ): Promise<unknown> {
-  if (depth > MAX_WIRE_PROJECTION_DEPTH) {
+  if (depth > MAX_WIRE_PROJECTION_DEPTH)
     throw new WireProjectionError("Wire projection nesting limit exceeded.");
+  if (value === null || typeof value !== "object")
+    return projectUncheckedValue(value, schema, rootSchema, context, depth, validatesBranch);
+  const { seen, active } = context.strictObjects ? context.strict : context.loose;
+  const previous = seen.get(value)?.get(schema)?.get(depth);
+  if (previous) {
+    if (!previous.ok) throw previous.error;
+    return previous.value;
   }
-  if (typeof schema === "boolean") return value;
+  const pending = active.get(value) ?? new Set<JsonSchema>();
+  if (pending.has(schema))
+    throw new WireProjectionError("Cyclic semantic values cannot be encoded as JSON.");
+  pending.add(schema);
+  active.set(value, pending);
+  let result: ProjectionResult;
+  try {
+    result = {
+      ok: true,
+      value: await projectUncheckedValue(
+        value,
+        schema,
+        rootSchema,
+        context,
+        depth,
+        validatesBranch,
+      ),
+    };
+  } catch (error) {
+    if (!(error instanceof WireProjectionError)) throw error;
+    result = { ok: false, error };
+  } finally {
+    pending.delete(schema);
+  }
+  // A failed recursive branch is reusable too; never publish a partial projection.
+  const projections = seen.get(value) ?? new Map<JsonSchema, Map<number, ProjectionResult>>();
+  const depths = projections.get(schema) ?? new Map<number, ProjectionResult>();
+  depths.set(depth, result);
+  projections.set(schema, depths);
+  seen.set(value, projections);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
+async function projectUncheckedValue(
+  value: unknown,
+  schema: JsonSchema,
+  rootSchema: Readonly<Record<string, unknown>>,
+  context: ProjectionContext,
+  depth: number,
+  validatesBranch: (schema: JsonSchema, value: unknown) => Promise<boolean>,
+): Promise<unknown> {
+  if (typeof schema === "boolean") return value;
+  if (
+    (Object.hasOwn(schema, "const") && !jsonValuesEqual(schema.const, value)) ||
+    (Array.isArray(schema.enum) && !schema.enum.some((item) => jsonValuesEqual(item, value)))
+  ) {
+    throw new WireProjectionError("Value does not match the declared literal.", "shape");
+  }
   let projected = value;
   if (typeof schema.$ref === "string") {
     const target = resolveLocalSchemaReference(rootSchema, schema.$ref);
-    if (target !== undefined) {
+    if (target !== undefined)
       projected = await projectJsonValue(
         projected,
         target,
         rootSchema,
-        seen,
-        active,
+        context,
         depth + 1,
         validatesBranch,
       );
-    }
   }
-
   if (Array.isArray(schema.allOf)) {
     for (const part of schema.allOf) {
-      if (isJsonSchema(part)) {
+      if (isJsonSchema(part))
         projected = await projectJsonValue(
           projected,
           part,
           rootSchema,
-          seen,
-          active,
+          context,
           depth + 1,
           validatesBranch,
         );
-      }
     }
   }
-
   const alternatives = Array.isArray(schema.oneOf)
     ? schema.oneOf
     : Array.isArray(schema.anyOf)
       ? schema.anyOf
       : undefined;
   if (alternatives) {
-    for (const alternative of alternatives) {
-      if (!isJsonSchema(alternative)) continue;
-      const candidate = await projectJsonValue(
-        projected,
-        alternative,
-        rootSchema,
-        seen,
-        active,
-        depth + 1,
-        validatesBranch,
-      );
-      if (await validatesBranch(alternative, candidate)) {
-        projected = candidate;
+    let matched = false;
+    let projectionError: WireProjectionError | undefined;
+    for (const strictObjects of context.strictObjects ? [true] : [true, false]) {
+      let match: { value: unknown } | undefined;
+      let fatal: WireProjectionError | undefined;
+      let coveredFailure: WireProjectionError | undefined;
+      for (const alternative of alternatives) {
+        if (!isJsonSchema(alternative)) continue;
+        let candidate: unknown;
+        try {
+          candidate = await projectJsonValue(
+            projected,
+            alternative,
+            rootSchema,
+            { ...context, strictObjects },
+            depth + 1,
+            validatesBranch,
+          );
+        } catch (error) {
+          if (!(error instanceof WireProjectionError)) throw error;
+          if (error.reason === "projection" || projectionError?.reason !== "projection")
+            projectionError = error;
+          if (error.reason === "ambiguous") fatal = error;
+          else if (
+            error.reason !== "shape" &&
+            error.reason !== "projection" &&
+            strictObjects &&
+            matchesSchemaContainer(projected, alternative, rootSchema)
+          )
+            coveredFailure = error;
+          continue;
+        }
+        if (!(await validatesBranch(alternative, candidate))) {
+          if (strictObjects && matchesSchemaContainer(projected, alternative, rootSchema))
+            coveredFailure = new WireProjectionError(
+              "A declared union field could not be projected.",
+            );
+          continue;
+        }
+        if (match && !jsonValuesEqual(match.value, candidate))
+          fatal = new WireProjectionError(
+            "Value matches multiple union branches with incompatible projections.",
+            "ambiguous",
+          );
+        match = { value: candidate };
+      }
+      if (fatal) throw fatal;
+      if (match) {
+        projected = match.value;
+        matched = true;
         break;
       }
+      if (coveredFailure) throw new WireProjectionError(coveredFailure.message, "invalid-value");
     }
+    if (!matched)
+      throw projectionError ?? new WireProjectionError("Value does not match any union branch.");
   }
-
   if (Array.isArray(projected)) {
-    if (active.has(projected)) {
-      throw new WireProjectionError("Cyclic semantic values cannot be encoded as JSON.");
-    }
-    const existing = seen.get(projected)?.get(schema);
-    if (existing !== undefined) return existing;
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     const itemSchema = isJsonSchema(schema.items) ? schema.items : undefined;
     const output = new Array<unknown>(projected.length);
-    const projections = seen.get(projected) ?? new Map<JsonSchema, unknown>();
-    projections.set(schema, output);
-    seen.set(projected, projections);
-    active.add(projected);
-    try {
-      for (let index = 0; index < projected.length; index += 1) {
-        if (!Object.hasOwn(projected, index)) continue;
-        const item = projected[index];
-        const selected = isJsonSchema(prefixItems[index]) ? prefixItems[index] : itemSchema;
-        output[index] = selected
+    for (let index = 0; index < projected.length; index++) {
+      if (!Object.hasOwn(projected, index)) continue;
+      const selected = isJsonSchema(prefixItems[index]) ? prefixItems[index] : itemSchema;
+      output[index] =
+        selected !== undefined
           ? await projectJsonValue(
-              item,
+              projected[index],
               selected,
               rootSchema,
-              seen,
-              active,
+              context,
               depth + 1,
               validatesBranch,
             )
-          : item;
-      }
-      return output;
-    } finally {
-      active.delete(projected);
+          : projected[index];
     }
+    return output;
   }
-
   if (!isPlainObject(projected)) return projected;
   const properties = isSchemaRecord(schema.properties) ? schema.properties : undefined;
   const additionalProperties = schema.additionalProperties;
   if (!properties && additionalProperties === undefined) return projected;
-  if (active.has(projected)) {
-    throw new WireProjectionError("Cyclic semantic values cannot be encoded as JSON.");
+  if (
+    context.strictObjects &&
+    additionalProperties === false &&
+    Object.keys(projected).some((name) => !properties || !Object.hasOwn(properties, name))
+  ) {
+    throw new WireProjectionError("Property is not declared by this union branch.", "projection");
   }
-  const existing = seen.get(projected)?.get(schema);
-  if (existing !== undefined) return existing;
-
+  if (
+    Array.isArray(schema.required) &&
+    schema.required.some(
+      (name) =>
+        typeof name === "string" &&
+        (!Object.hasOwn(projected, name) || projected[name] === undefined),
+    )
+  ) {
+    throw new WireProjectionError("A required union property is missing.", "shape");
+  }
   const output: Record<string, unknown> = {};
-  const projections = seen.get(projected) ?? new Map<JsonSchema, unknown>();
-  projections.set(schema, output);
-  seen.set(projected, projections);
-  active.add(projected);
-  try {
-    for (const [name, item] of Object.entries(projected)) {
-      const propertySchema =
-        properties && Object.hasOwn(properties, name) ? properties[name] : null;
-      if (isJsonSchema(propertySchema)) {
-        if (item !== undefined) {
-          defineDataProperty(
-            output,
-            name,
-            await projectJsonValue(
-              item,
-              propertySchema,
-              rootSchema,
-              seen,
-              active,
-              depth + 1,
-              validatesBranch,
-            ),
-          );
-        }
-        continue;
-      }
-      if (additionalProperties === false) continue;
+  const errors: WireProjectionError[] = [];
+  for (const name of Object.keys(projected)) {
+    const propertySchema = properties && Object.hasOwn(properties, name) ? properties[name] : null;
+    if (!isJsonSchema(propertySchema) && additionalProperties === false) continue;
+    const item = projected[name];
+    if (isJsonSchema(propertySchema) && item === undefined) continue;
+    const selected = isJsonSchema(propertySchema)
+      ? propertySchema
+      : isJsonSchema(additionalProperties)
+        ? additionalProperties
+        : undefined;
+    try {
       defineDataProperty(
         output,
         name,
-        isJsonSchema(additionalProperties)
-          ? await projectJsonValue(
-              item,
-              additionalProperties,
-              rootSchema,
-              seen,
-              active,
-              depth + 1,
-              validatesBranch,
-            )
+        selected !== undefined
+          ? await projectJsonValue(item, selected, rootSchema, context, depth + 1, validatesBranch)
           : item,
       );
+    } catch (error) {
+      if (!(error instanceof WireProjectionError)) throw error;
+      errors.push(
+        error.reason === "shape" &&
+          selected !== undefined &&
+          matchesSchemaContainer(item, selected, rootSchema)
+          ? new WireProjectionError(error.message)
+          : error,
+      );
     }
-    return output;
-  } finally {
-    active.delete(projected);
   }
+  if (errors.length)
+    throw (
+      errors.find((error) => error.reason === "shape") ??
+      errors.find((error) => error.reason === "projection") ??
+      errors.find((error) => error.reason !== "ambiguous") ??
+      errors[0]
+    );
+  return output;
+}
+
+function matchesSchemaContainer(
+  value: unknown,
+  schema: JsonSchema,
+  root: Readonly<Record<string, unknown>>,
+  seen = new Set<JsonSchema>(),
+): boolean {
+  if (typeof schema === "boolean" || seen.has(schema)) return false;
+  seen.add(schema);
+  if (schema.type === "object") return isPlainObject(value);
+  if (schema.type === "array") return Array.isArray(value);
+  if (typeof schema.$ref === "string") {
+    const target = resolveLocalSchemaReference(root, schema.$ref);
+    if (target !== undefined && matchesSchemaContainer(value, target, root, seen)) return true;
+  }
+  for (const parts of [schema.anyOf, schema.oneOf, schema.allOf]) {
+    if (
+      Array.isArray(parts) &&
+      parts.some((part) => isJsonSchema(part) && matchesSchemaContainer(value, part, root, seen))
+    )
+      return true;
+  }
+  return false;
 }
 
 function branchDocument(

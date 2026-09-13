@@ -79,14 +79,17 @@ describe("protocol-neutral value codec", () => {
     };
     expect(await codec.decode([{ same: "value" }])).toEqual({
       ok: false,
-      issues: [duplicate, { path: [0, "other"], message: "Required property is missing." }],
+      issues: [
+        duplicate,
+        { path: [0, "other"], message: "Required property is missing.", code: "missing-property" },
+      ],
     });
     expect(await codec.encode([{ first: "value" }])).toEqual({
       ok: false,
       issues: [
         duplicate,
-        { path: [0, "second"], message: "Required property is missing." },
-        { path: [0, "third"], message: "Required property is missing." },
+        { path: [0, "second"], message: "Required property is missing.", code: "missing-property" },
+        { path: [0, "third"], message: "Required property is missing.", code: "missing-property" },
       ],
     });
   });

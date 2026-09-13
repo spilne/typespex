@@ -176,7 +176,7 @@ function createHttpWireValuePlanInner(
           createHttpWireValuePlanInner(
             program,
             variant.type,
-            undefined,
+            encodingTarget,
             sourceContentType,
             context,
             state,

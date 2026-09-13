@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createSchemaDocument } from "../../mcp-server/src/index.js";
 import type { JsonWirePlan } from "@typespex/compiler-core/unstable";
 import { planSchemaDocument } from "../src/schema-document-planner.js";
 import { renderSchemaDocument } from "../src/render-schema-document.js";
@@ -23,6 +24,45 @@ function tool(
 }
 
 describe("schema document planning", () => {
+  test("relocates branch schema references before sharing codec definitions", async () => {
+    const codec = {
+      root: { kind: "ref" as const, name: "Value" },
+      definitions: {
+        Value: {
+          kind: "union" as const,
+          variants: [
+            {
+              kind: "primitive" as const,
+              type: "string" as const,
+              wireSchema: { $ref: "#/$defs/Value" },
+            },
+          ],
+        },
+      },
+    };
+    const document = planSchemaDocument([
+      tool("First", { type: "string", $defs: { Value: { const: "one" } } }, codec),
+      tool(
+        "Second",
+        { type: "string", $defs: { Value: { const: "two" } } },
+        structuredClone(codec),
+      ),
+    ]);
+    expect(document.codecDefinitions?.ValueForSecondInput).toMatchObject({
+      variants: [{ wireSchema: { $ref: "#/$defs/ValueForSecondInput" } }],
+    });
+    const schemas = createSchemaDocument(document);
+    expect(await schemas.get("SecondInput").input["~standard"].validate("two")).toEqual({
+      value: "two",
+    });
+    expect(
+      (await schemas.get("SecondInput").input["~standard"].validate("one")).issues,
+    ).toBeDefined();
+    expect(await schemas.get("FirstInput").input["~standard"].validate("one")).toEqual({
+      value: "one",
+    });
+  });
+
   test("resolves collisions and reuses matching definition environments before rendering", () => {
     const first = { $ref: "#/$defs/Value", $defs: { Value: { type: "string" } } };
     const second = { $ref: "#/$defs/Value", $defs: { Value: { type: "number" } } };
