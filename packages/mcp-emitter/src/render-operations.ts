@@ -3,7 +3,7 @@ import { renderSchemaDocument, renderSchemaReference } from "./render-schema-doc
 import type { PlannedServer, PlannedTool } from "./types.js";
 
 export function renderOperations(server: PlannedServer): string {
-  const schemaDocument = renderSchemaDocument(server.tools);
+  const schemaDocument = renderSchemaDocument(server.schemaDocument);
 
   const tools = server.tools
     .map((tool) => {
