@@ -1,10 +1,12 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  buildEmitter,
   cleanupFixtures,
   compileFixture,
   compileFixtureWithDiagnostics,
 } from "./compile-fixture.js";
 
+beforeAll(buildEmitter, 120_000);
 afterAll(cleanupFixtures);
 
 describe("@typespex/mcp emitter", () => {
