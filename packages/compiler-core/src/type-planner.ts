@@ -63,11 +63,6 @@ export class TypePlanner {
   private readonly types: TypeRegistry;
   private readonly json: JsonPlanner;
   private readonly projections = new Map<string, RegisteredProjection>();
-  private readonly wireTransformCache = new Map<NamedType, boolean>();
-  private readonly projectedWireTransformCache = new Map<
-    RegisteredProjection,
-    Map<NamedType, boolean>
-  >();
   private readonly reportedIssues = new WeakMap<object, Set<string>>();
   private referencedTypeNames: Set<string> | undefined;
 
@@ -94,8 +89,7 @@ export class TypePlanner {
   /** Collect every declaration reachable from the supplied roots and assign deterministic names. */
   prepare(rootTypes: readonly Type[]): void {
     if (this.types.prepare(rootTypes)) {
-      this.wireTransformCache.clear();
-      this.projectedWireTransformCache.clear();
+      this.json.invalidateTransformCache();
     }
   }
 
@@ -822,17 +816,7 @@ export class TypePlanner {
   }
 
   private typeRequiresWireTransform(type: NamedType, projection?: RegisteredProjection): boolean {
-    const cache = projection
-      ? (this.projectedWireTransformCache.get(projection) ?? new Map<NamedType, boolean>())
-      : this.wireTransformCache;
-    if (projection && !this.projectedWireTransformCache.has(projection)) {
-      this.projectedWireTransformCache.set(projection, cache);
-    }
-    const cached = cache.get(type);
-    if (cached !== undefined) return cached;
-    const result = this.json.requiresTransform(type, projection?.propertyFilter);
-    cache.set(type, result);
-    return result;
+    return this.json.requiresTransform(type, projection?.propertyFilter);
   }
 
   private enumMemberValue(member: EnumMember): string | number {

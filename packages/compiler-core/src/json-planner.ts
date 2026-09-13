@@ -32,7 +32,10 @@ import { isNamedType, type NamedType, type TypeRegistry } from "./type-registry.
 
 type SchemaObject = Record<string, unknown>;
 
+type PropertyFilter = (property: ModelProperty) => boolean;
+
 interface DocumentState {
+  readonly propertyFilter?: PropertyFilter;
   readonly schemaDefinitions: Record<string, JsonSchema>;
   readonly codecDefinitions: Record<string, ValueCodecSpec>;
   readonly buildingSchemas: Set<NamedType>;
@@ -41,6 +44,12 @@ interface DocumentState {
 
 /** Plans JSON schemas, codecs, and defaults for prepared TypeSpec types. */
 export class JsonPlanner {
+  private readonly transformCache = new Map<PropertyFilter | undefined, Map<NamedType, boolean>>();
+
+  invalidateTransformCache(): void {
+    this.transformCache.clear();
+  }
+
   constructor(
     private readonly program: Program,
     private readonly types: TypeRegistry,
@@ -54,26 +63,22 @@ export class JsonPlanner {
 
   createPlan(
     types: readonly Type[],
-    propertyFilter?: (property: ModelProperty) => boolean,
+    propertyFilter?: PropertyFilter,
   ): Pick<JsonWirePlan, "schema" | "codec"> {
-    const state = createDocumentState();
+    const state = createDocumentState(propertyFilter);
 
     const rootSchema =
       types.length === 1
-        ? this.schemaForType(types[0]!, state, undefined, false, propertyFilter)
+        ? this.schemaForType(types[0]!, state, undefined, false)
         : {
-            anyOf: types.map((item) =>
-              this.schemaForType(item, state, undefined, false, propertyFilter),
-            ),
+            anyOf: types.map((item) => this.schemaForType(item, state, undefined, false)),
           };
     const rootCodec =
       types.length === 1
-        ? this.codecForType(types[0]!, state, undefined, false, propertyFilter)
+        ? this.codecForType(types[0]!, state, undefined, false)
         : ({
             kind: "union",
-            variants: types.map((item) =>
-              this.codecForType(item, state, undefined, false, propertyFilter),
-            ),
+            variants: types.map((item) => this.codecForType(item, state, undefined, false)),
           } satisfies ValueCodecSpec);
     const schema = withDocumentMetadata(rootSchema, state.schemaDefinitions);
     const codecDocument: ValueCodecDocument = {
@@ -88,18 +93,24 @@ export class JsonPlanner {
     };
   }
 
-  requiresTransform(
-    type: NamedType,
-    propertyFilter?: (property: ModelProperty) => boolean,
-  ): boolean {
-    const state = createDocumentState();
+  requiresTransform(type: NamedType, propertyFilter?: PropertyFilter): boolean {
+    let cache = this.transformCache.get(propertyFilter);
+    if (!cache) {
+      cache = new Map();
+      this.transformCache.set(propertyFilter, cache);
+    }
+    const cached = cache.get(type);
+    if (cached !== undefined) return cached;
+    const state = createDocumentState(propertyFilter);
     const document: ValueCodecDocument = {
-      root: this.codecForType(type, state, undefined, true, propertyFilter),
+      root: this.codecForType(type, state, undefined, true),
       ...(Object.keys(state.codecDefinitions).length > 0
         ? { definitions: state.codecDefinitions }
         : {}),
     };
-    return codecDocumentRequiresTransform(document);
+    const result = codecDocumentRequiresTransform(document);
+    cache.set(type, result);
+    return result;
   }
 
   private schemaForType(
@@ -107,11 +118,10 @@ export class JsonPlanner {
     state: DocumentState,
     encodingTarget?: ModelProperty | Scalar,
     inlineNamed = false,
-    propertyFilter?: (property: ModelProperty) => boolean,
   ): JsonSchema {
     const substituted = this.types.substitute(type);
     if (substituted !== type) {
-      return this.schemaForType(substituted, state, encodingTarget, inlineNamed, propertyFilter);
+      return this.schemaForType(substituted, state, encodingTarget, inlineNamed);
     }
     const useSiteScalarEncoding =
       type.kind === "Scalar" &&
@@ -127,7 +137,7 @@ export class JsonPlanner {
       isNamedType(type) &&
       this.types.isUserDefined(type)
     ) {
-      this.ensureSchemaDefinition(type, state, propertyFilter);
+      this.ensureSchemaDefinition(type, state);
       const reference = { $ref: `#/$defs/${this.types.getName(type)}` };
       return encodingTarget ? this.applySchemaMetadata(reference, encodingTarget) : reference;
     }
@@ -135,7 +145,7 @@ export class JsonPlanner {
     let schema: JsonSchema;
     switch (type.kind) {
       case "Model":
-        schema = this.modelSchema(type, state, propertyFilter);
+        schema = this.modelSchema(type, state);
         break;
       case "Scalar":
         schema = this.scalars.schema(type, encodingTarget ?? type);
@@ -149,7 +159,7 @@ export class JsonPlanner {
       case "Union":
         schema = {
           anyOf: [...type.variants.values()].map((variant) =>
-            this.schemaForType(variant.type, state, undefined, false, propertyFilter),
+            this.schemaForType(variant.type, state, undefined, false),
           ),
         };
         break;
@@ -160,14 +170,13 @@ export class JsonPlanner {
           state,
           type.kind === "ModelProperty" ? type : undefined,
           false,
-          propertyFilter,
         );
         break;
       case "Tuple":
         schema = {
           type: "array",
           prefixItems: type.values.map((value) =>
-            this.schemaForType(value, state, undefined, false, propertyFilter),
+            this.schemaForType(value, state, undefined, false),
           ),
           minItems: type.values.length,
           maxItems: type.values.length,
@@ -210,17 +219,14 @@ export class JsonPlanner {
     return this.applySchemaMetadata(schema, encodingTarget ?? type);
   }
 
-  private modelSchema(
-    model: Model,
-    state: DocumentState,
-    propertyFilter?: (property: ModelProperty) => boolean,
-  ): JsonSchema {
+  private modelSchema(model: Model, state: DocumentState): JsonSchema {
+    const { propertyFilter } = state;
     if (this.types.isStream(model)) {
       const element = this.types.streamElement(model);
       if (element) {
         return {
           type: "array",
-          items: this.schemaForType(element, state, undefined, false, propertyFilter),
+          items: this.schemaForType(element, state, undefined, false),
         };
       }
       this.report(
@@ -245,7 +251,7 @@ export class JsonPlanner {
     if (isArrayModelType(this.program, model)) {
       return {
         type: "array",
-        items: this.schemaForType(model.indexer.value, state, undefined, false, propertyFilter),
+        items: this.schemaForType(model.indexer.value, state, undefined, false),
       };
     }
 
@@ -257,13 +263,7 @@ export class JsonPlanner {
     for (const property of walkPropertiesInherited(model)) {
       if (propertyFilter && !propertyFilter(property)) continue;
       const wireName = resolveEncodedName(this.program, property, "application/json");
-      let propertySchema = this.schemaForType(
-        property.type,
-        state,
-        property,
-        false,
-        propertyFilter,
-      );
+      let propertySchema = this.schemaForType(property.type, state, property, false);
       const defaultValue = this.propertyDefaultValue(property);
       const description = getDoc(this.program, property) ?? getSummary(this.program, property);
       if (isSchemaObject(propertySchema)) {
@@ -282,13 +282,7 @@ export class JsonPlanner {
       properties,
       ...(required.length > 0 ? { required } : {}),
       additionalProperties: this.types.indexer(model)?.value
-        ? this.schemaForType(
-            this.types.indexer(model)!.value,
-            state,
-            undefined,
-            false,
-            propertyFilter,
-          )
+        ? this.schemaForType(this.types.indexer(model)!.value, state, undefined, false)
         : false,
     };
   }
@@ -298,11 +292,10 @@ export class JsonPlanner {
     state: DocumentState,
     encodingTarget?: ModelProperty | Scalar,
     inlineNamed = false,
-    propertyFilter?: (property: ModelProperty) => boolean,
   ): ValueCodecSpec {
     const substituted = this.types.substitute(type);
     if (substituted !== type) {
-      return this.codecForType(substituted, state, encodingTarget, inlineNamed, propertyFilter);
+      return this.codecForType(substituted, state, encodingTarget, inlineNamed);
     }
     const useSiteScalarEncoding =
       type.kind === "Scalar" &&
@@ -318,7 +311,7 @@ export class JsonPlanner {
       isNamedType(type) &&
       this.types.isUserDefined(type)
     ) {
-      this.ensureCodecDefinition(type, state, propertyFilter);
+      this.ensureCodecDefinition(type, state);
       return { kind: "ref", name: this.types.getName(type) };
     }
 
@@ -330,17 +323,17 @@ export class JsonPlanner {
           return element
             ? {
                 kind: "array",
-                item: this.codecForType(element, state, undefined, false, propertyFilter),
+                item: this.codecForType(element, state, undefined, false),
               }
             : { kind: "identity" };
         }
         if (isArrayModelType(this.program, type)) {
           return {
             kind: "array",
-            item: this.codecForType(type.indexer.value, state, undefined, false, propertyFilter),
+            item: this.codecForType(type.indexer.value, state, undefined, false),
           };
         }
-        return this.objectCodec(type, state, propertyFilter);
+        return this.objectCodec(type, state);
       case "Scalar":
         return this.scalars.codec(type, encodingTarget ?? type);
       case "Enum":
@@ -357,7 +350,7 @@ export class JsonPlanner {
         return {
           kind: "union",
           variants: [...type.variants.values()].map((variant) =>
-            this.codecForType(variant.type, state, undefined, false, propertyFilter),
+            this.codecForType(variant.type, state, undefined, false),
           ),
         };
       case "UnionVariant":
@@ -367,14 +360,11 @@ export class JsonPlanner {
           state,
           type.kind === "ModelProperty" ? type : undefined,
           false,
-          propertyFilter,
         );
       case "Tuple":
         return {
           kind: "tuple",
-          items: type.values.map((item) =>
-            this.codecForType(item, state, undefined, false, propertyFilter),
-          ),
+          items: type.values.map((item) => this.codecForType(item, state, undefined, false)),
         };
       case "String":
         return { kind: "literal", value: type.value };
@@ -399,11 +389,8 @@ export class JsonPlanner {
     }
   }
 
-  private objectCodec(
-    model: Model,
-    state: DocumentState,
-    propertyFilter?: (property: ModelProperty) => boolean,
-  ): ValueCodecSpec {
+  private objectCodec(model: Model, state: DocumentState): ValueCodecSpec {
+    const { propertyFilter } = state;
     const properties: Record<string, ObjectPropertyCodecSpec> = Object.create(null) as Record<
       string,
       ObjectPropertyCodecSpec
@@ -413,7 +400,7 @@ export class JsonPlanner {
       const defaultValue = this.propertyDefaultValue(property);
       properties[property.name] = {
         wireName: resolveEncodedName(this.program, property, "application/json"),
-        codec: this.codecForType(property.type, state, property, false, propertyFilter),
+        codec: this.codecForType(property.type, state, property, false),
         ...(property.optional || defaultValue.present ? { optional: true } : {}),
         ...(defaultValue.present ? { hasDefault: true, defaultValue: defaultValue.value } : {}),
       };
@@ -428,44 +415,29 @@ export class JsonPlanner {
               state,
               undefined,
               false,
-              propertyFilter,
             ),
           }
         : {}),
     };
   }
 
-  private ensureSchemaDefinition(
-    type: NamedType,
-    state: DocumentState,
-    propertyFilter?: (property: ModelProperty) => boolean,
-  ): void {
+  private ensureSchemaDefinition(type: NamedType, state: DocumentState): void {
     const name = this.types.getName(type);
     if (Object.prototype.hasOwnProperty.call(state.schemaDefinitions, name)) return;
     if (state.buildingSchemas.has(type)) return;
     state.buildingSchemas.add(type);
-    state.schemaDefinitions[name] = this.schemaForType(
-      type,
-      state,
-      undefined,
-      true,
-      propertyFilter,
-    );
+    state.schemaDefinitions[name] = this.schemaForType(type, state, undefined, true);
     state.buildingSchemas.delete(type);
   }
 
-  private ensureCodecDefinition(
-    type: NamedType,
-    state: DocumentState,
-    propertyFilter?: (property: ModelProperty) => boolean,
-  ): void {
+  private ensureCodecDefinition(type: NamedType, state: DocumentState): void {
     const name = this.types.getName(type);
     if (Object.prototype.hasOwnProperty.call(state.codecDefinitions, name)) return;
     if (state.buildingCodecs.has(type)) return;
     state.buildingCodecs.add(type);
     // Install a placeholder before descending so direct recursive references resolve.
     state.codecDefinitions[name] = { kind: "identity" };
-    state.codecDefinitions[name] = this.codecForType(type, state, undefined, true, propertyFilter);
+    state.codecDefinitions[name] = this.codecForType(type, state, undefined, true);
     state.buildingCodecs.delete(type);
   }
 
@@ -604,8 +576,9 @@ export class JsonPlanner {
   }
 }
 
-function createDocumentState(): DocumentState {
+function createDocumentState(propertyFilter?: PropertyFilter): DocumentState {
   return {
+    propertyFilter,
     schemaDefinitions: Object.create(null) as Record<string, JsonSchema>,
     codecDefinitions: Object.create(null) as Record<string, ValueCodecSpec>,
     buildingSchemas: new Set(),
