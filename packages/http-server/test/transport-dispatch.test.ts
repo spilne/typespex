@@ -10,7 +10,7 @@ import {
   type HttpRouterOptions,
   type MatchedRequestContext,
   type ServerOperation,
-} from "@typespex/http-server";
+} from "../src/index.js";
 
 function operation(): ServerOperation<void, string> {
   return {
