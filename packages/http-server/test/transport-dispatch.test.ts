@@ -163,6 +163,7 @@ describe("direct transport dispatch", () => {
     }
     const cases = [
       registration(throwing),
+      registration(() => "ok", { ...operation(), decodeInput: throwing }),
       registration(() => "ok", { ...operation(), encodeResult: throwing }),
       registration(() => {
         throw new BrokenHttpError(409, "conflict");
@@ -184,6 +185,39 @@ describe("direct transport dispatch", () => {
       expect(ordinary).toBeInstanceOf(Promise);
       await expect(ordinary).rejects.toBe(failure);
     }
+  });
+
+  test("rejects invalid transport facts before a handler can run", async () => {
+    const route = registration(() => {
+      throw new Error("handler must not run");
+    });
+    const original = request();
+    const response = route.dispatch!(original, {}, Bun.peek, {
+      request: original,
+      verifiedBodyLength: -1,
+    });
+    expect(response).toBeInstanceOf(Promise);
+    await expect(response as Promise<Response>).rejects.toBeInstanceOf(RangeError);
+  });
+
+  test("hook presence selects ordinary dispatch without evaluating an error hook getter", async () => {
+    let reads = 0;
+    for (const options of [
+      {
+        get onUnhandledError() {
+          reads++;
+          return undefined;
+        },
+      },
+      { onUnhandledError: undefined },
+    ]) {
+      const router = createHttpRouter([bindRoute(operation(), () => "ok")], options);
+      const route = getHttpTransportRoutes(router)![0]!;
+      const response = route.dispatch!(request(), {}, Bun.peek);
+      expect(response).toBeInstanceOf(Promise);
+      expect(await (await response).text()).toBe("ok");
+    }
+    expect(reads).toBe(0);
   });
 
   test("hook getters keep ordinary access behavior and middleware receives a Promise", async () => {
