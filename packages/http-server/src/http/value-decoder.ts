@@ -38,16 +38,17 @@ export abstract class Decoder<A, Input = unknown> {
     if (validators.length === 0) return this;
 
     return Decoder.of((input: Input) => {
-      return Either.flatMap(this.decode(input), (value) => {
-        let issues: ValidationIssue[] | null = null;
-        for (const validator of validators) {
-          const validated = validator.validate(value);
-          if (validated.length > 0) {
-            (issues ??= []).push(...validated);
-          }
+      const result = this.decode(input);
+      if (isLeft(result)) return result;
+      const value = result.right;
+      let issues: ValidationIssue[] | null = null;
+      for (const validator of validators) {
+        const validated = validator.validate(value);
+        if (validated.length > 0) {
+          (issues ??= []).push(...validated);
         }
-        return issues ? Either.left(issues) : succeed(value);
-      });
+      }
+      return issues ? Either.left(issues) : succeed(value);
     });
   }
 

@@ -13,6 +13,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type {
@@ -262,8 +263,10 @@ export const PetsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<CreatePetInput>(request, PetsInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<CreatePetInput>(request, PetsInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: Pet | _TypespexPayload_ConflictError_response_1_payload) =>
       PetsOutput.create.encode(result),
   } satisfies ServerOperation<
@@ -352,7 +355,7 @@ export const PetsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request, pathParams) =>
+    decodeInput: (request, pathParams) =>
       decodeRequestInputAndBody<{ petId: string }, { caption?: string; photo: File }>(
         PetsInput.uploadPhotoRequest,
         PetsInput.uploadPhotoBody,

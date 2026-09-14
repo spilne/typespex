@@ -938,6 +938,22 @@ describe("http decoder - throw adapters", () => {
     }
   });
 
+  test("decodeJsonBody keeps option failures inside its Promise boundary", async () => {
+    const request = new Request("http://localhost/test", { method: "POST", body: "{}" });
+    const invalidLimit = decodeJsonBody(request, Decoders.object({}), { maxRequestBodyBytes: -1 });
+    expect(invalidLimit).toBeInstanceOf(Promise);
+    await expect(invalidLimit).rejects.toThrow(RangeError);
+
+    const failure = new Error("Invalid optional setting.");
+    const invalidOptional = decodeJsonBody(request, Decoders.object({}), {
+      get optional(): boolean {
+        throw failure;
+      },
+    });
+    expect(invalidOptional).toBeInstanceOf(Promise);
+    await expect(invalidOptional).rejects.toBe(failure);
+  });
+
   test("decodeFormBody parses url-encoded form data", async () => {
     const okRequest = new Request("http://localhost/test", {
       method: "POST",

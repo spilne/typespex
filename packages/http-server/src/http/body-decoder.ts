@@ -299,36 +299,51 @@ export function decodeJsonBody<A>(
   decoder: Decoder<A>,
   options?: BodyDecodeOptions,
 ): Promise<EitherT<BodyDecodeError, A | undefined>>;
-export async function decodeJsonBody<A>(
+export function decodeJsonBody<A>(
   request: Request,
   decoder: Decoder<A>,
   options: BodyDecodeOptions = {},
+): Promise<EitherT<BodyDecodeError, A | undefined>> {
+  try {
+    return options.optional
+      ? decodeOptionalJsonBody(request, decoder, options)
+      : decodeParsedBody(request, decoder, options, BODY_PARSERS.json);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+async function decodeOptionalJsonBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions,
 ): Promise<EitherT<BodyDecodeError, A | undefined>> {
   const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
   if (isLeft(limitedRequest)) return limitedRequest;
   request = limitedRequest.right;
 
   const root = options.root ?? "$body";
-  let bodyRequest = request;
-  let abandonProbedBody: (() => void) | undefined;
-  if (options.optional) {
-    try {
-      const presentBody = await requestWithPresentBody(request);
-      if (!presentBody) return Either.right(undefined);
-      bodyRequest = presentBody.request;
-      abandonProbedBody = presentBody.abandon;
-    } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) return Either.left(error);
-      return Either.left(
-        new ValidationError([{ path: root, message: "Body must contain valid JSON." }]),
-      );
-    }
+  let presentBody: PresentBodyRequest;
+  try {
+    const body = await requestWithPresentBody(request);
+    if (!body) return Either.right(undefined);
+    presentBody = body;
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) return Either.left(error);
+    return Either.left(
+      new ValidationError([{ path: root, message: "Body must contain valid JSON." }]),
+    );
   }
 
   try {
-    return await decodeParsedBody(bodyRequest, decoder, { ...options, root }, BODY_PARSERS.json);
+    return await decodeParsedBody(
+      presentBody.request,
+      decoder,
+      { ...options, root },
+      BODY_PARSERS.json,
+    );
   } finally {
-    abandonProbedBody?.();
+    presentBody.abandon();
   }
 }
 

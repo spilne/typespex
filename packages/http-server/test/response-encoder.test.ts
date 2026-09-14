@@ -101,6 +101,25 @@ describe("ResponseEncoders", () => {
     expect(() => ResponseEncoders.json(200).encode(value)).toThrow("circular");
   });
 
+  test("json detects deep cycles while allowing repeated references in separate branches", async () => {
+    const encoder = ResponseEncoders.json();
+    for (const depth of [0, 15, 16, 17, 64]) {
+      const leaf = { value: "shared" };
+      const root: Record<string, unknown> = { first: leaf, second: leaf };
+      let nested = root;
+      for (let index = 0; index < depth; index++) {
+        const child = { first: leaf, second: leaf };
+        nested.child = child;
+        nested = child;
+      }
+      expect(await encoder.encode(root).text()).toBe(JSON.stringify(root));
+      nested.back = root;
+      expect(() => encoder.encode(root)).toThrow("circular");
+      delete nested.back;
+      expect(await encoder.encode(root).text()).toBe(JSON.stringify(root));
+    }
+  });
+
   test("json serializes sparse arrays as null entries", async () => {
     const value = new Array<unknown>(2);
     value[1] = "present";

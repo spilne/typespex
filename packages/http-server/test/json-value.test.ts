@@ -24,6 +24,68 @@ describe("lossless JSON values", () => {
     expect(() => parseJsonText("[123456789012345678901]")).toThrow(SyntaxError);
   });
 
+  test("native JSON spellings retain numeric boundaries and formatted input", () => {
+    const values: ReadonlyArray<readonly [string, number | bigint]> = [
+      ["999999999999999", 999999999999999],
+      ["1000000000000000", 1000000000000000],
+      ["9007199254740991", Number.MAX_SAFE_INTEGER],
+      ["9007199254740992", 9007199254740992n],
+      ["9.007199254740992e15", 9007199254740992n],
+      ["1e19", 10000000000000000000n],
+      ["1e20", 1e20],
+      ["1e+21", 1e21],
+      ["1e-7", 1e-7],
+      ["1.000000000000001", 1.000000000000001],
+      ["-0", -0],
+      ["-0.0", -0],
+    ];
+    for (const [token, value] of values) {
+      expect(parseJsonText(token), token).toBe(value);
+      expect(parseJsonText(` { "value": ${token} } `), token).toEqual({ value });
+    }
+  });
+
+  test("native JSON round trips preserve strings, numeric keys, and prototype data", () => {
+    for (const value of [
+      { name: "Pet name", quote: '"', slash: "\\", newline: "\n" },
+      { unicode: "日本語 🦊", loneSurrogate: "\ud800" },
+      JSON.parse('{"__proto__":{"marker":true},"toJSON":"data"}'),
+      { items: [{ id: 1 }, { id: 2 }], constructor: "data" },
+    ]) {
+      for (const text of [JSON.stringify(value), JSON.stringify(value, null, 2)]) {
+        expect(parseJsonText(text)).toEqual(value);
+      }
+    }
+    expect(parseJsonText('{"2":"second","1":"first"}')).toEqual({
+      "1": "first",
+      "2": "second",
+    });
+    expect(() => parseJsonText('{"id":1,"id":2,"text":"\ud800"}')).toThrow(SyntaxError);
+  });
+
+  test("parsing does not invoke inherited serialization hooks", () => {
+    for (const prototype of [Object.prototype, Array.prototype]) {
+      const previous = Object.getOwnPropertyDescriptor(prototype, "toJSON");
+      let calls = 0;
+      let value: unknown;
+      try {
+        Object.defineProperty(prototype, "toJSON", {
+          configurable: true,
+          get() {
+            calls++;
+            throw new Error("Parsing must not read serialization hooks.");
+          },
+        });
+        value = parseJsonText('{"items":[{"id":1}]}');
+      } finally {
+        if (previous) Object.defineProperty(prototype, "toJSON", previous);
+        else Reflect.deleteProperty(prototype, "toJSON");
+      }
+      expect(calls).toBe(0);
+      expect(value).toEqual({ items: [{ id: 1 }] });
+    }
+  });
+
   test("preserves literal and escaped prototype keys as own data", () => {
     for (const key of ['"__proto__"', String.raw`"\u005f\u005fproto\u005f\u005f"`]) {
       const value = parseJsonText(

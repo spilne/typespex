@@ -27,6 +27,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { HealthStatus } from "./models.js";
@@ -92,6 +93,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Config } from "./models.js";
@@ -151,6 +153,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 
@@ -233,6 +236,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { EscapedModel } from "./models.js";
@@ -290,7 +294,7 @@ export const ItemsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request, pathParams) =>
+    decodeInput: (request, pathParams) =>
       decodeRequestInputAndBody<{ defaultValue?: string }, EscapedModel>(
         ItemsInput.createRequest,
         ItemsInput.createBody,

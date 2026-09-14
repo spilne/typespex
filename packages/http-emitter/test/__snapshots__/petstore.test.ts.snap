@@ -79,6 +79,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { CreatePetInput, NotFoundError, Pet } from "./models.js";
@@ -212,8 +213,10 @@ export const PetsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<CreatePetInput>(request, PetsInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<CreatePetInput>(request, PetsInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: Pet) => PetsOutput.create.encode(result),
   } satisfies ServerOperation<CreatePetInput, Pet>,
 
