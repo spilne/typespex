@@ -32,14 +32,14 @@
   },
   "devDependencies": {
     "@js-temporal/polyfill": "^0.5.1",
-    "@typespec/compiler": "^1.15.0",
-    "@typespec/events": "^0.85.0",
-    "@typespec/rest": "^0.85.0",
-    "@typespec/sse": "^0.85.0",
-    "@typespec/streams": "^0.85.0",
-    "@typespec/versioning": "^0.85.0",
-    "@typespec/xml": "^0.85.0",
-    "oxfmt": "0.66.0"
+    "@typespec/compiler": "^1.16.0",
+    "@typespec/events": "^0.86.0",
+    "@typespec/rest": "^0.86.0",
+    "@typespec/sse": "^0.86.0",
+    "@typespec/streams": "^0.86.0",
+    "@typespec/versioning": "^0.86.0",
+    "@typespec/xml": "^0.86.0",
+    "oxfmt": "0.67.0"
   },
   "overrides": {
     "fast-uri": "3.1.6",

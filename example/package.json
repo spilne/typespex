@@ -7,8 +7,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
-    "@typespec/compiler": "^1.15.0",
-    "@typespec/http": "^1.15.0",
+    "@typespec/compiler": "^1.16.0",
+    "@typespec/http": "^1.16.0",
     "@typespex/adapter-bun": "workspace:*",
     "@typespex/adapter-express": "workspace:*",
     "@typespex/adapter-hono": "workspace:*",
@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "bun-types": "1.4.1",
+    "bun-types": "1.4.2",
     "typescript": "^5.7.0"
   }
 }
