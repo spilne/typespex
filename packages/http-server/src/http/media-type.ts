@@ -5,6 +5,7 @@
  */
 export function parseMediaType(header: string | null | undefined): string | undefined {
   if (!header) return undefined;
+  if (header === "application/json") return header;
   const semi = header.indexOf(";");
   const raw = (semi === -1 ? header : header.substring(0, semi)).trim().toLowerCase();
   return MEDIA_TYPE_PATTERN.test(raw) ? raw : undefined;

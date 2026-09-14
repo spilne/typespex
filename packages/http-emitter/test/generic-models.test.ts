@@ -479,7 +479,9 @@ export const handlers: NestedGenericApiServer = {
     expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("echoTagged: ResponseEncoders.text(200)");
     expect(operations).toContain("Decoders.union<Maybe<Pet>>");
-    expect(operations).toContain("decodeBody<Maybe<Pet>>(request, TypesInput.createMaybe, {");
+    expect(operations).toContain(
+      "decodeJsonBody<Maybe<Pet>>(request, TypesInput.createMaybe.json, {",
+    );
     expect(operations).toContain('decodeBody<Tagged<"pet">>(request, TypesInput.echoTagged, {');
     expect(operations).toContain("Decoders.object<TaggedPet>(");
     expect(operations).toContain("maybe: Decoders.union<Maybe<Pet>>");

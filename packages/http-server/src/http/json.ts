@@ -4,7 +4,7 @@ export { bytesToBase64 } from "@typespex/codec";
 
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
 export function stringifyJson(value: unknown): string {
-  const serialized = serializeJsonValue(value, new Set(), "");
+  const serialized = serializeJsonValue(value, [], "");
   if (serialized === undefined) {
     throw new TypeError("Value is not JSON serializable.");
   }
@@ -13,7 +13,7 @@ export function stringifyJson(value: unknown): string {
 
 function serializeJsonValue(
   value: unknown,
-  ancestors: Set<object>,
+  ancestors: object[] | Set<object>,
   key: string,
 ): string | undefined {
   if (value === null) return "null";
@@ -49,10 +49,16 @@ function serializeJsonValue(
     }
   }
 
-  if (ancestors.has(value)) {
-    throw new TypeError("Converting circular structure to JSON.");
+  // Small stacks avoid Set allocations for ordinary shallow JSON. Switch to a
+  // Set for deeper graphs so cycle detection stays linear in the graph size.
+  if (Array.isArray(ancestors) && ancestors.length === 16) ancestors = new Set(ancestors);
+  if (Array.isArray(ancestors)) {
+    if (ancestors.includes(value)) throw new TypeError("Converting circular structure to JSON.");
+    ancestors.push(value);
+  } else {
+    if (ancestors.has(value)) throw new TypeError("Converting circular structure to JSON.");
+    ancestors.add(value);
   }
-  ancestors.add(value);
 
   let serialized: string;
   if (Array.isArray(value)) {
@@ -78,7 +84,8 @@ function serializeJsonValue(
     serialized = `{${entries}}`;
   }
 
-  ancestors.delete(value);
+  if (Array.isArray(ancestors)) ancestors.pop();
+  else ancestors.delete(value);
   return serialized;
 }
 

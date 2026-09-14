@@ -15,6 +15,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 
@@ -131,6 +132,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { RateLimitedResponse } from "./models.js";
@@ -212,6 +214,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 
@@ -291,6 +294,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { ConflictError, ForbiddenError, Item, NotFoundError } from "./models.js";
@@ -538,7 +542,7 @@ export const ItemsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request, pathParams) =>
+    decodeInput: (request, pathParams) =>
       decodeRequestInputAndBody<{ itemId: string }, Item>(
         ItemsInput.updateRequest,
         ItemsInput.updateBody,
@@ -606,6 +610,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { AcceptedJob, CreatedItem } from "./models.js";
@@ -738,6 +743,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Circle, Square } from "./models.js";
@@ -769,8 +775,10 @@ export const ShapesOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<Circle>(request, ShapesInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<Circle>(request, ShapesInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: Circle | Square) => ShapesOutput.create.encode(result),
   } satisfies ServerOperation<Circle, Circle | Square>,
 } as const;
@@ -814,6 +822,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { AcceptedJob, CreatedItem } from "./models.js";

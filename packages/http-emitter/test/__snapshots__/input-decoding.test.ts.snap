@@ -15,6 +15,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Item } from "./models.js";
@@ -105,6 +106,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { CreateItem } from "./models.js";
@@ -217,8 +219,10 @@ export const ItemsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<CreateItem>(request, ItemsInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<CreateItem>(request, ItemsInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: CreateItem) => ItemsOutput.create.encode(result),
   } satisfies ServerOperation<CreateItem, CreateItem>,
 } as const;
@@ -240,6 +244,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Item, UpdatePayload } from "./models.js";
@@ -284,7 +289,7 @@ export const ItemsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request, pathParams) =>
+    decodeInput: (request, pathParams) =>
       decodeRequestInputAndBody<{ itemId: string; dryRun?: boolean }, UpdatePayload>(
         ItemsInput.updateRequest,
         ItemsInput.updateBody,
@@ -316,6 +321,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Profile } from "./models.js";
@@ -387,6 +393,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { TreeNode } from "./models.js";
@@ -431,8 +438,10 @@ export const TreeOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<TreeNode>(request, TreeInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<TreeNode>(request, TreeInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: TreeNode) => TreeOutput.create.encode(result),
   } satisfies ServerOperation<TreeNode, TreeNode>,
 } as const;
@@ -454,6 +463,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { UploadResult } from "./models.js";
@@ -543,7 +553,7 @@ export const UploadsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
+    decodeInput: (request) =>
       decodeBody<{ name: string; file: File }>(request, UploadsInput.single, {
         contentTypes: ["multipart/form-data"],
       }),
@@ -566,7 +576,7 @@ export const UploadsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
+    decodeInput: (request) =>
       decodeBody<{ label: string; files: File[] }>(request, UploadsInput.multi, {
         contentTypes: ["multipart/form-data"],
       }),
@@ -592,7 +602,7 @@ export const UploadsOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
+    decodeInput: (request) =>
       decodeBody<{ name: string; description?: string }>(request, UploadsInput.optional, {
         contentTypes: ["multipart/form-data"],
       }),
@@ -635,6 +645,7 @@ import {
   decodeRequestInput,
   decodeRequestInputAndBody,
   decodeBody,
+  decodeJsonBody,
 } from "@typespex/http-server";
 import * as ServerHints from "./server-hints.js";
 import type { Cat, Circle, Dog, Left, Mixed, Pet, Right, Shape, Square } from "./models.js";
@@ -700,8 +711,10 @@ export const ShapesOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<Shape>(request, ShapesInput.create, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<Shape>(request, ShapesInput.create.json, {
+        contentTypes: ["application/json"],
+      }),
     encodeResult: (result: Circle) => ShapesOutput.create.encode(result),
   } satisfies ServerOperation<Shape, Circle>,
 
@@ -721,8 +734,8 @@ export const ShapesOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<Pet>(request, ShapesInput.adopt, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<Pet>(request, ShapesInput.adopt.json, { contentTypes: ["application/json"] }),
     encodeResult: (result: Cat) => ShapesOutput.adopt.encode(result),
   } satisfies ServerOperation<Pet, Cat>,
 
@@ -742,8 +755,8 @@ export const ShapesOperations = {
         hints: emptyHints(),
       },
     },
-    decodeInput: async (request) =>
-      decodeBody<Mixed>(request, ShapesInput.mix, { contentTypes: ["application/json"] }),
+    decodeInput: (request) =>
+      decodeJsonBody<Mixed>(request, ShapesInput.mix.json, { contentTypes: ["application/json"] }),
     encodeResult: (result: Left) => ShapesOutput.mix.encode(result),
   } satisfies ServerOperation<Mixed, Left>,
 } as const;

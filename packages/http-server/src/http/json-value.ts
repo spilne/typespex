@@ -5,8 +5,26 @@ import { defineDataProperty } from "./object-properties.js";
 const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const DECIMAL_INTEGER_PATTERN = /^-?(?:0|[1-9]\d*)$/;
 const MAX_LOSSLESS_JSON_INTEGER_DIGITS = 20;
+// Skip common formatting so a failed round trip does not add two native passes.
+const NATIVE_JSON_FALLBACK_PATTERN = /\d{16}|[\r\n\t]|[,:] /;
 
 export function parseJsonText(text: string): unknown {
+  // Native parsing is lossless when small-number JSON survives an exact round
+  // trip. Equality also rules out duplicate keys and negative-zero changes.
+  // Large integer tokens retain the parser's bigint and digit-limit semantics.
+  if (
+    !NATIVE_JSON_FALLBACK_PATTERN.test(text) &&
+    !("toJSON" in Object.prototype) &&
+    !("toJSON" in Array.prototype)
+  ) {
+    const value = JSON.parse(text);
+    try {
+      if (JSON.stringify(value) === text) return value;
+    } catch {
+      // A native serialization depth limit must not change parsing support.
+    }
+  }
+
   const preciseValue = parseLosslessJson(text, undefined, { parseNumber: parseJsonNumber });
   // Only a literal or Unicode-escaped __proto__ key can invoke the prototype
   // setter in the lossless parser. Keep native JSON's safe object shape for

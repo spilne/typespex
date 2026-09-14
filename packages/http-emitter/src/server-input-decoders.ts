@@ -54,6 +54,7 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "decodeRequestInput",
   "decodeRequestInputAndBody",
   "decodeBody",
+  "decodeJsonBody",
 ] as const;
 
 export function getServerInputDecoderImports(
@@ -89,8 +90,10 @@ export interface InputDecoderPlan {
   readonly decodeExpression: string;
   /** Whether decodeInput needs pathParams in its signature. */
   readonly needsPathParams: boolean;
-  /** Whether decodeInput is async (body involved). */
+  /** Whether decodeInput returns a Promise (body involved). */
   readonly isAsync: boolean;
+  /** The runtime helper already returns a Promise and needs no async wrapper. */
+  readonly forwardsPromise?: boolean;
   /** Hoisted lazy decoder declarations for recursive models. */
   readonly hoistedDecoders: readonly string[];
 }
@@ -313,11 +316,19 @@ export function buildInputDecoderPlan(
   if (!hasRequestInput && body) {
     const ref = tsPropertyAccess(inputsRef, opName);
     const bodyType = buildBodyOnlyType(ctx, op);
+    const jsonOnly =
+      !body.optional &&
+      body.contentTypes.length > 0 &&
+      body.decoderKinds.length === 1 &&
+      body.decoderKinds[0] === "json";
     return {
       inputEntries: [emitBodyDecoderEntry(opName, ctx, dec, op, body)],
-      decodeExpression: `decodeBody<${bodyType}>(request, ${ref}${bodyOptionsArg})`,
+      decodeExpression: jsonOnly
+        ? `decodeJsonBody<${bodyType}>(request, ${ref}.json${bodyOptionsArg})`
+        : `decodeBody<${bodyType}>(request, ${ref}${bodyOptionsArg})`,
       needsPathParams: false,
       isAsync: true,
+      forwardsPromise: true,
       hoistedDecoders: buildHoistedDecoders(ctx, dec),
     };
   }
@@ -336,6 +347,7 @@ export function buildInputDecoderPlan(
     decodeExpression: `decodeRequestInputAndBody<${requestType}, ${bodyInputType}>(${requestRef}, ${bodyRef}, request, pathParams${bodyOptionsArg})`,
     needsPathParams: true,
     isAsync: true,
+    forwardsPromise: true,
     hoistedDecoders: buildHoistedDecoders(ctx, dec),
   };
 }

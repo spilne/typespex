@@ -49,8 +49,10 @@ function singleIssue(message: string): readonly ValidationIssue[] {
   return [{ path: "", message }];
 }
 
+const NO_ISSUES: readonly ValidationIssue[] = Object.freeze([]);
+
 function noIssues(): readonly ValidationIssue[] {
-  return [];
+  return NO_ISSUES;
 }
 
 function refineValidator<A>(

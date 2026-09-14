@@ -124,8 +124,8 @@ export function renderServerOperations(plan: ServerPlan): string {
       lines.push(`  ${tsObjectKey(operation.propertyName)}: {`);
       emitEndpoint(lines, plan.serviceName, operation);
 
-      // decodeInput — expression-body arrow, async only when body is involved
-      const asyncPrefix = decoder.isAsync ? "async " : "";
+      // Keep the Promise boundary without wrapping helpers that already provide it.
+      const asyncPrefix = decoder.isAsync && !decoder.forwardsPromise ? "async " : "";
       if (decoder.needsPathParams) {
         lines.push(`    decodeInput: ${asyncPrefix}(request, pathParams) =>`);
       } else if (decoder.isAsync) {
