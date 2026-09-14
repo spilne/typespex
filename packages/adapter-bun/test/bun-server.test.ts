@@ -75,6 +75,40 @@ function rawHttp(port: number, message: string): Promise<string> {
 }
 
 describe("createBunServer", () => {
+  test("native GET/HEAD bodies stay empty and declared limits run before handlers", async () => {
+    const bodies: boolean[] = [];
+    const router = createHttpRouter(
+      ["GET", "HEAD"].map((method) =>
+        bindRoute(operation("/framing/:id", method), (value, context) => {
+          bodies.push(context.request.body === null);
+          return value;
+        }),
+      ),
+      { maxRequestBodyBytes: 3 },
+    );
+    const ordinary = Bun.serve({ port: 0, hostname: "127.0.0.1", ...toBunHandler(router) });
+    const native = createBunServer(router, { port: 0, hostname: "127.0.0.1" });
+    try {
+      for (const method of ["GET", "HEAD"]) {
+        for (const body of ["", "abc", "abcd"]) {
+          for (const server of [ordinary, native]) {
+            const previousCalls = bodies.length;
+            const response = await rawHttp(
+              server.port!,
+              `${method} /framing/a HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: ${body.length}\r\n\r\n${body}`,
+            );
+            expect(response).toStartWith(`HTTP/1.1 ${body.length > 3 ? 413 : 200} `);
+            expect(bodies.length - previousCalls).toBe(body.length > 3 ? 0 : 1);
+          }
+        }
+      }
+      expect(bodies).toEqual(Array(8).fill(true));
+    } finally {
+      await ordinary.stop(true);
+      await native.stop(true);
+    }
+  });
+
   test("native registration uses the same configuration snapshot as the router", async () => {
     const literal = { kind: "literal" as const, value: "before" };
     const router = createHttpRouter([

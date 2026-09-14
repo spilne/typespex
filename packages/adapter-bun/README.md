@@ -25,6 +25,11 @@ use the router's normal dispatch. Both paths preserve middleware, authorization 
 validation, exact route matching, and request-body limits. Fixed-length bodies retain native
 buffering; chunked bodies retain streamed byte counting.
 
+For native routes without middleware or custom context/error hooks, completed handler results
+are serialized immediately, including already-fulfilled Promises. Construct the result before
+returning it; mutations queued for a later microtask are not included in that response.
+Middleware and ordinary `router.handle(request)` calls retain Promise-based dispatch.
+
 The returned handle exposes listening addresses, pending request counts, `stop`, `ref`, `unref`,
 `requestIP`, and `timeout`. Bun's synthetic `fetch` and `reload` entry points stay private so
 native request provenance is established once at server creation. Use `router.handle(request)`
