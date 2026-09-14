@@ -1,4 +1,4 @@
-import { isLeft } from "../core/either.js";
+import { isLeft, type Either } from "../core/either.js";
 import { HttpError } from "../errors.js";
 import { createContextMap } from "../core/context.js";
 import { type HttpApp, type Middleware } from "../core/middleware.js";
@@ -13,7 +13,7 @@ import {
 } from "./body-limit.js";
 import type { RequestContext } from "./context.js";
 import type { MatchedEndpoint } from "./metadata.js";
-import type { ServerOperation } from "./operation.js";
+import type { DecodeError, ServerOperation } from "./operation.js";
 import { getSearchParams } from "./query-params.js";
 
 /** Extracts the request pathname without allocating a `URL` instance. */
@@ -138,6 +138,17 @@ const transportHandlers = new WeakMap<
   }
 >();
 
+/**
+ * A transport's side-effect-free Promise inspector. Non-Promise values report
+ * fulfilled and are returned unchanged; fulfilled Promises reveal their value.
+ * Rejected Promises must only be awaited, never inspected for their value.
+ * @internal
+ */
+export interface HttpPromiseInspector {
+  <T>(value: T | Promise<T>): T | Promise<T>;
+  status(value: unknown): "pending" | "fulfilled" | "rejected";
+}
+
 /** One unconstrained route that an HTTP transport can dispatch directly. @internal */
 export interface HttpTransportRoute {
   readonly method: string;
@@ -148,6 +159,16 @@ export interface HttpTransportRoute {
     pathParams: Readonly<Record<string, string>>,
     transport?: HttpRequestTransportInfo,
   ): Promise<Response>;
+  /**
+   * Encodes fulfilled handler results immediately when middleware and custom
+   * hooks are absent. Failures are returned as rejected Promises, never thrown.
+   */
+  dispatch?(
+    request: Request,
+    pathParams: Readonly<Record<string, string>>,
+    peek: HttpPromiseInspector,
+    transport?: HttpRequestTransportInfo,
+  ): Response | Promise<Response>;
 }
 
 /**
@@ -204,6 +225,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
 ): ComposableHttpRouter {
   const middleware = options.middleware ?? [];
   const middlewareChain = combineMiddleware(middleware);
+  const hasMiddleware = middleware.length > 0;
   const maxRequestBodyBytes = resolveRequestBodyLimit(options.maxRequestBodyBytes);
 
   // Build a middleware-wrapped app per route — no Map lookup at request time
@@ -280,6 +302,92 @@ export function createHttpRouter<Ctx extends RequestContext>(
     }
   }
 
+  // A native transport can send synchronous results directly. Middleware and
+  // custom context/error hooks retain the ordinary Promise-based execution.
+  function executeDirect<I, R>(
+    request: Request,
+    route: RouteBinding<I, R, Ctx>,
+    pathParams: Readonly<Record<string, string>>,
+    peek: HttpPromiseInspector,
+    transport?: HttpRequestTransportInfo,
+  ): Response | Promise<Response> {
+    let context: Ctx | undefined;
+    try {
+      // Checking presence avoids evaluating hook getters on successful requests.
+      if (hasMiddleware || "createContext" in options || "onUnhandledError" in options) {
+        return execute(request, { route, pathParams }, transport);
+      }
+      request = enforceRequestBodyLimit(
+        request,
+        maxRequestBodyBytes,
+        transport?.request === request ? transport.verifiedBodyLength : undefined,
+      );
+      context = createDefaultContext(request, {
+        endpoint: route.operation.endpoint,
+        pathParams,
+      }) as Ctx;
+      const decoded = route.operation.decodeInput(request, pathParams);
+      const response =
+        decoded instanceof Promise
+          ? finishDecoded(decoded, route, context, peek)
+          : finishDirect(decoded, route, context, peek);
+      return response instanceof Promise ? catchDirectError(response, context) : response;
+    } catch (error) {
+      return directFailure(error, context);
+    }
+  }
+
+  function finishDirect<I, R>(
+    result: Either<DecodeError, I>,
+    route: RouteBinding<I, R, Ctx>,
+    context: Ctx,
+    peek: HttpPromiseInspector,
+  ): Response | Promise<Response> {
+    if (isLeft(result)) return result.left.toResponse();
+    const handled = route.handler(result.right, context);
+    // Match await's Promise resolution, including constructor and then getters.
+    // Pending/rejected Promises go straight to await so those getters run once.
+    const pending =
+      peek.status(handled) === "fulfilled" ? Promise.resolve(handled) : (handled as Promise<R>);
+    return peek.status(pending) === "fulfilled"
+      ? route.operation.encodeResult(peek(pending) as R)
+      : encodePending(pending, route);
+  }
+
+  async function finishDecoded<I, R>(
+    decoded: Promise<Either<DecodeError, I>>,
+    route: RouteBinding<I, R, Ctx>,
+    context: Ctx,
+    peek: HttpPromiseInspector,
+  ): Promise<Response> {
+    return finishDirect(await decoded, route, context, peek);
+  }
+
+  async function encodePending<I, R>(
+    pending: Promise<R>,
+    route: RouteBinding<I, R, Ctx>,
+  ): Promise<Response> {
+    return route.operation.encodeResult(await pending);
+  }
+
+  function directFailure(error: unknown, context?: Ctx): Response | Promise<Response> {
+    try {
+      if (error instanceof HttpError) return error.toResponse();
+      if (options.onUnhandledError && context) return options.onUnhandledError(error, context);
+    } catch (conversionError) {
+      return Promise.reject(conversionError);
+    }
+    return Promise.reject(error);
+  }
+
+  async function catchDirectError(response: Promise<Response>, context: Ctx): Promise<Response> {
+    try {
+      return await response;
+    } catch (error) {
+      return directFailure(error, context);
+    }
+  }
+
   const router: ComposableHttpRouter = {
     async handle(request: Request): Promise<Response> {
       return execute(request, matchRequest(request));
@@ -307,6 +415,14 @@ export function createHttpRouter<Ctx extends RequestContext>(
             ) {
               if (router.handle !== originalHandle) return router.handle(request);
               return execute(request, { route, pathParams }, transport);
+            },
+            dispatch(request, pathParams, peek, transport) {
+              try {
+                if (router.handle !== originalHandle) return router.handle(request);
+                return executeDirect(request, route, pathParams, peek, transport);
+              } catch (error) {
+                return Promise.reject(error);
+              }
             },
           })));
   transportHandlers.set(router, {

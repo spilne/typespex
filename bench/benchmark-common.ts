@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { arch, cpus, freemem, hostname, platform, release, totalmem } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -135,14 +135,17 @@ export async function writeBenchmarkArtifact(
   kind: string,
   value: unknown,
   repositoryRoot = resolve(import.meta.dir, ".."),
+  artifactPath?: string,
 ): Promise<string> {
   const timestamp = new Date().toISOString().replaceAll(":", "-");
-  const configuredPath = Bun.env.TYPESPEX_BENCH_OUTPUT;
+  const configuredPath = artifactPath ?? Bun.env.TYPESPEX_BENCH_OUTPUT;
   const outputPath = resolve(
     repositoryRoot,
     configuredPath ?? `.context/bench-results/${kind}-${timestamp}.json`,
   );
   await mkdir(dirname(outputPath), { recursive: true });
-  await Bun.write(outputPath, `${JSON.stringify(value, null, 2)}\n`);
+  const temporaryPath = `${outputPath}.${process.pid}.tmp`;
+  await Bun.write(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporaryPath, outputPath);
   return outputPath;
 }

@@ -8,18 +8,21 @@ const METHODS = new Set<string>(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"
 /** Uses native dispatch only when the entire route table has equivalent Bun patterns. */
 export function createNativeRoutes(
   router: HttpRouter,
-  fallback: (request: Request) => Promise<Response>,
+  fallback: (request: Request) => Response | Promise<Response>,
 ): Serve.Routes<undefined, string> | undefined {
   const registrations = getHttpTransportRoutes(router);
   if (!registrations?.length) return undefined;
 
   const routes: Record<
     string,
-    Partial<Record<Serve.HTTPMethod, (request: Request) => Promise<Response>>>
+    Partial<Record<Serve.HTTPMethod, (request: Request) => Response | Promise<Response>>>
   > = Object.create(null);
   for (const route of registrations) {
     if (!METHODS.has(route.method)) return undefined;
-    const parameterNames: string[] = [];
+    // Bun exposes no GET/HEAD body; the ordinary limiter still checks Content-Length.
+    const needsBodyFraming = route.method !== "GET" && route.method !== "HEAD";
+    const captureSteps: { name: string; key: string; prefix: string }[] = [];
+    let literalPrefix = "";
     const segments: string[] = [];
     for (const segment of route.pattern.segments) {
       if (segment.length !== 1) return undefined;
@@ -29,12 +32,16 @@ export function createNativeRoutes(
         if (token.value === "." || token.value === ".." || !/^[A-Za-z0-9._~-]+$/.test(token.value))
           return undefined;
         segments.push(token.value);
+        literalPrefix += `/${token.value}`;
       } else if (token.kind === "parameter") {
-        segments.push(`:p${parameterNames.length}`);
-        parameterNames.push(token.name);
+        const key = `p${captureSteps.length}`;
+        captureSteps.push({ name: token.name, key, prefix: literalPrefix + "/" });
+        literalPrefix = "";
+        segments.push(`:${key}`);
       } else return undefined;
     }
     const path = `/${segments.join("/")}${segments.length && route.pattern.trailingSlash ? "/" : ""}`;
+    const suffix = literalPrefix;
     const methods = (routes[path] ??= {});
     methods[route.method as Serve.HTTPMethod] = (request) => {
       const url = request.url;
@@ -47,21 +54,17 @@ export function createNativeRoutes(
 
       let matchedPath = path;
       let pathParams = EMPTY_PARAMS;
-      if (parameterNames.length) {
+      if (captureSteps.length) {
         const native = (request as Request & { params: Record<string, string> }).params;
         const captures: Record<string, string> = Object.create(null);
-        let parameter = 0;
         matchedPath = "";
-        for (const segment of route.pattern.segments) {
-          const token = segment[0]!;
-          if (token.kind === "literal") matchedPath += `/${token.value}`;
-          else {
-            const value = native[`p${parameter++}`]!;
-            if (!value || value.includes("/")) return fallback(request);
-            matchedPath += `/${value}`;
-            captures[token.name] = value;
-          }
+        for (const capture of captureSteps) {
+          const value = native[capture.key]!;
+          if (!value || value.includes("/")) return fallback(request);
+          matchedPath += capture.prefix + value;
+          captures[capture.name] = value;
         }
+        matchedPath += suffix;
         if (route.pattern.trailingSlash) matchedPath += "/";
         pathParams = captures;
       }
@@ -69,7 +72,10 @@ export function createNativeRoutes(
       // segments and backslashes and incorporates Host. Only trust its selection
       // when reconstructing that target agrees with the router's pathname.
       if (matchedPath !== pathname) return fallback(request);
-      return route.handle(request, pathParams, framedRequestBody(request));
+      const transport = needsBodyFraming ? framedRequestBody(request) : undefined;
+      return route.dispatch
+        ? route.dispatch(request, pathParams, Bun.peek, transport)
+        : route.handle(request, pathParams, transport);
     };
   }
   return routes;

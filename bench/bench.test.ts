@@ -1,22 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import { createRadixMatcher, createRegexMatcher } from "@typespex/http-server";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   aggregateSamples,
+  benchmarkServers,
   autocannonOptions,
   type BenchmarkScenario,
   createSchedule,
   fetchWithTimeout,
   type HttpSample,
+  HTTP_SETTINGS,
   SCENARIOS,
   SERVERS,
   type ValidatableAutocannonResult,
   validateAutocannonResult,
   validateScenario,
 } from "./bench.js";
-import { balancedOrder, installedPackageVersion, median, summarize } from "./benchmark-common.js";
+import {
+  balancedOrder,
+  installedPackageVersion,
+  median,
+  summarize,
+  writeBenchmarkArtifact,
+} from "./benchmark-common.js";
 import {
   aggregateMatcherSamples,
   buildMatcherSuite,
@@ -47,6 +55,21 @@ function resultFor(
 }
 
 describe("HTTP benchmark validation", () => {
+  test("a separate baseline checkout participates in every scenario and trial", () => {
+    expect(() => benchmarkServers("")).toThrow("must not be empty");
+    const root = join(tmpdir(), "typespex baseline");
+    const servers = benchmarkServers(root);
+    expect(servers.find((server) => server.id === "typespex-baseline")).toMatchObject({
+      port: 3460,
+      script: join(root, "bench", "bench-typespex.ts"),
+    });
+    expect(new Set(servers.map((server) => server.port)).size).toBe(servers.length);
+    const schedule = createSchedule({ ...HTTP_SETTINGS, trials: 2 }, servers);
+    expect(schedule.filter((cell) => cell.serverId === "typespex-baseline")).toHaveLength(
+      2 * SCENARIOS.length,
+    );
+  });
+
   test("passes the complete create request and expected body to autocannon", () => {
     const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
     const options = autocannonOptions("http://127.0.0.1:3456/pets", create, 3);
@@ -204,6 +227,23 @@ describe("HTTP benchmark validation", () => {
 });
 
 describe("benchmark statistics and fixtures", () => {
+  test("artifact checkpoints update the same file and retain complete JSON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "typespex-checkpoint-"));
+    try {
+      const path = join(root, "result.json");
+      const partial = { complete: false, samples: [1] };
+      const saved = await writeBenchmarkArtifact("http", partial, root, path);
+      expect(saved).toBe(path);
+      expect(await Bun.file(path).json()).toEqual(partial);
+      const complete = { complete: true, samples: [1, 2] };
+      expect(await writeBenchmarkArtifact("http", complete, root, saved)).toBe(path);
+      expect(await Bun.file(path).json()).toEqual(complete);
+      expect(await readdir(root)).toEqual(["result.json"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("reports robust center and spread without mutating inputs", () => {
     const values = [100, 1, 3, 2];
     expect(median(values)).toBe(2.5);
@@ -250,8 +290,9 @@ describe("benchmark statistics and fixtures", () => {
 
   test("HTTP summaries pair each implementation with the same-trial baseline", () => {
     const scenario = SCENARIOS[0]!;
+    const servers = benchmarkServers(join(tmpdir(), "baseline"));
     const makeSample = (serverId: string, trial: number, requestsPerSecond: number): HttpSample => {
-      const server = SERVERS.find((candidate) => candidate.id === serverId)!;
+      const server = servers.find((candidate) => candidate.id === serverId)!;
       return {
         trial,
         sequence: 0,
@@ -288,6 +329,29 @@ describe("benchmark statistics and fixtures", () => {
     expect(hono.requestsPerSecond.median).toBe(150);
     expect(hono.throughputRatioToBare.median).toBeCloseTo(0.95);
     expect(hono.throughputRatioToBare.mad).toBeCloseTo(0.15);
+
+    const samples = [
+      makeSample("bare-bun", 1, 2000),
+      makeSample("bare-bun", 2, 2000),
+      makeSample("bare-bun", 3, 2000),
+      makeSample("typespex-baseline", 1, 100),
+      makeSample("typespex-baseline", 2, 200),
+      makeSample("typespex-baseline", 3, 300),
+      makeSample("typespex", 1, 200),
+      makeSample("typespex", 2, 1000),
+      makeSample("typespex", 3, 100),
+    ];
+    const compared = aggregateSamples(samples, servers);
+    const current = compared.find((row) => row.serverId === "typespex")!;
+    const previous = compared.find((row) => row.serverId === "typespex-baseline")!;
+    expect(current.requestsPerSecond.median / previous.requestsPerSecond.median).toBe(1);
+    expect(current.throughputRatioToBaseline?.median).toBe(2);
+    expect(() =>
+      aggregateSamples(
+        samples.filter((sample) => sample.serverId !== "typespex-baseline" || sample.trial !== 2),
+        servers,
+      ),
+    ).toThrow("Missing TypeSpex baseline sample");
   });
 
   test("matcher summaries use round-paired latency ratios", () => {

@@ -13,6 +13,7 @@ import {
 import { CREATED_PET, CREATE_PET_INPUT, INITIAL_PETS } from "./fixture.js";
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..");
+const BASELINE_ROOT = Bun.env.TYPESPEX_BENCH_BASELINE_ROOT;
 
 export interface HttpBenchmarkSettings {
   readonly durationSeconds: number;
@@ -43,13 +44,29 @@ export interface BenchmarkServer {
   readonly script: string;
 }
 
-export const SERVERS: readonly BenchmarkServer[] = [
-  { id: "bare-bun", name: "Bare Bun", port: 3457, script: "bench-baseline.ts" },
-  { id: "hono", name: "Hono", port: 3458, script: "bench-hono.ts" },
-  { id: "hono-zod", name: "Hono+Zod", port: 3459, script: "bench-hono-zod.ts" },
-  { id: "typespex", name: "TypeSpex", port: 3456, script: "bench-typespex.ts" },
-  { id: "elysia", name: "Elysia", port: 3461, script: "bench-elysia.ts" },
-] as const;
+export function benchmarkServers(baselineRoot?: string): readonly BenchmarkServer[] {
+  if (baselineRoot === "") {
+    throw new Error("TYPESPEX_BENCH_BASELINE_ROOT must not be empty.");
+  }
+  const servers: BenchmarkServer[] = [
+    { id: "bare-bun", name: "Bare Bun", port: 3457, script: "bench-baseline.ts" },
+    { id: "hono", name: "Hono", port: 3458, script: "bench-hono.ts" },
+    { id: "hono-zod", name: "Hono+Zod", port: 3459, script: "bench-hono-zod.ts" },
+    { id: "typespex", name: "TypeSpex", port: 3456, script: "bench-typespex.ts" },
+    { id: "elysia", name: "Elysia", port: 3461, script: "bench-elysia.ts" },
+  ];
+  if (baselineRoot !== undefined) {
+    servers.push({
+      id: "typespex-baseline",
+      name: "TypeSpex baseline",
+      port: 3460,
+      script: resolve(REPOSITORY_ROOT, baselineRoot, "bench/bench-typespex.ts"),
+    });
+  }
+  return servers;
+}
+
+export const SERVERS = benchmarkServers(BASELINE_ROOT);
 
 export interface BenchmarkScenario {
   readonly id: string;
@@ -285,9 +302,13 @@ export interface HttpAggregate {
   readonly latencyP50Ms: DistributionSummary;
   readonly latencyP99Ms: DistributionSummary;
   readonly throughputRatioToBare: DistributionSummary;
+  readonly throughputRatioToBaseline?: DistributionSummary;
 }
 
-export function aggregateSamples(samples: readonly HttpSample[]): readonly HttpAggregate[] {
+export function aggregateSamples(
+  samples: readonly HttpSample[],
+  servers: readonly BenchmarkServer[] = SERVERS,
+): readonly HttpAggregate[] {
   const output: HttpAggregate[] = [];
   for (const scenario of SCENARIOS) {
     const baselineByTrial = new Map(
@@ -295,7 +316,14 @@ export function aggregateSamples(samples: readonly HttpSample[]): readonly HttpA
         .filter((sample) => sample.scenarioId === scenario.id && sample.serverId === "bare-bun")
         .map((sample) => [sample.trial, sample.requestsPerSecond]),
     );
-    for (const server of SERVERS) {
+    const previousByTrial = new Map(
+      samples
+        .filter(
+          (sample) => sample.scenarioId === scenario.id && sample.serverId === "typespex-baseline",
+        )
+        .map((sample) => [sample.trial, sample.requestsPerSecond]),
+    );
+    for (const server of servers) {
       const group = samples.filter(
         (sample) => sample.scenarioId === scenario.id && sample.serverId === server.id,
       );
@@ -316,6 +344,20 @@ export function aggregateSamples(samples: readonly HttpSample[]): readonly HttpA
         latencyP50Ms: summarize(group.map((sample) => sample.latencyP50Ms)),
         latencyP99Ms: summarize(group.map((sample) => sample.latencyP99Ms)),
         throughputRatioToBare: summarize(ratios),
+        throughputRatioToBaseline:
+          previousByTrial.size === 0
+            ? undefined
+            : summarize(
+                group.map((sample) => {
+                  const previous = previousByTrial.get(sample.trial);
+                  if (previous === undefined) {
+                    throw new Error(
+                      `Missing TypeSpex baseline sample for ${scenario.id}, trial ${sample.trial}.`,
+                    );
+                  }
+                  return sample.requestsPerSecond / previous;
+                }),
+              ),
       });
     }
   }
@@ -331,18 +373,19 @@ interface ScheduleCell {
 
 export function createSchedule(
   settings: HttpBenchmarkSettings = HTTP_SETTINGS,
+  servers: readonly BenchmarkServer[] = SERVERS,
 ): readonly ScheduleCell[] {
   const schedule: ScheduleCell[] = [];
   for (let trial = 1; trial <= settings.trials; trial++) {
     const scenarios = balancedOrder(SCENARIOS, trial - 1, `${settings.seed}:scenarios`);
     for (const scenario of scenarios) {
       const scenarioIndex = SCENARIOS.findIndex((candidate) => candidate.id === scenario.id);
-      const servers = balancedOrder(
-        SERVERS,
+      const orderedServers = balancedOrder(
+        servers,
         trial - 1 + scenarioIndex,
         `${settings.seed}:servers:${scenario.id}`,
       );
-      for (const server of servers) {
+      for (const server of orderedServers) {
         schedule.push({
           trial,
           sequence: schedule.length + 1,
@@ -495,19 +538,28 @@ function formatRate(value: number): string {
 }
 
 function printSummary(aggregates: readonly HttpAggregate[]): void {
+  const nameWidth = Math.max(12, ...aggregates.map((row) => row.server.length));
   console.log("\nMedian of trials; variability is median absolute deviation (MAD).\n");
   console.log("Autocannon latency percentiles use whole-millisecond buckets; 0 ms means <1 ms.\n");
   for (const scenario of SCENARIOS) {
     console.log(scenario.name);
     console.log(
-      "  Server       req/s median ± MAD       observed range       p50 ms   p99 ms   vs Bare",
+      `  ${"Server".padEnd(nameWidth)} req/s median ± MAD       observed range       p50 ms   p99 ms   vs Bare`,
     );
     for (const row of aggregates.filter((candidate) => candidate.scenarioId === scenario.id)) {
       const rate = `${formatRate(row.requestsPerSecond.median)} ± ${formatRate(row.requestsPerSecond.mad)}`;
       const range = `${formatRate(row.requestsPerSecond.min)}–${formatRate(row.requestsPerSecond.max)}`;
       const ratio = `${row.throughputRatioToBare.median.toFixed(3)}x`;
       console.log(
-        `  ${row.server.padEnd(12)} ${rate.padStart(20)} ${range.padStart(20)} ${row.latencyP50Ms.median.toFixed(2).padStart(8)} ${row.latencyP99Ms.median.toFixed(2).padStart(8)} ${ratio.padStart(9)}`,
+        `  ${row.server.padEnd(nameWidth)} ${rate.padStart(20)} ${range.padStart(20)} ${row.latencyP50Ms.median.toFixed(2).padStart(8)} ${row.latencyP99Ms.median.toFixed(2).padStart(8)} ${ratio.padStart(9)}`,
+      );
+    }
+    const current = aggregates.find(
+      (row) => row.scenarioId === scenario.id && row.serverId === "typespex",
+    );
+    if (current?.throughputRatioToBaseline) {
+      console.log(
+        `  TypeSpex vs baseline: ${current.throughputRatioToBaseline.median.toFixed(3)}x median paired throughput`,
       );
     }
     console.log("");
@@ -519,25 +571,31 @@ async function writeArtifact(
   metadata: Awaited<ReturnType<typeof benchmarkMetadata>>,
   schedule: readonly ScheduleCell[],
   samples: readonly HttpSample[],
+  artifactPath?: string,
   error?: unknown,
 ): Promise<string> {
   const aggregates = samples.length === schedule.length ? aggregateSamples(samples) : [];
-  return writeBenchmarkArtifact("http", {
-    schemaVersion: 1,
-    kind: "http",
-    complete,
-    metadata,
-    settings: HTTP_SETTINGS,
-    schedule,
-    samples,
-    aggregates,
-    error:
-      error === undefined
-        ? undefined
-        : error instanceof Error
-          ? { name: error.name, message: error.message, stack: error.stack }
-          : { message: String(error) },
-  });
+  return writeBenchmarkArtifact(
+    "http",
+    {
+      schemaVersion: 1,
+      kind: "http",
+      complete,
+      metadata,
+      settings: HTTP_SETTINGS,
+      schedule,
+      samples,
+      aggregates,
+      error:
+        error === undefined
+          ? undefined
+          : error instanceof Error
+            ? { name: error.name, message: error.message, stack: error.stack }
+            : { message: String(error) },
+    },
+    REPOSITORY_ROOT,
+    artifactPath,
+  );
 }
 
 async function main(): Promise<void> {
@@ -549,9 +607,16 @@ async function main(): Promise<void> {
     }
   }
 
-  const metadata = await benchmarkMetadata(REPOSITORY_ROOT);
+  const metadata = {
+    ...(await benchmarkMetadata(REPOSITORY_ROOT)),
+    baseline:
+      BASELINE_ROOT === undefined
+        ? undefined
+        : await benchmarkMetadata(resolve(REPOSITORY_ROOT, BASELINE_ROOT)),
+  };
   const schedule = createSchedule();
   const samples: HttpSample[] = [];
+  const artifactPath = await writeArtifact(false, metadata, schedule, samples);
   const validationFetch = fetchWithTimeout(HTTP_SETTINGS.timeoutSeconds * 1_000);
   const estimatedSeconds =
     schedule.length * (HTTP_SETTINGS.durationSeconds + HTTP_SETTINGS.warmupSeconds);
@@ -591,16 +656,19 @@ async function main(): Promise<void> {
       } finally {
         await stopServer(running);
       }
+      // Checkpoint between cells, outside the measured interval. A cancelled
+      // run can still upload its last complete measurements.
+      await writeArtifact(false, metadata, schedule, samples, artifactPath);
     }
   } catch (error) {
-    const artifactPath = await writeArtifact(false, metadata, schedule, samples, error);
+    await writeArtifact(false, metadata, schedule, samples, artifactPath, error);
     console.error(`\nBenchmark failed. Partial diagnostic artifact: ${artifactPath}`);
     throw error;
   }
 
   const aggregates = aggregateSamples(samples);
   printSummary(aggregates);
-  const artifactPath = await writeArtifact(true, metadata, schedule, samples);
+  await writeArtifact(true, metadata, schedule, samples, artifactPath);
   console.log(`Raw trials, schedule, settings, and machine metadata: ${artifactPath}`);
 }
 
