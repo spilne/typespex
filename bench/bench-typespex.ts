@@ -1,6 +1,6 @@
 import type { MatchedRequestContext } from "@typespex/http-server";
 import { bindRoute, createHttpRouter } from "@typespex/http-server";
-import { toBunHandler } from "@typespex/adapter-bun";
+import { createBunServer } from "@typespex/adapter-bun/server";
 import { PetsOperations } from "../example/generated/pet-store/server-operations.js";
 import type { PetStoreServer } from "../example/generated/pet-store/server.js";
 import { benchmarkServerPort, createPetFixture } from "./fixture.js";
@@ -45,9 +45,9 @@ const router = createHttpRouter([
   bindRoute(PetsOperations.delete, implementation.Pets.delete),
 ]);
 
-const server = Bun.serve({
+const server = createBunServer(router, {
   port: benchmarkServerPort(3456),
-  ...toBunHandler(router),
+  hostname: "127.0.0.1",
 });
 
 console.log(`TypeSpex benchmark server running on http://127.0.0.1:${server.port}`);

@@ -88,7 +88,7 @@ export const RELEASE_PACKAGES: readonly ReleasePackage[] = [
   {
     directory: "adapter-bun",
     name: "@typespex/adapter-bun",
-    imports: ["@typespex/adapter-bun"],
+    imports: ["@typespex/adapter-bun", "@typespex/adapter-bun/server"],
   },
   {
     directory: "adapter-hono",
@@ -167,7 +167,7 @@ export const RELEASE_PACKAGE_BOUNDARIES: Readonly<Record<string, PackageBoundary
   },
   "@typespex/adapter-bun": {
     dependencies: ["@typespex/http-server"],
-    peerDependencies: [],
+    peerDependencies: ["@types/bun"],
   },
   "@typespex/adapter-hono": {
     dependencies: ["@typespex/http-server"],

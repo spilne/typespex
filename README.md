@@ -305,21 +305,30 @@ their native error handlers; later stream failures close the underlying connecti
 ### Bun
 
 ```ts
-import { toBunHandler } from "@typespex/adapter-bun";
+import { createBunServer } from "@typespex/adapter-bun/server";
 import { router } from "./app.js";
 
-const server = Bun.serve({
+const server = createBunServer(router, {
   port: 3000,
-  ...toBunHandler(router),
 });
 
 console.log(`Listening on http://localhost:${server.port}`);
 ```
 
-Direct `Bun.serve` callbacks retain native buffering for verified fixed-length bodies. Router
-limits still apply; chunked and synthetic bodies use streamed counting. When calling the returned
-handler manually or after rewriting request headers, use `handler.fetch(request)` and omit Bun's
-optional server argument.
+The standalone server uses Bun's native dispatch for compatible route tables. Custom matchers,
+shared routes, and other path patterns retain the router's normal dispatch. Middleware, validation,
+and body limits apply to both. The returned handle provides connection information and lifecycle
+methods such as `stop()`; use `router.handle(request)` for synthetic requests in tests.
+
+TypeScript projects using the `/server` entry point need `@types/bun`. This optional peer does not
+change the types of applications using the Fetch adapter. Unexpected failures are logged by Bun's
+error handler; configure the router's `onUnhandledError` for logging that needs request context.
+
+For an existing Bun server, WebSockets, or direct control of Bun's `fetch` and `reload` methods,
+use `Bun.serve({ port: 3000, ...toBunHandler(router) })`, importing `toBunHandler` from
+`@typespex/adapter-bun`. Its direct Bun callbacks preserve native buffering for verified fixed-length
+bodies. Chunked and synthetic bodies retain streamed counting. For manual calls or wrappers that
+rewrite requests, call `handler.fetch(request)` without Bun's optional server argument.
 
 ### Node.js
 
