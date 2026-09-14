@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRadixMatcher, createRegexMatcher } from "@typespex/http-server";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,7 +18,13 @@ import {
   validateAutocannonResult,
   validateScenario,
 } from "./bench.js";
-import { balancedOrder, installedPackageVersion, median, summarize } from "./benchmark-common.js";
+import {
+  balancedOrder,
+  installedPackageVersion,
+  median,
+  summarize,
+  writeBenchmarkArtifact,
+} from "./benchmark-common.js";
 import {
   aggregateMatcherSamples,
   buildMatcherSuite,
@@ -50,6 +56,7 @@ function resultFor(
 
 describe("HTTP benchmark validation", () => {
   test("a separate baseline checkout participates in every scenario and trial", () => {
+    expect(() => benchmarkServers("")).toThrow("must not be empty");
     const root = join(tmpdir(), "typespex baseline");
     const servers = benchmarkServers(root);
     expect(servers.find((server) => server.id === "typespex-baseline")).toMatchObject({
@@ -220,6 +227,23 @@ describe("HTTP benchmark validation", () => {
 });
 
 describe("benchmark statistics and fixtures", () => {
+  test("artifact checkpoints update the same file and retain complete JSON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "typespex-checkpoint-"));
+    try {
+      const path = join(root, "result.json");
+      const partial = { complete: false, samples: [1] };
+      const saved = await writeBenchmarkArtifact("http", partial, root, path);
+      expect(saved).toBe(path);
+      expect(await Bun.file(path).json()).toEqual(partial);
+      const complete = { complete: true, samples: [1, 2] };
+      expect(await writeBenchmarkArtifact("http", complete, root, saved)).toBe(path);
+      expect(await Bun.file(path).json()).toEqual(complete);
+      expect(await readdir(root)).toEqual(["result.json"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("reports robust center and spread without mutating inputs", () => {
     const values = [100, 1, 3, 2];
     expect(median(values)).toBe(2.5);

@@ -6,8 +6,11 @@ on:
     paths:
       - "packages/http-server/src/**"
       - "packages/adapter-bun/src/**"
+      - "packages/codec/src/**"
+      - "example/generated/pet-store/**"
       - "bench/**"
       - "bun.lock"
+      - "package.json"
       - ".github/workflows/http-benchmark.yml"
   workflow_dispatch:
     inputs:
@@ -21,19 +24,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: http-benchmark-${{ github.event.pull_request.number || github.ref }}
+  group: http-benchmark-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   compare-http:
     name: Compare HTTP runtimes
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 2
           path: candidate
           persist-credentials: false
 
@@ -43,6 +47,10 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || inputs.baseline_ref || 'master' }}
           path: baseline
           persist-credentials: false
+
+      - name: Verify the PR baseline is the merge parent
+        if: github.event_name == 'pull_request'
+        run: test "$(git -C candidate rev-parse HEAD^1)" = "$(git -C baseline rev-parse HEAD)"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -63,6 +71,8 @@ jobs:
           done
 
       - name: Compare HTTP throughput
+        id: benchmark
+        timeout-minutes: 20
         working-directory: candidate
         env:
           TYPESPEX_BENCH_BASELINE_ROOT: ${{ github.workspace }}/baseline
@@ -79,5 +89,5 @@ jobs:
         with:
           name: http-runtime-comparison-attempt-${{ github.run_attempt }}
           path: http-benchmark.json
-          if-no-files-found: warn
+          if-no-files-found: ${{ steps.benchmark.outcome == 'success' && 'error' || 'warn' }}
           retention-days: 14
