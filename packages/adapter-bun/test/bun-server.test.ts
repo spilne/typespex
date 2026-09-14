@@ -119,6 +119,7 @@ describe("createBunServer", () => {
     try {
       for (const target of [
         "/pets/a",
+        "/pets/a/b",
         "/pets/./a",
         "/x/../pets/a",
         "/pets/a/../b",
@@ -166,6 +167,41 @@ describe("createBunServer", () => {
     } finally {
       await ordinary.stop(true);
       await native.stop(true);
+    }
+  });
+
+  test("overlapping parameter routes preserve specificity and backtracking in either registration order", async () => {
+    const tables = [
+      { paths: ["/:a/x", "/y/:b"], targets: ["/y/x", "/z/x", "/y/z"] },
+      { paths: ["/y/:b/q", "/:a/x/z"], targets: ["/y/x/z", "/y/x/q", "/z/x/z"] },
+      { paths: ["/pets/:x/:id", "/:a/:b/:c"], targets: ["/pets/a/b", "/other/a/b"] },
+      { paths: ["/.", "/..", "/:a"], targets: ["/.", "/..", "/a"] },
+    ];
+    for (const { paths, targets } of tables) {
+      for (const ordered of [paths, paths.toReversed()]) {
+        const router = createHttpRouter(
+          ordered.map((path) => bindRoute(operation(path), (value) => value)),
+        );
+        const ordinary = Bun.serve({ port: 0, hostname: "127.0.0.1", ...toBunHandler(router) });
+        const native = createBunServer(router, { port: 0, hostname: "127.0.0.1" });
+        try {
+          for (const target of targets) {
+            const results = [];
+            for (const server of [ordinary, native]) {
+              const response = await rawHttp(
+                server.port!,
+                `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+              );
+              const [headers, ...body] = response.split("\r\n\r\n");
+              results.push([headers!.split("\r\n")[0], body.join("\r\n\r\n")]);
+            }
+            expect(results[1], `${ordered.join(", ")}: ${target}`).toEqual(results[0]);
+          }
+        } finally {
+          await ordinary.stop(true);
+          await native.stop(true);
+        }
+      }
     }
   });
 

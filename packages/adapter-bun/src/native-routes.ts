@@ -26,7 +26,8 @@ export function createNativeRoutes(
       const token = segment[0]!;
       if (token.kind === "literal") {
         // Exclude Bun pattern syntax, escaped literals, and Unicode normalization.
-        if (!/^[A-Za-z0-9._~-]+$/.test(token.value)) return undefined;
+        if (token.value === "." || token.value === ".." || !/^[A-Za-z0-9._~-]+$/.test(token.value))
+          return undefined;
         segments.push(token.value);
       } else if (token.kind === "parameter") {
         segments.push(`:p${parameterNames.length}`);

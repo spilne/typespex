@@ -31,6 +31,7 @@ native request provenance is established once at server creation. Use `router.ha
 for direct request tests. The `maxRequestBodySize` option adds Bun's own transport cap, which can
 reject a request before the router runs. Unexpected failures use Bun's error handler and the
 configured logger; use the router's `onUnhandledError` when logging needs request context.
+The standalone server disables Bun's development error pages.
 
 TypeScript consumers of `/server` should install the optional `@types/bun` peer. The default
 Fetch adapter entry point does not load Bun's global types.
