@@ -1,6 +1,14 @@
 import { bytesToBase64, stringifyJson } from "./json.js";
 import { isContentTypeAccepted, parseMediaType } from "./media-type.js";
 
+// Response copies Headers, so each response can reuse this private template
+// without repeating header parsing or sharing its mutable response headers.
+const JSON_HEADERS = new Headers({ "content-type": "application/json" });
+
+function contentTypeHeaders(contentType: string): HeadersInit {
+  return contentType === "application/json" ? JSON_HEADERS : { "content-type": contentType };
+}
+
 /** Runtime response encoder that turns one typed output value into an HTTP response. */
 export abstract class ResponseEncoder<A> {
   abstract encode(value: A): Response;
@@ -270,7 +278,7 @@ function fileResponseEncoder(
 
 function withContentType(init: ResponseInit, contentType: string): ResponseInit {
   if (init.headers === undefined) {
-    return { ...init, headers: { "content-type": contentType } };
+    return { ...init, headers: contentTypeHeaders(contentType) };
   }
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", contentType);
@@ -404,7 +412,7 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     responseHeaders.set("content-type", contentType);
   }
 
-  const headers = responseHeaders ?? (contentType ? { "content-type": contentType } : undefined);
+  const headers = responseHeaders ?? (contentType ? contentTypeHeaders(contentType) : undefined);
 
   const resolvedBody =
     variant.kind === "file" && variant.body === undefined

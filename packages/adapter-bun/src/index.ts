@@ -5,6 +5,8 @@ import {
   type HttpRouter,
   type Logger,
 } from "@typespex/http-server";
+import { framedRequestBody } from "./transport.js";
+import { errorResponse } from "./error-response.js";
 
 interface BunRequestServer {
   requestIP(request: Request): { readonly address: string } | null;
@@ -40,12 +42,7 @@ export function toBunHandler(
         if (transport) return await handleRequestWithTransport(router, request, transport);
         return await router.handle(request);
       } catch (error) {
-        logger.error("Unhandled error in request handler", {
-          error,
-          method: request.method,
-          url: request.url,
-        });
-        return new Response("Internal Server Error", { status: 500 });
+        return errorResponse(error, logger, request);
       }
     },
   };
@@ -62,17 +59,10 @@ function verifiedRequestBody(
     typeof server.requestIP !== "function"
   )
     return undefined;
-  const contentLength = request.headers.get("content-length");
-  if (
-    contentLength === null ||
-    request.headers.has("transfer-encoding") ||
-    !/^\d+$/.test(contentLength)
-  )
-    return undefined;
-  const length = Number(contentLength);
-  if (!Number.isSafeInteger(length) || length < 0) return undefined;
+  const transport = framedRequestBody(request);
+  if (!transport) return undefined;
   // Bun returns null for Requests that did not originate from this server.
   // Only its native HTTP parser may vouch for Content-Length framing.
   if ((server as BunRequestServer).requestIP(request) == null) return undefined;
-  return { request, verifiedBodyLength: length };
+  return transport;
 }

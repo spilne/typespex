@@ -3,8 +3,9 @@ import { HttpError } from "../errors.js";
 import { createContextMap } from "../core/context.js";
 import { type HttpApp, type Middleware } from "../core/middleware.js";
 import type { OperationHandler } from "../core/handler.js";
-import type { RouteMatcher } from "../matcher.js";
-import { createRegexMatcher } from "../match-regex.js";
+import type { RouteMatcher, RoutePattern } from "../matcher.js";
+import { normalizeRouteInputs } from "../match-common.js";
+import { createNormalizedRegexMatcher } from "../match-regex.js";
 import {
   enforceRequestBodyLimit,
   type RequestBodyLimit,
@@ -133,8 +134,34 @@ const transportHandlers = new WeakMap<
       request: Request,
       transport: HttpRequestTransportInfo,
     ) => Promise<Response>;
+    readonly getRoutes?: () => readonly HttpTransportRoute[];
   }
 >();
+
+/** One unconstrained route that an HTTP transport can dispatch directly. @internal */
+export interface HttpTransportRoute {
+  readonly method: string;
+  readonly pattern: RoutePattern;
+  /** The adapter must verify the selected pattern and supply raw path captures. */
+  handle(
+    request: Request,
+    pathParams: Readonly<Record<string, string>>,
+    transport?: HttpRequestTransportInfo,
+  ): Promise<Response>;
+}
+
+/**
+ * Adapter registrations for a router with ordinary, unconstrained routing.
+ * Custom matchers and router wrappers retain their own dispatch. Each returned
+ * handler also checks for a later replacement of the router's handle method.
+ * @internal
+ */
+export function getHttpTransportRoutes(
+  router: HttpRouter,
+): readonly HttpTransportRoute[] | undefined {
+  const registered = transportHandlers.get(router);
+  return registered?.handle === router.handle ? registered.getRoutes?.() : undefined;
+}
 
 /**
  * Adapter entry point for transport-verified request facts. Only an unchanged
@@ -204,7 +231,8 @@ export function createHttpRouter<Ctx extends RequestContext>(
     }));
   });
 
-  const routeMatcher = matcher ?? createRegexMatcher(matcherInput);
+  const normalizedRoutes = matcher ? undefined : normalizeRouteInputs(matcherInput);
+  const routeMatcher = matcher ?? createNormalizedRegexMatcher(normalizedRoutes!);
   const needsQuerySelection = matcherInput.some(
     ({ selection }) => (selection?.query?.length ?? 0) > 0,
   );
@@ -263,8 +291,27 @@ export function createHttpRouter<Ctx extends RequestContext>(
       return execute(request, matched);
     },
   };
+  const originalHandle = router.handle;
+  let transportRoutes: readonly HttpTransportRoute[] | undefined;
+  const getTransportRoutes =
+    !normalizedRoutes || normalizedRoutes.some(({ selection }) => selection !== undefined)
+      ? undefined
+      : () =>
+          (transportRoutes ??= normalizedRoutes.map(({ method, pattern, route }) => ({
+            method,
+            pattern,
+            handle(
+              request: Request,
+              pathParams: Readonly<Record<string, string>>,
+              transport?: HttpRequestTransportInfo,
+            ) {
+              if (router.handle !== originalHandle) return router.handle(request);
+              return execute(request, { route, pathParams }, transport);
+            },
+          })));
   transportHandlers.set(router, {
     handle: router.handle,
+    getRoutes: getTransportRoutes,
     handleWithTransport(request, transport) {
       return execute(request, matchRequest(request), transport);
     },

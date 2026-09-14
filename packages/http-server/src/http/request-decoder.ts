@@ -564,6 +564,8 @@ function readRawQueryValue(
     });
   }
 
+  if (!options.array && rawValues.length === 1) return decodeQueryComponent(rawValues[0]!);
+
   const values = traverseEither<string, string>(rawValues, (rawValue, index) => {
     const decoded = decodeQueryComponent(rawValue);
     if (isLeft(decoded) && options.array) return prefixIssues(decoded, `[${index}]`);
@@ -644,8 +646,10 @@ function ownsExplodedQueryName(
 }
 
 function decodeQueryComponent(value: string): DecoderResult<string> {
+  if (value.includes("+")) value = value.replaceAll("+", " ");
+  if (!value.includes("%")) return Either.right(value);
   try {
-    return Either.right(decodeURIComponent(value.replaceAll("+", " ")));
+    return Either.right(decodeURIComponent(value));
   } catch {
     return fail("", "Expected a valid percent-encoded query value.");
   }

@@ -173,8 +173,15 @@ function regexLookup<R>(
 export function createRegexMatcher<R>(
   routes: ReadonlyArray<RouteMatcherInput<R>>,
 ): RouteMatcher<R> {
+  return createNormalizedRegexMatcher(normalizeRouteInputs(routes));
+}
+
+/** Builds a matcher from the router's already validated configuration snapshot. @internal */
+export function createNormalizedRegexMatcher<R>(
+  routes: readonly NormalizedRouteInput<R>[],
+): RouteMatcher<R> {
   const perMethod = new Map<string, NormalizedRouteInput<R>[]>();
-  for (const route of normalizeRouteInputs(routes)) {
+  for (const route of routes) {
     const group = perMethod.get(route.method);
     if (group) group.push(route);
     else perMethod.set(route.method, [route]);

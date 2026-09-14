@@ -81,7 +81,7 @@ describe("release package validation", () => {
     }).toEqual({
       bun: {
         dependencies: ["@typespex/http-server"],
-        peerDependencies: [],
+        peerDependencies: ["@types/bun"],
       },
       express: {
         dependencies: ["@typespex/adapter-node", "@typespex/http-server"],
