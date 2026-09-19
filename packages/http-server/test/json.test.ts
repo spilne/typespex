@@ -182,4 +182,47 @@ describe("JSON response serialization", () => {
     );
     expect(keys).toEqual(["2"]);
   });
+
+  test("detects numeric-record cycles while allowing repeated references", () => {
+    for (const depth of [0, 15, 16, 17, 64]) {
+      const shared = { value: "shared" };
+      const root: Record<string, unknown> = { 2: shared, 3: shared };
+      let child = root;
+      for (let index = 0; index < depth; index++) {
+        const next: Record<string, unknown> = { 2: shared, 3: shared };
+        child["1"] = next;
+        child = next;
+      }
+      expect(stringifyJson(root)).toBe(JSON.stringify(root));
+      child["1"] = root;
+      expect(() => stringifyJson(root)).toThrow("circular");
+    }
+  });
+
+  test("does not repeat a hook installed while encoding a numeric record", () => {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const keys: string[] = [];
+    let serialized: string;
+    const value = {
+      get 1() {
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value(key: string) {
+            keys.push(key);
+            return this;
+          },
+        });
+        return { value: "first" };
+      },
+      2: { value: "second" },
+    };
+    try {
+      serialized = stringifyJson(value);
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, "toJSON", previous);
+      else Reflect.deleteProperty(Object.prototype, "toJSON");
+    }
+    expect(serialized!).toBe('{"1":{"value":"first"},"2":{"value":"second"}}');
+    expect(keys).toEqual(["1", "2"]);
+  });
 });

@@ -9,9 +9,14 @@ interface JsonPreparation {
   requiresDirectWriter: boolean;
 }
 
-// A private marker keeps pre-encoded object text distinct from user strings.
+// The direct-writer flag must be set before a marker reaches any writer.
+// Keep markers private and fail loudly if one reaches native JSON accidentally.
 class EncodedJsonValue {
   constructor(readonly text: string) {}
+
+  toJSON(): never {
+    throw new TypeError("Pre-encoded JSON must use the direct writer.");
+  }
 }
 
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
@@ -20,10 +25,7 @@ export function stringifyJson(value: unknown): string {
   // Native JSON produces a flat string from this snapshot. Preparing it first
   // preserves TypeSpec encodings without a second traversal of user values.
   const prepared = prepareJsonValue(value, [], "", preparation);
-  // Input getters may install a prototype hook while values are being prepared.
-  // The fallback writes the snapshot directly so no hook is invoked twice.
-  // Snapshot arrays already have null prototypes, so only object hooks remain.
-  const serialized = stringifyPreparedJson(prepared, preparation);
+  const serialized = stringifySnapshot(prepared, preparation);
   if (serialized === undefined) throw new TypeError("Value is not JSON serializable.");
   return serialized;
 }
@@ -85,7 +87,6 @@ function prepareJsonValue(
       // Numeric-keyed objects are slow in native JSON on Bun. Writing their
       // keys directly also preserves a Proxy's nonstandard enumeration order.
       output = prepareEncodedObject(value, properties, ancestors, preparation);
-      preparation.requiresDirectWriter = true;
     } else {
       const object: Record<string, unknown> = {};
       for (const property of properties) {
@@ -156,7 +157,9 @@ function quoteJsonString(value: string): string {
   return NEEDS_JSON_ESCAPE.test(value) ? JSON.stringify(value) : `"${value}"`;
 }
 
-function stringifyPreparedJson(value: unknown, preparation: JsonPreparation): string | undefined {
+function stringifySnapshot(value: unknown, preparation: JsonPreparation): string | undefined {
+  // Arrays have null prototypes. Object hooks may be installed by input getters;
+  // the direct writer avoids invoking those hooks again on prepared values.
   return preparation.requiresDirectWriter || Object.hasOwn(Object.prototype, "toJSON")
     ? stringifyPreparedValue(value)
     : JSON.stringify(value);
@@ -174,7 +177,7 @@ function prepareEncodedObject(
     const item =
       member === null || typeof member !== "object"
         ? stringifyPreparedValue(member)
-        : stringifyPreparedJson(
+        : stringifySnapshot(
             prepareJsonValue(member, ancestors, property, preparation),
             preparation,
           );
@@ -183,5 +186,7 @@ function prepareEncodedObject(
       entries += `${quoteJsonString(property)}:${item}`;
     }
   }
+  // Set this after encoding the members so ordinary members can still use native JSON.
+  preparation.requiresDirectWriter = true;
   return new EncodedJsonValue(`{${entries}}`);
 }
