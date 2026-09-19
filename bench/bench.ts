@@ -114,6 +114,16 @@ export const SCENARIOS: readonly BenchmarkScenario[] = [
     expectedStatus: 200,
     expectedBody: JSON.stringify(CREATED_PET),
   },
+  {
+    id: "create-formatted",
+    name: "POST /pets (formatted JSON)",
+    path: "/pets",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(CREATE_PET_INPUT, null, 2),
+    expectedStatus: 200,
+    expectedBody: JSON.stringify(CREATED_PET),
+  },
 ] as const;
 
 export type FetchRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;

@@ -72,7 +72,7 @@ jobs:
 
       - name: Compare HTTP throughput
         id: benchmark
-        timeout-minutes: 20
+        timeout-minutes: 25
         working-directory: candidate
         env:
           TYPESPEX_BENCH_BASELINE_ROOT: ${{ github.workspace }}/baseline

@@ -2,6 +2,33 @@ import { describe, expect, test } from "bun:test";
 import { parseJsonText } from "../src/http/json-value.js";
 
 describe("lossless JSON values", () => {
+  test("multiline JSON preserves whitespace, quotes, and backslashes inside strings", () => {
+    const value = {
+      'quote"key': ' space \\ "\t\r\n 日本語 🦊 ',
+      slash: "\\",
+      nested: [{ text: "a b", escaped: '\\"', trailingSlash: "x\\" }],
+    };
+    for (const indent of [1, 2, 4, "\t"]) {
+      const text = JSON.stringify(value, null, indent);
+      expect(parseJsonText(text)).toEqual(value);
+      expect(parseJsonText(` \n${text.replaceAll("\n", "\r\n")}\n\t`)).toEqual(value);
+    }
+    expect(() => parseJsonText('{\n"text": "a\nb"\n}')).toThrow(SyntaxError);
+  });
+
+  test("multiline formatting cannot hide duplicate keys or lossless numeric spellings", () => {
+    expect(() => parseJsonText('{\n "id": 1,\n "id": 2\n}')).toThrow(SyntaxError);
+    expect(() => parseJsonText('{\n "id": 1,\n "\\u0069d": 2\n}')).toThrow(SyntaxError);
+    expect(parseJsonText('{\n "id": 1,\n "id": 1\n}')).toEqual({ id: 1 });
+    const value = parseJsonText("[\n -0,\n 9007199254740993.0,\n 9.007199254740993e15,\n 1e19\n]");
+    expect(value).toEqual([-0, 9007199254740993n, 9007199254740993n, 10000000000000000000n]);
+    expect(() => parseJsonText("[\n 123456789012345678901\n]")).toThrow(SyntaxError);
+    expect(parseJsonText('{\n "2": "two",\n "1": "one"\n}')).toEqual({
+      "1": "one",
+      "2": "two",
+    });
+  });
+
   test("parses ordinary nested values with normal object prototypes", () => {
     const text = '{"name":"Pet","items":[{"id":1,"enabled":true},null],"constructor":"data"}';
     const value = parseJsonText(text) as Record<string, unknown>;
