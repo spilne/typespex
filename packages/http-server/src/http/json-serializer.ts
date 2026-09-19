@@ -155,6 +155,12 @@ function objectJsonSerializer<A extends object>(
   }));
   validateObjectSchema(erased);
 
+  // The parent path varies for nested values, but each modeled suffix is fixed.
+  const prepared = erased.map((property) => ({
+    ...property,
+    pathSuffix: appendPropertyPath("", property.property),
+  }));
+
   const declaredProperties = new Set(erased.map((property) => property.property));
   const declaredWireNames = new Set(erased.map((property) => property.wireName));
   const additionalProperties = options.additionalProperties as JsonSerializer<unknown> | undefined;
@@ -164,15 +170,21 @@ function objectJsonSerializer<A extends object>(
     // Wire and additional property names may include __proto__.
     const output: Record<string, unknown> = Object.create(null);
 
-    for (const property of erased) {
-      const propertyPath = appendPropertyPath(path, property.property);
+    for (const property of prepared) {
       const present = Object.prototype.hasOwnProperty.call(source, property.property);
       const propertyValue = present ? source[property.property] : undefined;
       if (!present || propertyValue === undefined) {
         if (property.optional) continue;
-        throw new JsonSerializationError(propertyPath, "Required property is missing.");
+        throw new JsonSerializationError(
+          path + property.pathSuffix,
+          "Required property is missing.",
+        );
       }
-      output[property.wireName] = serializeNested(property.serializer, propertyValue, propertyPath);
+      output[property.wireName] = serializeNested(
+        property.serializer,
+        propertyValue,
+        path + property.pathSuffix,
+      );
     }
 
     if (additionalProperties) {

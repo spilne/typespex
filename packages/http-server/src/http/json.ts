@@ -2,6 +2,8 @@ import { bytesToBase64 } from "@typespex/codec";
 
 export { bytesToBase64 } from "@typespex/codec";
 
+const NEEDS_JSON_ESCAPE = /["\\\u0000-\u001f\uD800-\uDFFF]/;
+
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
 export function stringifyJson(value: unknown): string {
   const serialized = serializeJsonValue(value, [], "");
@@ -92,5 +94,5 @@ function serializeJsonValue(
 // Native stringification handles escapes and lone surrogates; ordinary strings
 // can be quoted directly without entering the native JSON serializer.
 function quoteJsonString(value: string): string {
-  return /["\\\u0000-\u001f\uD800-\uDFFF]/.test(value) ? JSON.stringify(value) : `"${value}"`;
+  return NEEDS_JSON_ESCAPE.test(value) ? JSON.stringify(value) : `"${value}"`;
 }

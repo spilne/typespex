@@ -50,6 +50,38 @@ const user = JsonSerializers.object<User>([
 ]);
 
 describe("JsonSerializers", () => {
+  test("modeled property paths retain escaping and follow each parent path", () => {
+    const properties = ["plain", "has.dot", 'quote"', "line\n", "__proto__"];
+    const paths: string[] = [];
+    const serializer = JsonSerializers.object<Record<string, string>>(
+      properties.map((property) => ({
+        property,
+        wireName: property,
+        serializer: JsonSerializer.of<string>((value, path) => {
+          paths.push(path);
+          return value;
+        }),
+      })),
+    );
+    const value = Object.fromEntries(properties.map((property) => [property, "value"]));
+    for (const parent of ["$response", "$response.items[2]"]) {
+      paths.length = 0;
+      expect(serializer.serialize(value, parent)).toEqual(value);
+      expect(paths).toEqual([
+        `${parent}.plain`,
+        `${parent}["has.dot"]`,
+        `${parent}["quote\\\""]`,
+        `${parent}["line\\n"]`,
+        `${parent}.__proto__`,
+      ]);
+      const missing = { ...value };
+      delete missing["has.dot"];
+      expect(() => serializer.serialize(missing, parent)).toThrow(
+        `${parent}["has.dot"]: Required property is missing.`,
+      );
+    }
+  });
+
   test("renames and recursively serializes modeled JSON properties", () => {
     expect(
       user.serialize({

@@ -37,6 +37,16 @@ function responseInit(status: number, init?: ResponseInit): ResponseInit {
 }
 
 function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEncoder<A> {
+  // Fixed defaults can be prepared once. Response copies the private headers;
+  // caller-provided options remain live and invalid statuses still fail at encode.
+  if (init === undefined && Number.isInteger(status) && status >= 200 && status <= 599) {
+    const base = responseInit(status);
+    if (isBodyForbiddenStatus(status)) {
+      return ResponseEncoder.of(() => new Response(null, base));
+    }
+    const response = withContentType(base, "application/json");
+    return ResponseEncoder.of((value) => new Response(stringifyJson(value), response));
+  }
   return ResponseEncoder.of((value) => {
     const response = responseInit(status, init);
     return isBodyForbiddenStatus(status)
