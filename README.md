@@ -57,15 +57,15 @@ TypeSpec MCP root
 
 ## Prerequisites
 
-| Component                              | Supported version                    |
-| -------------------------------------- | ------------------------------------ |
-| Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`          |
-| TypeSpec compiler and `@typespec/http` | `>=1.14.0 <2.0.0`                    |
-| TypeScript                             | `>=5.7 <6`                           |
-| Bun                                    | 1.3.14 is the repository CI baseline |
-| Express                                | 5.x                                  |
-| Hono                                   | 4.x                                  |
-| Module format                          | ESM                                  |
+| Component                              | Supported version                   |
+| -------------------------------------- | ----------------------------------- |
+| Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`         |
+| TypeSpec compiler and `@typespec/http` | `>=1.14.0 <2.0.0`                   |
+| TypeScript                             | `>=5.7 <6`                          |
+| Bun                                    | 1.4.2 is the repository CI baseline |
+| Express                                | 5.x                                 |
+| Hono                                   | 4.x                                 |
+| Module format                          | ESM                                 |
 
 Generated services use the standard Web APIs, including `Request`, `Response`, `Headers`,
 `ReadableStream`, and `File`. TypeScript projects should use modern ESM settings such as

@@ -121,7 +121,6 @@ export async function benchmarkMetadata(repositoryRoot: string) {
       freeMemoryBytesAtStart: freemem(),
     },
     dependencies: {
-      autocannon: await installedPackageVersion(repositoryRoot, "autocannon"),
       hono: await installedPackageVersion(repositoryRoot, "hono"),
       elysia: await installedPackageVersion(repositoryRoot, "elysia"),
       honoZodValidator: await installedPackageVersion(repositoryRoot, "@hono/zod-validator"),
