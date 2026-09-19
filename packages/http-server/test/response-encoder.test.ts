@@ -74,6 +74,29 @@ describe("ResponseEncoders", () => {
     expect(await response.json()).toEqual({ value: "AQL/" });
   });
 
+  test("json reads supplied response options on each encode", () => {
+    let statusText = "First";
+    let reads = 0;
+    const init: ResponseInit = {
+      get statusText() {
+        reads += 1;
+        return statusText;
+      },
+      headers: { "x-value": "first" },
+    };
+    const encoder = ResponseEncoders.json(201, init);
+    expect(reads).toBe(0);
+    expect(encoder.encode({}).statusText).toBe("First");
+    statusText = "Second";
+    init.headers = { "x-value": "second" };
+    const response = encoder.encode({});
+    expect(reads).toBe(2);
+    expect(response.status).toBe(201);
+    expect(response.statusText).toBe("Second");
+    expect(response.headers.get("x-value")).toBe("second");
+    expect(response.headers.get("content-type")).toBe("application/json");
+  });
+
   test("variant response headers stay independent and explicit content types take precedence", () => {
     const plain = ResponseEncoders.variant({ status: 200 });
     const first = plain.encode({ id: 1 });
@@ -684,6 +707,10 @@ describe("ResponseEncoders", () => {
   test("fixed encoders reject statuses unsupported by Fetch Response", () => {
     expect(() => ResponseEncoders.empty(199).encode(undefined)).toThrow("between 200 and 599");
     expect(() => ResponseEncoders.json(600).encode({})).toThrow("between 200 and 599");
+    for (const status of [199, 600, 200.5, Number.NaN, Infinity]) {
+      const encoder = ResponseEncoders.json(status);
+      expect(() => encoder.encode({})).toThrow("between 200 and 599");
+    }
   });
 
   test("variant omits metadata properties that are not in the handler type", async () => {
