@@ -229,7 +229,7 @@ function prepareEncodedObject(
     const member = (value as Record<string, unknown>)[property];
     const item =
       member === null || typeof member !== "object"
-        ? serializeJsonValue(member)
+        ? serializeJsonValue(member, ancestors, property)
         : stringifySnapshot(
             prepareJsonValue(member, ancestors, property, preparation),
             preparation,
