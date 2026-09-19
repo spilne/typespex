@@ -89,6 +89,35 @@ describe("JSON response serialization", () => {
     }
   });
 
+  test("calls an existing inherited hook once per visited object", () => {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    let calls = 0;
+    let serialized: string;
+    try {
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          calls++;
+          return this;
+        },
+      });
+      serialized = stringifyJson({ items: [{ value: "kept" }] });
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, "toJSON", previous);
+      else Reflect.deleteProperty(Object.prototype, "toJSON");
+    }
+    expect(serialized!).toBe('{"items":[{"value":"kept"}]}');
+    expect(calls).toBe(3);
+  });
+
+  test("escapes property names and values in the bigint fallback", () => {
+    const key = 'a"\n\ud800';
+    const text = '日本語 "\n\udfff';
+    expect(stringifyJson({ [key]: 1n, text })).toBe(
+      `{${JSON.stringify(key)}:1,"text":${JSON.stringify(text)}}`,
+    );
+  });
+
   test("does not assign through inherited setters while preparing object properties", () => {
     const property = "__typespex_json_value__";
     const previous = Object.getOwnPropertyDescriptor(Object.prototype, property);

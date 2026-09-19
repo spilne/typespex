@@ -1,4 +1,5 @@
 import { bytesToBase64 } from "@typespex/codec";
+import { defineDataProperty } from "./object-properties.js";
 
 export { bytesToBase64 } from "@typespex/codec";
 
@@ -13,10 +14,11 @@ interface JsonPreparation {
 export function stringifyJson(value: unknown): string {
   const preparation: JsonPreparation = { hasBigInt: false, propertyOrders: undefined };
   // Native JSON produces a flat string from this snapshot. Preparing it first
-  // preserves TypeSpec encodings and reads input getters and hooks only once.
+  // preserves TypeSpec encodings without a second traversal of user values.
   const prepared = prepareJsonValue(value, [], "", preparation);
   // Input getters may install a prototype hook while values are being prepared.
   // The fallback writes the snapshot directly so no hook is invoked twice.
+  // Snapshot arrays already have null prototypes, so only object hooks remain.
   const serialized =
     preparation.hasBigInt || preparation.propertyOrders || Object.hasOwn(Object.prototype, "toJSON")
       ? stringifyPreparedValue(prepared, preparation.propertyOrders)
@@ -28,7 +30,7 @@ export function stringifyJson(value: unknown): string {
 function prepareJsonValue(
   value: unknown,
   ancestors: object[] | Set<object>,
-  key: string,
+  key: string | number,
   preparation: JsonPreparation,
 ): unknown {
   if (value === null) return null;
@@ -37,6 +39,7 @@ function prepareJsonValue(
       preparation.hasBigInt = true;
       return value;
     case "function":
+    case "symbol":
       return undefined;
     case "object":
       break;
@@ -51,7 +54,8 @@ function prepareJsonValue(
 
   const toJSON = (value as { toJSON?: (key: string) => unknown }).toJSON;
   if (typeof toJSON === "function") {
-    const replacement = toJSON.call(value, key);
+    // Array indices only need text when passed to a custom serialization hook.
+    const replacement = toJSON.call(value, typeof key === "number" ? String(key) : key);
     if (replacement !== value) return prepareJsonValue(replacement, ancestors, key, preparation);
   }
 
@@ -71,7 +75,7 @@ function prepareJsonValue(
     // Snapshots must not inherit another toJSON hook or indexed setter.
     Object.setPrototypeOf(items, null);
     for (let index = 0; index < value.length; index++) {
-      items[items.length] = prepareJsonValue(value[index], ancestors, String(index), preparation);
+      items[index] = prepareJsonValue(value[index], ancestors, index, preparation);
     }
     output = items;
   } else {
@@ -84,18 +88,11 @@ function prepareJsonValue(
         property,
         preparation,
       );
-      if (property in Object.prototype) {
-        Object.defineProperty(object, property, {
-          value: item,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      } else object[property] = item;
+      defineDataProperty(object, property, item);
     }
     // A Proxy can enumerate integer keys out of the normal object order. Keep
     // that order when copying to an ordinary object would rearrange the keys.
-    if (properties.some(startsWithDigit)) {
+    if (properties.length > 1 && properties.some(startsWithDigit)) {
       const preparedKeys = Object.keys(object);
       if (properties.some((property, index) => property !== preparedKeys[index])) {
         preparation.propertyOrders ??= new WeakMap();
@@ -122,6 +119,7 @@ function stringifyPreparedValue(
   propertyOrders?: WeakMap<object, readonly string[]>,
 ): string | undefined {
   if (typeof value === "bigint") return String(value);
+  if (typeof value === "string") return quoteJsonString(value);
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) {
     let items = "";
@@ -139,9 +137,12 @@ function stringifyPreparedValue(
     );
     if (item !== undefined) {
       if (entries.length > 0) entries += ",";
-      const quoted = NEEDS_JSON_ESCAPE.test(property) ? JSON.stringify(property) : `"${property}"`;
-      entries += `${quoted}:${item}`;
+      entries += `${quoteJsonString(property)}:${item}`;
     }
   }
   return `{${entries}}`;
+}
+
+function quoteJsonString(value: string): string {
+  return NEEDS_JSON_ESCAPE.test(value) ? JSON.stringify(value) : `"${value}"`;
 }
