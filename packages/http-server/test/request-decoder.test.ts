@@ -27,6 +27,7 @@ describe("http request decoders (sync)", () => {
       decodeRequestInput(
         decoder,
         new Request("http://localhost/?x1=9&x=1&x&=empty&&x=&=last&x-suffix=ignored"),
+        {},
       ),
     ).toEqual(Either.right([["1", "", ""], 9, ["empty", "", "last"], undefined, undefined]));
   });
@@ -47,6 +48,7 @@ describe("http request decoders (sync)", () => {
       decodeRequestInput(
         decoder,
         new Request("http://localhost/?unused=%ZZ&list=a%2Cb,c&record=a,x%2Cy,b,hello+world&bare"),
+        {},
       ),
     ).toEqual(Either.right([["a,b", "c"], { a: "x,y", b: "hello world" }, ""]));
   });
@@ -94,6 +96,7 @@ describe("http request decoders (sync)", () => {
         new Request(
           "http://localhost/?__proto__=p&constructor=c&n%61me=A&name=B&bad%ZZ=ignored&list=a%2Cb,c&record=a,1,%62,2",
         ),
+        {},
       ),
     ).toEqual(Either.right(["p", "c", ["A", "B"], ["a,b", "c"], { a: 1, b: 2 }]));
   });
