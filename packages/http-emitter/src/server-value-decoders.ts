@@ -35,6 +35,8 @@ import {
   type PayloadProjection,
 } from "./payload-context.js";
 import { getIntrinsicScalarName } from "./scalar-map.js";
+import { scalarIntegerRange } from "./scalar-integer-ranges.js";
+import { emitScalarFastPath } from "./server-scalar-fast-path.js";
 import { emitScalarEncodingDecoder, resolveScalarEncoding } from "./scalar-encoding.js";
 import {
   enumMemberLiteralExpression,
@@ -216,7 +218,10 @@ export function emitDecoderExpression(
       break;
   }
 
-  return applyValidationDecorators(ctx, expression, type, target);
+  const validated = applyValidationDecorators(ctx, expression, type, target);
+  return type.kind === "Scalar"
+    ? emitScalarFastPath(ctx, type, target, encodingTarget, mode, validated)
+    : validated;
 }
 
 function emitScalarDecoder(
@@ -245,24 +250,16 @@ function emitUnencodedScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
   const number = strict ? "Decoders.strictNumber" : "Decoders.number";
   const bigint = strict ? "Decoders.strictBigint" : "Decoders.bigint";
 
-  switch (getIntrinsicScalarName(scalar)) {
-    case "int8":
-      return withNumericRange(integer, "-128", "127");
-    case "uint8":
-      return withNumericRange(integer, "0", "255");
-    case "int16":
-      return withNumericRange(integer, "-32768", "32767");
-    case "uint16":
-      return withNumericRange(integer, "0", "65535");
-    case "int32":
-      return withNumericRange(integer, "-2147483648", "2147483647");
-    case "uint32":
-      return withNumericRange(integer, "0", "4294967295");
-    case "int64": {
-      return withNumericRange(bigint, "-9223372036854775808n", "9223372036854775807n");
-    }
-    case "uint64":
-      return withNumericRange(bigint, "0n", "18446744073709551615n");
+  const intrinsic = getIntrinsicScalarName(scalar);
+  const range = scalarIntegerRange(intrinsic);
+  if (range) {
+    return withNumericRange(
+      intrinsic === "int64" || intrinsic === "uint64" ? bigint : integer,
+      range[0],
+      range[1],
+    );
+  }
+  switch (intrinsic) {
     case "integer":
       return integer;
     case "safeint":

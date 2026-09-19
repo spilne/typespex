@@ -2,6 +2,23 @@ import { describe, expect, test } from "bun:test";
 import { parseJsonText } from "../src/http/json-value.js";
 
 describe("lossless JSON values", () => {
+  test("flat objects distinguish property separators from escaped string contents", () => {
+    for (let slashes = 0; slashes < 8; slashes++) {
+      const key = `key${"\\".repeat(slashes)}":value`;
+      const value = { [key]: `${"\\".repeat(slashes)}" : text`, other: "日本語\ud800" };
+      for (const text of [JSON.stringify(value), JSON.stringify(value, null, 2)]) {
+        expect(parseJsonText(` \r\n${text}\t `)).toEqual(value);
+      }
+      const keyText = JSON.stringify(key);
+      expect(() => parseJsonText(`{ ${keyText}: 1, ${keyText}: 2 }`)).toThrow(SyntaxError);
+      expect(parseJsonText(`{ ${keyText}: 1, ${keyText}: 1 }`)).toEqual({ [key]: 1 });
+    }
+    const value = parseJsonText('{ "__proto__": "data", "constructor": "kept" }');
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    expect(Object.hasOwn(value as object, "__proto__")).toBe(true);
+    expect(value).toEqual(JSON.parse('{"__proto__":"data","constructor":"kept"}'));
+  });
+
   test("multiline JSON preserves whitespace, quotes, and backslashes inside strings", () => {
     const value = {
       'quote"key': ' space \\ "\t\r\n 日本語 🦊 ',

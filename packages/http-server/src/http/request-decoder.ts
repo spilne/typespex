@@ -547,7 +547,11 @@ function readRawQueryValue(
   name: string,
   options: QueryParameterDecodeOptions,
 ): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
-  const rawValues = rawQuery.includes("&")
+  const multiple = rawQuery.includes("&");
+  if (!multiple && !options.array && !options.record) {
+    return readSingleQueryValue(rawQuery, name);
+  }
+  const rawValues = multiple
     ? multipleQueryValues(input, rawQuery, name)
     : singleQueryValues(rawQuery, name);
 
@@ -585,6 +589,19 @@ function readRawQueryValue(
   if (isLeft(values)) return values;
   if (options.array) return values;
   return Either.right(values.right.length === 1 ? values.right[0] : values.right);
+}
+
+const MISSING_QUERY_VALUE: DecoderResult<undefined> = Either.right(undefined);
+
+/** A scalar field needs neither a temporary values array nor a decoded name wrapper. */
+function readSingleQueryValue(text: string, name: string): DecoderResult<string | undefined> {
+  const equals = text.indexOf("=");
+  const rawName = equals === -1 ? text : text.substring(0, equals);
+  if (rawName.includes("%") || rawName.includes("+")) {
+    const decoded = decodeQueryComponent(rawName);
+    if (isLeft(decoded) || decoded.right !== name) return MISSING_QUERY_VALUE;
+  } else if (rawName !== name) return MISSING_QUERY_VALUE;
+  return decodeQueryComponent(equals === -1 ? "" : text.substring(equals + 1));
 }
 
 // Direct lookup avoids allocating entries for unused fields. Beyond a small

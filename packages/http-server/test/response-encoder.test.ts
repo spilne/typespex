@@ -66,12 +66,82 @@ describe("ResponseEncoders", () => {
     expect(headers.get("x-value")).toBe("second");
   });
 
+  test("an explicitly omitted variant content type keeps the string-response default", async () => {
+    const response = ResponseEncoders.variant({
+      status: 200,
+      contentType: "",
+      headers: [["trace", "x-trace"]],
+    }).encode({ trace: "trace-1", message: "ok" });
+    expect(response.headers.get("content-type")).toBe(
+      new Response("text").headers.get("content-type"),
+    );
+    expect(response.headers.get("x-trace")).toBe("trace-1");
+    expect(await response.text()).toBe('{"message":"ok"}');
+  });
+
   test("json encodes nested bytes as base64 strings", async () => {
     const response = ResponseEncoders.json<{ value: Uint8Array }>(200).encode({
       value: new Uint8Array([1, 2, 255]),
     });
 
     expect(await response.json()).toEqual({ value: "AQL/" });
+  });
+
+  test("native JSON responses preserve wire values and read user hooks only once", async () => {
+    for (const encoder of [ResponseEncoders.json(), ResponseEncoders.variant({ status: 200 })]) {
+      for (const bigint of [false, true]) {
+        const events: string[] = [];
+        const value = {
+          get first() {
+            events.push("first");
+            return {
+              toJSON(key: string) {
+                events.push(key);
+                return {
+                  toJSON() {
+                    events.push("nested hook");
+                    return new Uint8Array([255]);
+                  },
+                };
+              },
+            };
+          },
+          tail: bigint ? 9_223_372_036_854_775_807n : 1,
+        };
+        const response = encoder.encode(value);
+        expect(await response.text()).toBe(`{"first":"/w==","tail":${String(value.tail)}}`);
+        expect(response.headers.get("content-type")).toBe("application/json");
+        expect(events).toEqual(["first", "first", "nested hook"]);
+      }
+    }
+  });
+
+  test("native JSON responses do not repeat hooks installed during serialization", async () => {
+    for (const prototype of [Object.prototype, Array.prototype]) {
+      const previous = Object.getOwnPropertyDescriptor(prototype, "toJSON");
+      const value = [
+        {
+          get value() {
+            Object.defineProperty(prototype, "toJSON", {
+              configurable: true,
+              value() {
+                throw new Error("A snapshot must not call inherited hooks.");
+              },
+            });
+            return "kept";
+          },
+        },
+      ];
+      let text: string;
+      try {
+        const response = ResponseEncoders.json().encode(value);
+        text = await response.text();
+      } finally {
+        if (previous) Object.defineProperty(prototype, "toJSON", previous);
+        else Reflect.deleteProperty(prototype, "toJSON");
+      }
+      expect(text!).toBe('[{"value":"kept"}]');
+    }
   });
 
   test("json reads supplied response options on each encode", () => {
@@ -753,7 +823,7 @@ describe("ResponseEncoders", () => {
 
   test("Content-Type headers match the selected encoder kind", () => {
     const json = ResponseEncoders.json<{ id: string }>(200).encode({ id: "p-1" });
-    expect(json.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(json.headers.get("content-type")).toBe("application/json");
 
     const text = ResponseEncoders.text(200).encode("hello");
     expect(text.headers.get("content-type")).toBe("text/plain; charset=utf-8");

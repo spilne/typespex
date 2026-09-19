@@ -575,7 +575,7 @@ describe("response status lowering", () => {
     expect(operations).toContain(
       'status: { property: "status", allowed: [{ start: 494, end: 499 }] }',
     );
-    expect(operations).toMatch(/status: 500[, }]/);
+    expect(operations).toContain("ResponseEncoders.json<DefaultFailure>(500)");
     expect(operations).toContain("fallback: ResponseEncoders.json<DefaultFailure>(500)");
     result.typecheck("wildcard-status-api");
 

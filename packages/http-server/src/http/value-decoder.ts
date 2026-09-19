@@ -61,11 +61,8 @@ export abstract class Decoder<A, Input = unknown> {
 }
 
 class FnDecoder<A, Input> extends Decoder<A, Input> {
-  constructor(private readonly decodeFn: (input: Input) => DecoderResult<A>) {
+  constructor(readonly decode: (input: Input) => DecoderResult<A>) {
     super();
-  }
-  decode(input: Input): DecoderResult<A> {
-    return this.decodeFn(input);
   }
 }
 

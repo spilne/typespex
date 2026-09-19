@@ -1,4 +1,4 @@
-import { bytesToBase64, stringifyJson } from "./json.js";
+import { bytesToBase64, jsonResponse, stringifyJson } from "./json.js";
 import { isContentTypeAccepted, parseMediaType } from "./media-type.js";
 
 // Response copies Headers, so each response can reuse this private template
@@ -45,13 +45,13 @@ function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEnco
       return ResponseEncoder.of(() => new Response(null, base));
     }
     const response = withContentType(base, "application/json");
-    return ResponseEncoder.of((value) => new Response(stringifyJson(value), response));
+    return ResponseEncoder.of((value) => jsonResponse(value, response));
   }
   return ResponseEncoder.of((value) => {
     const response = responseInit(status, init);
     return isBodyForbiddenStatus(status)
       ? new Response(null, response)
-      : new Response(stringifyJson(value), withContentType(response, "application/json"));
+      : jsonResponse(value, withContentType(response, "application/json"));
   });
 }
 
@@ -354,8 +354,8 @@ function jsonWithHeadersResponseEncoder<A>(
       return new Response(null, responseInit(status, { headers: responseHeaders }));
     }
     responseHeaders.set("content-type", "application/json");
-    return new Response(
-      stringifyJson(transformBody ? transformBody(body) : body),
+    return jsonResponse(
+      transformBody ? transformBody(body) : body,
       responseInit(status, { headers: responseHeaders }),
     );
   });
@@ -466,10 +466,11 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
     );
   }
 
-  return new Response(body === undefined ? null : stringifyJson(body), {
-    status,
-    headers,
-  });
+  if (body === undefined) return new Response(null, { status, headers });
+  if (!contentType && !responseHeaders?.has("content-type")) {
+    return new Response(stringifyJson(body), { status, headers });
+  }
+  return jsonResponse(body, { status, headers });
 }
 
 function encodeFileResponse(

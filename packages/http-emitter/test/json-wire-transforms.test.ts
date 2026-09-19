@@ -87,6 +87,54 @@ function jsonRequest(path: string, body: unknown): Request {
 }
 
 describe("JSON wire transforms", () => {
+  test("projects response metadata once while retaining modeled additional properties", async () => {
+    const result = compileFixture(
+      "response-projection",
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+      @service namespace ProjectionApi;
+      model Plain {
+        @statusCode status: 200;
+        @encodedName("application/json", "display_name") displayName: string;
+      }
+      model Open extends Record<unknown> {
+        @statusCode status: 200;
+        @header("x-trace") trace: string;
+        @encodedName("application/json", "display_name") displayName: string;
+      }
+      @route("/plain") @get op plain(): Plain;
+      @route("/open") @get op open(): Open;
+    `,
+    );
+    result.typecheck("projection-api");
+    const { createProjectionApiServerRouter } = await import(
+      `${result.outputDir}/projection-api/server-router.ts`
+    );
+    let reads = 0;
+    const router = createProjectionApiServerRouter({
+      plain: () => ({
+        status: 200,
+        get displayName() {
+          reads++;
+          return "plain";
+        },
+        get discarded() {
+          throw new Error("An unmodeled field is outside the projection.");
+        },
+      }),
+      open: () => ({ status: 200, trace: "trace-1", displayName: "open", extra: 1 }),
+    } as any);
+    const plain = await router.handle(new Request("http://localhost/plain"));
+    expect(plain.status).toBe(200);
+    expect(await plain.json()).toEqual({ display_name: "plain" });
+    expect(reads).toBe(1);
+    const open = await router.handle(new Request("http://localhost/open"));
+    expect(open.status).toBe(200);
+    expect(open.headers.get("x-trace")).toBe("trace-1");
+    expect(await open.json()).toEqual({ display_name: "open", extra: 1 });
+  });
+
   test("decodes and serializes encoded names throughout JSON payload graphs", async () => {
     const result = compileFixture("json-wire-transforms", jsonWireSpec);
     const operations = result.readFile("json-wire-api", "server-operations.ts");

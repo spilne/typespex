@@ -18,64 +18,95 @@ import { tsLiteral } from "./typescript-names.js";
 
 export type DecodedTypeKind = "number" | "bigint" | "string" | "bytes" | "array" | "other";
 
+export interface ValidationRule {
+  readonly kind:
+    | "minValue"
+    | "maxValue"
+    | "minValueExclusive"
+    | "maxValueExclusive"
+    | "minLength"
+    | "maxLength"
+    | "minItems"
+    | "maxItems"
+    | "pattern";
+  /** TypeScript expression for the bound or pattern. */
+  readonly argument: string;
+  readonly message?: string;
+}
+
 /** Runtime validators declared directly on a TypeSpec type. */
 export function emitValidatorsForTarget(
   ctx: EmitterCtx,
   target: Type,
   kind: DecodedTypeKind,
 ): string[] {
+  return getValidationRules(ctx, target, kind).map(
+    (rule) =>
+      `Validators.${rule.kind}(${rule.argument}${rule.message ? `, ${tsLiteral(rule.message)}` : ""})`,
+  );
+}
+
+export function getValidationRules(
+  ctx: EmitterCtx,
+  target: Type,
+  kind: DecodedTypeKind,
+): ValidationRule[] {
   const program = ctx.program;
-  const validators: string[] = [];
+  const validators: ValidationRule[] = [];
 
   const minValue = getMinValueAsNumeric(program, target);
   if (minValue) {
-    validators.push(`Validators.minValue(${emitNumericValue(minValue, kind === "bigint")})`);
+    validators.push({ kind: "minValue", argument: emitNumericValue(minValue, kind === "bigint") });
   }
 
   const maxValue = getMaxValueAsNumeric(program, target);
   if (maxValue) {
-    validators.push(`Validators.maxValue(${emitNumericValue(maxValue, kind === "bigint")})`);
+    validators.push({ kind: "maxValue", argument: emitNumericValue(maxValue, kind === "bigint") });
   }
 
   const minValueExclusive = getMinValueExclusiveAsNumeric(program, target);
   if (minValueExclusive) {
-    validators.push(
-      `Validators.minValueExclusive(${emitNumericValue(minValueExclusive, kind === "bigint")})`,
-    );
+    validators.push({
+      kind: "minValueExclusive",
+      argument: emitNumericValue(minValueExclusive, kind === "bigint"),
+    });
   }
 
   const maxValueExclusive = getMaxValueExclusiveAsNumeric(program, target);
   if (maxValueExclusive) {
-    validators.push(
-      `Validators.maxValueExclusive(${emitNumericValue(maxValueExclusive, kind === "bigint")})`,
-    );
+    validators.push({
+      kind: "maxValueExclusive",
+      argument: emitNumericValue(maxValueExclusive, kind === "bigint"),
+    });
   }
 
   const minLength = getMinLength(program, target);
   if (minLength !== undefined) {
-    validators.push(`Validators.minLength(${minLength})`);
+    validators.push({ kind: "minLength", argument: String(minLength) });
   }
 
   const maxLength = getMaxLength(program, target);
   if (maxLength !== undefined) {
-    validators.push(`Validators.maxLength(${maxLength})`);
+    validators.push({ kind: "maxLength", argument: String(maxLength) });
   }
 
   const minItems = getMinItems(program, target);
   if (minItems !== undefined) {
-    validators.push(`Validators.minItems(${minItems})`);
+    validators.push({ kind: "minItems", argument: String(minItems) });
   }
 
   const maxItems = getMaxItems(program, target);
   if (maxItems !== undefined) {
-    validators.push(`Validators.maxItems(${maxItems})`);
+    validators.push({ kind: "maxItems", argument: String(maxItems) });
   }
 
   const pattern = getPatternData(program, target);
   if (pattern) {
-    validators.push(
-      `Validators.pattern(${tsLiteral(pattern.pattern)}${pattern.validationMessage ? `, ${tsLiteral(pattern.validationMessage)}` : ""})`,
-    );
+    validators.push({
+      kind: "pattern",
+      argument: tsLiteral(pattern.pattern),
+      message: pattern.validationMessage,
+    });
   }
 
   return validators;

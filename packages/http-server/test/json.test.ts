@@ -157,6 +157,33 @@ describe("JSON response serialization", () => {
     expect(stringifyJson(value)).toBe('["first",null,"added"]');
   });
 
+  test("does not assign through an array prototype setter installed by an input getter", () => {
+    const previous = Object.getOwnPropertyDescriptor(Array.prototype, "32");
+    const value = Array.from({ length: 33 }, (_, index) => index);
+    let writes = 0;
+    Object.defineProperty(value, "0", {
+      get() {
+        Object.defineProperty(Array.prototype, "32", {
+          configurable: true,
+          set() {
+            writes++;
+            throw new Error("Snapshot arrays must not invoke inherited setters.");
+          },
+        });
+        return 0;
+      },
+    });
+    let serialized: string;
+    try {
+      serialized = stringifyJson(value);
+    } finally {
+      if (previous) Object.defineProperty(Array.prototype, "32", previous);
+      else Reflect.deleteProperty(Array.prototype, "32");
+    }
+    expect(serialized!).toBe(`[${Array.from({ length: 33 }, (_, index) => index).join(",")}]`);
+    expect(writes).toBe(0);
+  });
+
   test("preserves custom enumeration order for integer properties", () => {
     const value = new Proxy(
       { 1: "first", 2: "second", name: "kept" },

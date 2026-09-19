@@ -36,7 +36,7 @@ export function renderServerOperations(plan: ServerPlan): string {
   lines.push("");
 
   // --- Imports (multi-line) ---
-  const runtimeTypes = ["Decoder", "ServerOperation"];
+  const runtimeTypes = ["ServerOperation"];
   if (plan.jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
   if (plan.xmlCodecDeclarations.length > 0) runtimeTypes.push("XmlCodec");
   lines.push(`import type { ${runtimeTypes.join(", ")} } from "@typespex/http-server";`);

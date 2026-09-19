@@ -48,6 +48,7 @@ import {
 import { emitXmlCodec } from "./xml-wire-codecs.js";
 
 const SERVER_INPUT_DECODER_IMPORTS = [
+  "Decoder",
   "Decoders",
   "RequestDecoders",
   "Validators",

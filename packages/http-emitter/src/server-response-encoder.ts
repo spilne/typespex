@@ -9,12 +9,18 @@ import {
   normalizeMediaType,
 } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
+import { getHttpPartType } from "./http-models.js";
 import {
   emitJsonWireSerializer,
   unsupportedJsonWireTransformReason,
 } from "./json-wire-transforms.js";
 import { $lib } from "./lib.js";
-import { payloadTypeToTs } from "./payload-context.js";
+import { getAdditionalPropertiesValue } from "./model-indexer.js";
+import {
+  getPayloadCollection,
+  payloadModelProperties,
+  payloadTypeToTs,
+} from "./payload-context.js";
 import { resolveScalarEncoding } from "./scalar-encoding.js";
 import { buildResponseBranches, type ResponseBranch } from "./server-response-dispatch.js";
 import {
@@ -110,7 +116,7 @@ export function buildResponseEncoder(
     );
   }
 
-  if (shouldUseVariantEncoder(response)) {
+  if (shouldUseVariantEncoder(response, bodyTransform)) {
     return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
   }
 
@@ -134,13 +140,19 @@ export function buildResponseEncoder(
   return encoder;
 }
 
-function shouldUseVariantEncoder(response: ResponseVariant): boolean {
+function shouldUseVariantEncoder(
+  response: ResponseVariant,
+  bodyTransform?: ResponseBodyTransform,
+): boolean {
   return (
     !response.hasBody ||
+    response.statusCode === 204 ||
+    response.statusCode === 205 ||
+    response.statusCode === 304 ||
     response.body?.bodyKind === "file" ||
     response.dynamicStatus !== undefined ||
     response.bodyProperty !== undefined ||
-    response.omitProperties.length > 0
+    (response.omitProperties.length > 0 && !bodyTransform?.omitsMetadata)
   );
 }
 
@@ -149,6 +161,8 @@ interface ResponseBodyTransform {
   readonly bodyType: string;
   readonly optional: boolean;
   readonly path: string;
+  /** The serializer itself excludes every metadata property from the body. */
+  readonly omitsMetadata?: boolean;
 }
 
 function getResponseBodyTransform(
@@ -222,6 +236,16 @@ function getResponseWireTransform(
       : response.bodyProperty
         ? tsPropertyAccess("$response", response.bodyProperty)
         : "$response",
+    omitsMetadata:
+      serializationType.kind === "Model" &&
+      getPayloadCollection(ctx, serializationType) === undefined &&
+      getHttpPartType(ctx.program, serializationType) === undefined &&
+      getAdditionalPropertiesValue(serializationType) === undefined &&
+      response.omitProperties.every((name) =>
+        payloadModelProperties(serializationType, response.projection).every(
+          (property) => property.name !== name,
+        ),
+      ),
   };
 }
 
@@ -261,11 +285,11 @@ function emitResponseDecisionEncoder(
             op.operation.name,
             branch.response.contentType,
           )
-        : `ResponseEncoders.variant<${branch.response.tsType}>(${emitResponseVariant(
+        : emitResponseBranchEncoder(
             kind,
             branch.response,
             getResponseBodyTransform(ctx, op, branch.response, kind),
-          )})`;
+          );
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
     lines.push(`encoder: ${branchEncoder},`);
@@ -274,6 +298,30 @@ function emitResponseDecisionEncoder(
   // TODO: Benchmark matchVariant against generated direct if/switch dispatch for hot response paths.
   lines.push("])");
   return lines.join("\n");
+}
+
+function emitResponseBranchEncoder(
+  kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl" | "sse">,
+  response: ResponseVariant,
+  bodyTransform?: ResponseBodyTransform,
+): string {
+  // A required model body with a fixed status needs no envelope resolution.
+  if (
+    kind === "json" &&
+    response.serializationType?.kind === "Model" &&
+    !shouldUseVariantEncoder(response, bodyTransform) &&
+    response.headers.length === 0 &&
+    (response.contentType === undefined || response.contentType === "application/json")
+  ) {
+    return encoderForKind(
+      kind,
+      response.tsType,
+      response.statusCode,
+      response.contentType,
+      bodyTransform,
+    );
+  }
+  return `ResponseEncoders.variant<${response.tsType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
 }
 
 function emitResponseVariant(
@@ -295,7 +343,7 @@ function emitResponseVariant(
     const headers = response.headers.map(emitResponseHeaderEntry).join(", ");
     fields.push(`headers: [${headers}]`);
   }
-  if (response.omitProperties.length > 0) {
+  if (response.omitProperties.length > 0 && !bodyTransform?.omitsMetadata) {
     fields.push(`omit: [${response.omitProperties.map((name) => tsLiteral(name)).join(", ")}]`);
   }
   if (bodyTransform) {
