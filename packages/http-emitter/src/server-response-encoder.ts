@@ -152,7 +152,10 @@ function shouldUseVariantEncoder(
     response.body?.bodyKind === "file" ||
     response.dynamicStatus !== undefined ||
     response.bodyProperty !== undefined ||
-    (response.omitProperties.length > 0 && !bodyTransform?.omitsMetadata)
+    (response.omitProperties.length > 0 &&
+      (!bodyTransform?.omitsMetadata ||
+        response.headers.length > 0 ||
+        (response.contentType !== undefined && response.contentType !== "application/json")))
   );
 }
 

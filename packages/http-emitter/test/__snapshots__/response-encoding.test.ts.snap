@@ -149,18 +149,19 @@ const _jsonSerializer_RateLimitedResponse_response_1_payload: JsonSerializer<_Ty
   );
 
 const DataOutput = {
-  fetch: ResponseEncoders.jsonWithHeaders<{ data: string; rateLimit: number; requestId: string }>(
-    200,
-    [
+  fetch: ResponseEncoders.variant<{ data: string; rateLimit: number; requestId: string }>({
+    status: 200,
+    contentType: "application/json",
+    headers: [
       ["rateLimit", "x-rate-limit"],
       ["requestId", "x-request-id"],
     ],
-    (body) =>
+    transformBody: (body) =>
       _jsonSerializer_RateLimitedResponse_response_1_payload.serialize(
         body as _TypespexPayload_RateLimitedResponse_response_1_payload,
         "$response",
       ),
-  ),
+  }),
 };
 
 export const DataOperations = {
