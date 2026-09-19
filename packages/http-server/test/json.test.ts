@@ -163,4 +163,23 @@ describe("JSON response serialization", () => {
     );
     expect(stringifyJson({ value })).toBe('{"value":{"name":"kept","2":"second","1":"first"}}');
   });
+
+  test("combines numeric records with ordinary objects and lossless wire values", () => {
+    const keys: string[] = [];
+    const record = {
+      1: 9_223_372_036_854_775_807n,
+      2: {
+        toJSON(key: string) {
+          keys.push(key);
+          return new Uint8Array([255]);
+        },
+      },
+      3: undefined,
+      4: { name: "kept" },
+    };
+    expect(stringifyJson({ items: [record], next: { value: true } })).toBe(
+      '{"items":[{"1":9223372036854775807,"2":"/w==","4":{"name":"kept"}}],"next":{"value":true}}',
+    );
+    expect(keys).toEqual(["2"]);
+  });
 });

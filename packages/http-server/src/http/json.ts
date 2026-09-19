@@ -6,23 +6,24 @@ export { bytesToBase64 } from "@typespex/codec";
 const NEEDS_JSON_ESCAPE = /["\\\u0000-\u001f\uD800-\uDFFF]/;
 
 interface JsonPreparation {
-  hasBigInt: boolean;
-  propertyOrders: WeakMap<object, readonly string[]> | undefined;
+  requiresDirectWriter: boolean;
+}
+
+// A private marker keeps pre-encoded object text distinct from user strings.
+class EncodedJsonValue {
+  constructor(readonly text: string) {}
 }
 
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
 export function stringifyJson(value: unknown): string {
-  const preparation: JsonPreparation = { hasBigInt: false, propertyOrders: undefined };
+  const preparation: JsonPreparation = { requiresDirectWriter: false };
   // Native JSON produces a flat string from this snapshot. Preparing it first
   // preserves TypeSpec encodings without a second traversal of user values.
   const prepared = prepareJsonValue(value, [], "", preparation);
   // Input getters may install a prototype hook while values are being prepared.
   // The fallback writes the snapshot directly so no hook is invoked twice.
   // Snapshot arrays already have null prototypes, so only object hooks remain.
-  const serialized =
-    preparation.hasBigInt || preparation.propertyOrders || Object.hasOwn(Object.prototype, "toJSON")
-      ? stringifyPreparedValue(prepared, preparation.propertyOrders)
-      : JSON.stringify(prepared);
+  const serialized = stringifyPreparedJson(prepared, preparation);
   if (serialized === undefined) throw new TypeError("Value is not JSON serializable.");
   return serialized;
 }
@@ -36,7 +37,7 @@ function prepareJsonValue(
   if (value === null) return null;
   switch (typeof value) {
     case "bigint":
-      preparation.hasBigInt = true;
+      preparation.requiresDirectWriter = true;
       return value;
     case "function":
     case "symbol":
@@ -79,27 +80,28 @@ function prepareJsonValue(
     }
     output = items;
   } else {
-    const object: Record<string, unknown> = {};
     const properties = Object.keys(value);
-    for (const property of properties) {
-      const item = prepareJsonValue(
-        (value as Record<string, unknown>)[property],
-        ancestors,
-        property,
-        preparation,
-      );
-      defineDataProperty(object, property, item);
-    }
-    // A Proxy can enumerate integer keys out of the normal object order. Keep
-    // that order when copying to an ordinary object would rearrange the keys.
-    if (properties.length > 1 && properties.some(startsWithDigit)) {
-      const preparedKeys = Object.keys(object);
-      if (properties.some((property, index) => property !== preparedKeys[index])) {
-        preparation.propertyOrders ??= new WeakMap();
-        preparation.propertyOrders.set(object, properties);
+    if (properties.some(startsWithDigit)) {
+      // Numeric-keyed objects are slow in native JSON on Bun. Writing their
+      // keys directly also preserves a Proxy's nonstandard enumeration order.
+      output = prepareEncodedObject(value, properties, ancestors, preparation);
+      preparation.requiresDirectWriter = true;
+    } else {
+      const object: Record<string, unknown> = {};
+      for (const property of properties) {
+        defineDataProperty(
+          object,
+          property,
+          prepareJsonValue(
+            (value as Record<string, unknown>)[property],
+            ancestors,
+            property,
+            preparation,
+          ),
+        );
       }
+      output = object;
     }
-    output = object;
   }
 
   if (Array.isArray(ancestors)) ancestors.pop();
@@ -114,27 +116,34 @@ function startsWithDigit(value: string): boolean {
 
 // Prepared values contain only primitives and own data properties. Their hooks
 // and cycles have already been handled, and bigint needs an unquoted token.
-function stringifyPreparedValue(
-  value: unknown,
-  propertyOrders?: WeakMap<object, readonly string[]>,
-): string | undefined {
-  if (typeof value === "bigint") return String(value);
-  if (typeof value === "string") return quoteJsonString(value);
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+function stringifyPreparedValue(value: unknown): string | undefined {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "string":
+      return quoteJsonString(value);
+    case "boolean":
+      return value ? "true" : "false";
+    case "number":
+      return Number.isFinite(value) ? String(value) : "null";
+    case "bigint":
+      return String(value);
+    case "undefined":
+    case "function":
+    case "symbol":
+      return undefined;
+  }
+  if (value instanceof EncodedJsonValue) return value.text;
   if (Array.isArray(value)) {
     let items = "";
     for (let index = 0; index < value.length; index++) {
       if (index > 0) items += ",";
-      items += stringifyPreparedValue(value[index], propertyOrders) ?? "null";
+      items += stringifyPreparedValue(value[index]) ?? "null";
     }
     return `[${items}]`;
   }
   let entries = "";
-  for (const property of propertyOrders?.get(value) ?? Object.keys(value)) {
-    const item = stringifyPreparedValue(
-      (value as Record<string, unknown>)[property],
-      propertyOrders,
-    );
+  for (const property of Object.keys(value)) {
+    const item = stringifyPreparedValue((value as Record<string, unknown>)[property]);
     if (item !== undefined) {
       if (entries.length > 0) entries += ",";
       entries += `${quoteJsonString(property)}:${item}`;
@@ -145,4 +154,34 @@ function stringifyPreparedValue(
 
 function quoteJsonString(value: string): string {
   return NEEDS_JSON_ESCAPE.test(value) ? JSON.stringify(value) : `"${value}"`;
+}
+
+function stringifyPreparedJson(value: unknown, preparation: JsonPreparation): string | undefined {
+  return preparation.requiresDirectWriter || Object.hasOwn(Object.prototype, "toJSON")
+    ? stringifyPreparedValue(value)
+    : JSON.stringify(value);
+}
+
+function prepareEncodedObject(
+  value: object,
+  properties: readonly string[],
+  ancestors: object[] | Set<object>,
+  preparation: JsonPreparation,
+): EncodedJsonValue {
+  let entries = "";
+  for (const property of properties) {
+    const member = (value as Record<string, unknown>)[property];
+    const item =
+      member === null || typeof member !== "object"
+        ? stringifyPreparedValue(member)
+        : stringifyPreparedJson(
+            prepareJsonValue(member, ancestors, property, preparation),
+            preparation,
+          );
+    if (item !== undefined) {
+      if (entries.length > 0) entries += ",";
+      entries += `${quoteJsonString(property)}:${item}`;
+    }
+  }
+  return new EncodedJsonValue(`{${entries}}`);
 }
