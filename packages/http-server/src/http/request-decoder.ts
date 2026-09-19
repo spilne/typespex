@@ -594,7 +594,7 @@ const ENCODED_QUERY_NAME = /(?:^|&)[^=&]*[%+]/;
 const indexedQueryInputs = new WeakSet<RequestInputSource>();
 const queryIndexes = new WeakMap<
   RequestInputSource,
-  { text: string; values: Readonly<Record<string, readonly string[]>> }
+  { text: string; values?: Readonly<Record<string, readonly string[]>> }
 >();
 
 function multipleQueryValues(
@@ -603,15 +603,14 @@ function multipleQueryValues(
   name: string,
 ): readonly string[] {
   const cached = queryIndexes.get(input);
-  if (cached?.text === text) return cached.values[name] ?? [];
+  if (cached?.text === text && cached.values !== undefined) return cached.values[name] ?? [];
+  if (indexedQueryInputs.has(input)) return indexedQueryValues(input, text)[name] ?? [];
 
-  // Encoded names can alias a literal name, so they still need a decoded index.
-  // Encoded values alone do not require it; their raw spelling is kept below.
-  if (
-    indexedQueryInputs.has(input) ||
-    ((text.includes("%") || text.includes("+")) && ENCODED_QUERY_NAME.test(text))
-  ) {
-    return indexedQueryValues(input, text)[name] ?? [];
+  // Encoded names can alias literal names, but encoded values can stay lazy.
+  // Remember the name check so each requested value does not repeat the scan.
+  if (cached?.text !== text && (text.includes("%") || text.includes("+"))) {
+    if (ENCODED_QUERY_NAME.test(text)) return indexedQueryValues(input, text)[name] ?? [];
+    queryIndexes.set(input, { text });
   }
   return literalQueryValues(text, name);
 }

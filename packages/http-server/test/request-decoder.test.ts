@@ -101,6 +101,23 @@ describe("http request decoders (sync)", () => {
     ).toEqual(Either.right(["p", "c", ["A", "B"], ["a,b", "c"], { a: 1, b: 2 }]));
   });
 
+  test("cached query name checks follow source changes", () => {
+    const source = {
+      pathParams: {},
+      query: new URLSearchParams(),
+      rawQuery: "a=hello%20world&b=2",
+      headers: new Headers(),
+      cookies: {},
+    };
+    const decoder = RequestDecoders.query("a", Decoders.array(Decoders.string), { array: true });
+    expect(decoder.decode(source)).toEqual(Either.right(["hello world"]));
+    expect(decoder.decode(source)).toEqual(Either.right(["hello world"]));
+    source.rawQuery = "%61=changed&a=last";
+    expect(decoder.decode(source)).toEqual(Either.right(["changed", "last"]));
+    source.rawQuery = "a=hello+again&b=2";
+    expect(decoder.decode(source)).toEqual(Either.right(["hello again"]));
+  });
+
   test("query indexes follow source changes without sharing mutable decoded results", () => {
     const source = {
       pathParams: {},
