@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Temporal } from "@js-temporal/polyfill";
 import { createValueCodec } from "../src/index.js";
 
+// The codec prefers native Temporal when the runtime provides it (Bun 1.4+).
+const runtimeTemporal = (globalThis as { Temporal?: typeof Temporal }).Temporal ?? Temporal;
+
 describe("protocol-neutral value codec", () => {
   test("preserves visible names that overlap excluded aliases and excludes prototype keys", async () => {
     for (const [property, wireName] of [
@@ -301,8 +304,11 @@ describe("protocol-neutral value codec", () => {
     const decoded = await codec.decode(wire);
     expect(decoded.ok).toBe(true);
     if (!decoded.ok) return;
-    expect(decoded.value.date).toBeInstanceOf(Temporal.PlainDate);
-    expect(decoded.value.offset).toBeInstanceOf(Temporal.ZonedDateTime);
+    expect(decoded.value.date).toBeInstanceOf(runtimeTemporal.PlainDate);
+    expect(decoded.value.time).toBeInstanceOf(runtimeTemporal.PlainTime);
+    expect(decoded.value.instant).toBeInstanceOf(runtimeTemporal.Instant);
+    expect(decoded.value.offset).toBeInstanceOf(runtimeTemporal.ZonedDateTime);
+    expect(decoded.value.duration).toBeInstanceOf(runtimeTemporal.Duration);
     expect(await codec.encode(decoded.value)).toEqual({ ok: true, value: wire });
   });
 
@@ -619,7 +625,9 @@ describe("protocol-neutral value codec", () => {
     });
     expect((await instant.decode("2026-08-15T12:00:60Z")).ok).toBe(false);
     expect((await instant.decode("2026-08-15T12:00:00-00:00")).ok).toBe(false);
-    expect((await instant.encode(Temporal.PlainDate.from("2026-08-15") as never)).ok).toBe(false);
+    expect((await instant.encode(runtimeTemporal.PlainDate.from("2026-08-15") as never)).ok).toBe(
+      false,
+    );
 
     const zoned = createValueCodec<Temporal.ZonedDateTime>({
       root: {
@@ -629,9 +637,9 @@ describe("protocol-neutral value codec", () => {
         temporalKind: "zoned-date-time",
       },
     });
-    expect((await zoned.encode(Temporal.Instant.from("2026-08-15T12:00:00Z") as never)).ok).toBe(
-      false,
-    );
+    expect(
+      (await zoned.encode(runtimeTemporal.Instant.from("2026-08-15T12:00:00Z") as never)).ok,
+    ).toBe(false);
 
     const file = createValueCodec<File>({ root: { kind: "file" } });
     expect((await file.decode(null)).ok).toBe(false);

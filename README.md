@@ -57,15 +57,15 @@ TypeSpec MCP root
 
 ## Prerequisites
 
-| Component                              | Supported version                    |
-| -------------------------------------- | ------------------------------------ |
-| Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`          |
-| TypeSpec compiler and `@typespec/http` | `>=1.14.0 <2.0.0`                    |
-| TypeScript                             | `>=5.7 <6`                           |
-| Bun                                    | 1.3.14 is the repository CI baseline |
-| Express                                | 5.x                                  |
-| Hono                                   | 4.x                                  |
-| Module format                          | ESM                                  |
+| Component                              | Supported version                   |
+| -------------------------------------- | ----------------------------------- |
+| Node.js for generation and builds      | `>=22.12 <23` or `>=24 <25`         |
+| TypeSpec compiler and `@typespec/http` | `>=1.14.0 <2.0.0`                   |
+| TypeScript                             | `>=5.7 <6`                          |
+| Bun                                    | 1.4.2 is the repository CI baseline |
+| Express                                | 5.x                                 |
+| Hono                                   | 4.x                                 |
+| Module format                          | ESM                                 |
 
 Generated services use the standard Web APIs, including `Request`, `Response`, `Headers`,
 `ReadableStream`, and `File`. TypeScript projects should use modern ESM settings such as
@@ -696,39 +696,42 @@ bun run bench:http
 bun run bench:matchers
 ```
 
-The HTTP benchmark uses Autocannon against Bare Bun, Hono, Hono with Zod validation, Elysia with
-input validation, and TypeSpex.
-Every timed cell gets a fresh server process and the same bounded, deterministic pet fixture. The
-timed scenarios cover list, successful and missing read, and create. DELETE remains bound in every
-server so their route tables stay equivalent, but it is not load-tested because repeated deletion
-would change response semantics. Each cell has an untimed preflight, a discarded warmup, a timed
-measurement, and an untimed postflight. The run fails on a wrong status or body, any transport
-error, timeout, body mismatch, or pipeline reset. Scenario and server order rotate deterministically
-between trials. The summary reports the median, median absolute deviation, observed range, and a
-trial-paired throughput ratio to Bare Bun. Autocannon's latency percentiles use whole-millisecond
-buckets, so `0 ms` means the request landed in its sub-millisecond bucket rather than literally
-taking no time.
+The HTTP benchmark uses the native **oha 1.16.0** client against Bare Bun, Hono, Hono with
+Zod validation, Elysia with input validation, and TypeSpex. A checksum-verified client binary is
+installed inside `.context/bench-tools/`; no global installation is required.
 
-The defaults are five trials, a 2-second warmup and 10-second measurement per cell, 50 connections,
-and HTTP pipelining of one. A complete run takes about 20 minutes plus build and startup time. These
-environment variables tune it:
+Each cell starts a fresh server with the same deterministic pet fixture, then runs preflight,
+warmup, measurement, and postflight checks. Exact status counts and response-byte totals cover
+all timed responses. Exact bodies and JSON content types are checked before, after, and during
+load (approximately ten probes per second). A wrong probe, unexpected status, byte-total mismatch,
+or client error invalidates the run. Scenario and server order rotate across trials.
 
-| Variable                      | Default            | Meaning                                           |
-| ----------------------------- | ------------------ | ------------------------------------------------- |
-| `TYPESPEX_BENCH_TRIALS`       | `5`                | Independent measurements per cell                 |
-| `TYPESPEX_BENCH_WARMUP`       | `2`                | Discarded warmup seconds                          |
-| `TYPESPEX_BENCH_DURATION`     | `10`               | Timed seconds                                     |
-| `TYPESPEX_BENCH_CONNECTIONS`  | `50`               | Concurrent clients                                |
-| `TYPESPEX_BENCH_PIPELINING`   | `1`                | HTTP/1 requests in flight per connection          |
-| `TYPESPEX_BENCH_TIMEOUT`      | `10`               | Per-request timeout seconds                       |
-| `TYPESPEX_BENCH_OVERALL_RATE` | unset              | Optional fixed aggregate arrival rate             |
-| `TYPESPEX_BENCH_SEED`         | `typespex-http-v1` | Reproducible base ordering                        |
-| `TYPESPEX_BENCH_OUTPUT`       | timestamped file   | Artifact path; relative paths use repository root |
+Each workload also gets a cached-response control. Comparative ratios are withheld unless it is
+at least 25% faster than every implementation in every paired trial. Inspect `comparisonValidity`
+in the artifact and the CI job summary before interpreting differences. This checks observed
+headroom; it does not establish statistical significance or eliminate shared-machine contention.
+See [the HTTP benchmark guide](bench/README.md) for the calibration limits and baseline comparisons.
 
-Without `TYPESPEX_BENCH_OVERALL_RATE`, the HTTP run is a closed-loop saturation benchmark: it is
-useful for maximum throughput comparisons, but its tail latency does not represent an external
-fixed request arrival rate. Set an overall rate below saturation when evaluating latency at a
-specific load.
+Defaults are five trials, a 2-second warmup and 10-second measurement per cell, 500 connections,
+and two client threads. A full run takes about 36 minutes plus build and startup time (42 minutes
+with a separate TypeSpex baseline). These environment variables tune it:
+
+| Variable                        | Default            | Meaning                                           |
+| ------------------------------- | ------------------ | ------------------------------------------------- |
+| `TYPESPEX_BENCH_TRIALS`         | `5`                | Independent measurements per cell                 |
+| `TYPESPEX_BENCH_WARMUP`         | `2`                | Discarded warmup seconds                          |
+| `TYPESPEX_BENCH_DURATION`       | `10`               | Timed seconds                                     |
+| `TYPESPEX_BENCH_CONNECTIONS`    | `500`              | Concurrent HTTP/1.1 connections                   |
+| `TYPESPEX_BENCH_CLIENT_THREADS` | `2`                | Native load-generator threads                     |
+| `TYPESPEX_BENCH_TIMEOUT`        | `10`               | Per-request timeout seconds                       |
+| `TYPESPEX_BENCH_OHA`            | pinned download    | Path to an existing oha 1.16.0 binary             |
+| `TYPESPEX_BENCH_BASELINE_ROOT`  | unset              | Path to a built TypeSpex comparison checkout      |
+| `TYPESPEX_BENCH_SEED`           | `typespex-http-v1` | Reproducible base ordering                        |
+| `TYPESPEX_BENCH_OUTPUT`         | timestamped file   | Artifact path; relative paths use repository root |
+
+This is an unlimited, closed-loop saturation benchmark. Its latency percentiles are measured
+with sub-millisecond precision but do not describe latency at a fixed external arrival rate.
+The former autocannon pipelining and overall-rate settings are unsupported and explicitly rejected.
 
 The matcher benchmark uses Tinybench with Bun's nanosecond clock and timer-overhead correction. It
 validates both matchers before timing, batches lookups to stay above timer resolution, alternates

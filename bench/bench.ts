@@ -1,10 +1,11 @@
+import { appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { resolve } from "node:path";
-import autocannon from "autocannon";
+import { prepareOha, runOha, stopOha, type OhaResult } from "./oha.js";
+import { assessHeadroom, headroomReport, type HeadroomAssessment } from "./headroom.js";
 import {
   balancedOrder,
   benchmarkMetadata,
-  optionalPositiveIntegerSetting,
   positiveIntegerSetting,
   summarize,
   type DistributionSummary,
@@ -20,9 +21,8 @@ export interface HttpBenchmarkSettings {
   readonly warmupSeconds: number;
   readonly trials: number;
   readonly connections: number;
-  readonly pipelining: number;
+  readonly clientThreads: number;
   readonly timeoutSeconds: number;
-  readonly overallRate?: number;
   readonly seed: string;
 }
 
@@ -30,10 +30,9 @@ export const HTTP_SETTINGS: HttpBenchmarkSettings = Object.freeze({
   durationSeconds: positiveIntegerSetting("TYPESPEX_BENCH_DURATION", 10),
   warmupSeconds: positiveIntegerSetting("TYPESPEX_BENCH_WARMUP", 2),
   trials: positiveIntegerSetting("TYPESPEX_BENCH_TRIALS", 5),
-  connections: positiveIntegerSetting("TYPESPEX_BENCH_CONNECTIONS", 50),
-  pipelining: positiveIntegerSetting("TYPESPEX_BENCH_PIPELINING", 1),
+  connections: positiveIntegerSetting("TYPESPEX_BENCH_CONNECTIONS", 500),
+  clientThreads: positiveIntegerSetting("TYPESPEX_BENCH_CLIENT_THREADS", 2),
   timeoutSeconds: positiveIntegerSetting("TYPESPEX_BENCH_TIMEOUT", 10),
-  overallRate: optionalPositiveIntegerSetting("TYPESPEX_BENCH_OVERALL_RATE"),
   seed: Bun.env.TYPESPEX_BENCH_SEED ?? "typespex-http-v1",
 });
 
@@ -49,6 +48,12 @@ export function benchmarkServers(baselineRoot?: string): readonly BenchmarkServe
     throw new Error("TYPESPEX_BENCH_BASELINE_ROOT must not be empty.");
   }
   const servers: BenchmarkServer[] = [
+    {
+      id: "calibration",
+      name: "Cached response control",
+      port: 3462,
+      script: "bench-calibration.ts",
+    },
     { id: "bare-bun", name: "Bare Bun", port: 3457, script: "bench-baseline.ts" },
     { id: "hono", name: "Hono", port: 3458, script: "bench-hono.ts" },
     { id: "hono-zod", name: "Hono+Zod", port: 3459, script: "bench-hono-zod.ts" },
@@ -72,7 +77,7 @@ export interface BenchmarkScenario {
   readonly id: string;
   readonly name: string;
   readonly path: string;
-  readonly method?: autocannon.Request["method"];
+  readonly method?: "GET" | "POST";
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: string;
   readonly expectedStatus: number;
@@ -157,26 +162,6 @@ export function fetchWithTimeout(
   };
 }
 
-export function autocannonOptions(
-  url: string,
-  scenario: BenchmarkScenario,
-  duration = HTTP_SETTINGS.durationSeconds,
-): autocannon.Options {
-  return {
-    url,
-    duration,
-    connections: HTTP_SETTINGS.connections,
-    pipelining: HTTP_SETTINGS.pipelining,
-    timeout: HTTP_SETTINGS.timeoutSeconds,
-    bailout: 1,
-    overallRate: HTTP_SETTINGS.overallRate,
-    method: scenario.method ?? "GET",
-    headers: scenario.headers,
-    body: scenario.body,
-    expectBody: scenario.expectedBody,
-  };
-}
-
 export async function validateScenario(
   url: string,
   scenario: BenchmarkScenario,
@@ -209,81 +194,6 @@ export async function validateScenario(
   }
 }
 
-export type ValidatableAutocannonResult = Pick<
-  autocannon.Result,
-  "duration" | "errors" | "timeouts" | "mismatches" | "resets" | "non2xx" | "statusCodeStats"
-> & {
-  readonly requests: Pick<autocannon.Result["requests"], "average" | "sent" | "total">;
-  readonly latency: Pick<autocannon.Result["latency"], "average" | "max" | "p50" | "p99">;
-  readonly throughput: Pick<autocannon.Result["throughput"], "average">;
-};
-
-export function validateAutocannonResult(
-  result: ValidatableAutocannonResult,
-  scenario: BenchmarkScenario,
-  phase: "warmup" | "measurement",
-): void {
-  const problems: string[] = [];
-  const completed = result.requests.total;
-  if (completed <= 0) problems.push("completed no requests");
-  if (result.requests.sent < completed) {
-    problems.push(`sent ${result.requests.sent} requests but completed ${completed}`);
-  }
-  const positiveMetrics = [
-    ["duration", result.duration],
-    ["request rate", result.requests.average],
-    ["throughput", result.throughput.average],
-  ] as const;
-  for (const [name, value] of positiveMetrics) {
-    if (!Number.isFinite(value) || value <= 0) problems.push(`${name} was ${value}`);
-  }
-  const latencyMetrics = [
-    ["average latency", result.latency.average],
-    ["p50 latency", result.latency.p50],
-    ["p99 latency", result.latency.p99],
-    ["maximum latency", result.latency.max],
-  ] as const;
-  for (const [name, value] of latencyMetrics) {
-    if (!Number.isFinite(value) || value < 0) problems.push(`${name} was ${value}`);
-  }
-  if (result.errors !== 0) problems.push(`${result.errors} connection errors`);
-  if (result.timeouts !== 0) problems.push(`${result.timeouts} timeouts`);
-  if (result.mismatches !== 0) problems.push(`${result.mismatches} response-body mismatches`);
-  if (result.resets !== 0) problems.push(`${result.resets} pipeline resets`);
-
-  const statusEntries = Object.entries(result.statusCodeStats ?? {}).map(
-    ([status, stats]) => [Number(status), stats.count ?? 0] as const,
-  );
-  if (result.statusCodeStats === undefined) {
-    problems.push("autocannon did not provide exact status-code counts");
-  } else {
-    const expectedCount =
-      statusEntries.find(([status]) => status === scenario.expectedStatus)?.[1] ?? 0;
-    if (expectedCount !== completed) {
-      problems.push(
-        `${expectedCount}/${completed} responses had expected status ${scenario.expectedStatus}`,
-      );
-    }
-    const unexpected = statusEntries.filter(
-      ([status, count]) => status !== scenario.expectedStatus && count > 0,
-    );
-    if (unexpected.length > 0) {
-      problems.push(
-        `unexpected statuses ${unexpected.map(([status, count]) => `${status}:${count}`).join(", ")}`,
-      );
-    }
-  }
-
-  const expectedNon2xx =
-    scenario.expectedStatus >= 200 && scenario.expectedStatus < 300 ? 0 : completed;
-  if (result.non2xx !== expectedNon2xx) {
-    problems.push(`${result.non2xx} non-2xx responses, expected ${expectedNon2xx}`);
-  }
-  if (problems.length > 0) {
-    throw new Error(`${scenario.name} ${phase} was invalid: ${problems.join("; ")}.`);
-  }
-}
-
 export interface HttpSample {
   readonly trial: number;
   readonly sequence: number;
@@ -293,18 +203,14 @@ export interface HttpSample {
   readonly scenario: string;
   readonly requestsPerSecond: number;
   readonly requestsTotal: number;
-  readonly requestsSent: number;
   readonly latencyAverageMs: number;
   readonly latencyP50Ms: number;
   readonly latencyP99Ms: number;
   readonly latencyMaxMs: number;
   readonly throughputAverageBytesPerSecond: number;
   readonly durationSeconds: number;
-  readonly errors: number;
-  readonly timeouts: number;
-  readonly mismatches: number;
-  readonly resets: number;
-  readonly non2xx: number;
+  readonly bodyProbes: number;
+  readonly raw: OhaResult;
   readonly statusCodes: Readonly<Record<string, number>>;
   readonly startedAt: string;
   readonly finishedAt: string;
@@ -341,6 +247,7 @@ export function aggregateSamples(
         .map((sample) => [sample.trial, sample.requestsPerSecond]),
     );
     for (const server of servers) {
+      if (server.id === "calibration") continue;
       const group = samples.filter(
         (sample) => sample.scenarioId === scenario.id && sample.serverId === server.id,
       );
@@ -415,15 +322,6 @@ export function createSchedule(
   return schedule;
 }
 
-function runAutocannon(options: autocannon.Options): Promise<autocannon.Result> {
-  return new Promise((resolveResult, rejectResult) => {
-    autocannon(options, (error, result) => {
-      if (error) rejectResult(error);
-      else resolveResult(result);
-    });
-  });
-}
-
 function portIsOpen(port: number): Promise<boolean> {
   return new Promise((resolveOpen) => {
     const socket = createConnection({ host: "127.0.0.1", port });
@@ -464,7 +362,10 @@ async function stopServer(running: RunningServer): Promise<void> {
   if (activeChild === running.child) activeChild = undefined;
 }
 
-async function startServer(server: BenchmarkServer): Promise<RunningServer> {
+async function startServer(
+  server: BenchmarkServer,
+  scenario: BenchmarkScenario,
+): Promise<RunningServer> {
   if (await portIsOpen(server.port)) {
     throw new Error(
       `Port ${server.port} is already in use; refusing to benchmark another process.`,
@@ -472,7 +373,12 @@ async function startServer(server: BenchmarkServer): Promise<RunningServer> {
   }
   const child = Bun.spawn([process.execPath, "run", server.script], {
     cwd: import.meta.dir,
-    env: { ...Bun.env, TYPESPEX_BENCH_PORT: String(server.port) },
+    env: {
+      ...Bun.env,
+      TYPESPEX_BENCH_PORT: String(server.port),
+      TYPESPEX_BENCH_CONTROL_BODY: scenario.expectedBody,
+      TYPESPEX_BENCH_CONTROL_STATUS: String(scenario.expectedStatus),
+    },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -494,9 +400,12 @@ async function startServer(server: BenchmarkServer): Promise<RunningServer> {
         );
       }
       try {
-        const response = await fetch(`http://127.0.0.1:${server.port}/pets?limit=1`, {
-          signal: AbortSignal.timeout(250),
-        });
+        const response = await fetch(
+          `http://127.0.0.1:${server.port}${server.id === "calibration" ? "/__bench_health" : "/pets?limit=1"}`,
+          {
+            signal: AbortSignal.timeout(250),
+          },
+        );
         await response.arrayBuffer();
         if (response.status === 200 && child.exitCode === null) return running;
       } catch {
@@ -516,8 +425,9 @@ function extractSample(
   sequence: number,
   server: BenchmarkServer,
   scenario: BenchmarkScenario,
-  result: autocannon.Result,
+  measured: Awaited<ReturnType<typeof runOha>>,
 ): HttpSample {
+  const { result, bodyProbes, startedAt, finishedAt } = measured;
   return {
     trial,
     sequence,
@@ -525,28 +435,19 @@ function extractSample(
     server: server.name,
     scenarioId: scenario.id,
     scenario: scenario.name,
-    requestsPerSecond: result.requests.average,
-    requestsTotal: result.requests.total,
-    requestsSent: result.requests.sent,
-    latencyAverageMs: result.latency.average,
-    latencyP50Ms: result.latency.p50,
-    latencyP99Ms: result.latency.p99,
-    latencyMaxMs: result.latency.max,
-    throughputAverageBytesPerSecond: result.throughput.average,
-    durationSeconds: result.duration,
-    errors: result.errors,
-    timeouts: result.timeouts,
-    mismatches: result.mismatches,
-    resets: result.resets,
-    non2xx: result.non2xx,
-    statusCodes: Object.fromEntries(
-      Object.entries(result.statusCodeStats ?? {}).map(([status, stats]) => [
-        status,
-        stats.count ?? 0,
-      ]),
-    ),
-    startedAt: result.start.toISOString(),
-    finishedAt: result.finish.toISOString(),
+    requestsPerSecond: result.summary.requestsPerSec,
+    requestsTotal: result.statusCodeDistribution[String(scenario.expectedStatus)]!,
+    latencyAverageMs: result.summary.average * 1000,
+    latencyP50Ms: result.latencyPercentiles.p50 * 1000,
+    latencyP99Ms: result.latencyPercentiles.p99 * 1000,
+    latencyMaxMs: result.summary.slowest * 1000,
+    throughputAverageBytesPerSecond: result.summary.sizePerSec,
+    durationSeconds: result.summary.total,
+    statusCodes: result.statusCodeDistribution,
+    bodyProbes,
+    raw: result,
+    startedAt,
+    finishedAt,
   };
 }
 
@@ -554,19 +455,30 @@ function formatRate(value: number): string {
   return Math.round(value).toLocaleString("en-US");
 }
 
-function printSummary(aggregates: readonly HttpAggregate[]): void {
+function printSummary(
+  aggregates: readonly HttpAggregate[],
+  headroom: readonly HeadroomAssessment[],
+): void {
   const nameWidth = Math.max(12, ...aggregates.map((row) => row.server.length));
   console.log("\nMedian of trials; variability is median absolute deviation (MAD).\n");
-  console.log("Autocannon latency percentiles use whole-millisecond buckets; 0 ms means <1 ms.\n");
+  console.log("oha latencies are converted from seconds to milliseconds.\n");
   for (const scenario of SCENARIOS) {
-    console.log(scenario.name);
+    const calibration = headroom.find((row) => row.scenarioId === scenario.id)!;
+    console.log(
+      `${scenario.name} — ${calibration.verified ? "headroom verified" : "UNVERIFIED: headroom not demonstrated"}`,
+    );
+    console.log(
+      `  Control / fastest implementation: ${calibration.ratioToFastest?.median.toFixed(3) ?? "n/a"}x median, ${calibration.ratioToFastest?.min.toFixed(3) ?? "n/a"}x minimum; require ${calibration.requiredRatio}x in every trial.`,
+    );
     console.log(
       `  ${"Server".padEnd(nameWidth)} req/s median ± MAD       observed range       p50 ms   p99 ms   vs Bare`,
     );
     for (const row of aggregates.filter((candidate) => candidate.scenarioId === scenario.id)) {
       const rate = `${formatRate(row.requestsPerSecond.median)} ± ${formatRate(row.requestsPerSecond.mad)}`;
       const range = `${formatRate(row.requestsPerSecond.min)}–${formatRate(row.requestsPerSecond.max)}`;
-      const ratio = `${row.throughputRatioToBare.median.toFixed(3)}x`;
+      const ratio = calibration.verified
+        ? `${row.throughputRatioToBare.median.toFixed(3)}x`
+        : "unverified";
       console.log(
         `  ${row.server.padEnd(nameWidth)} ${rate.padStart(20)} ${range.padStart(20)} ${row.latencyP50Ms.median.toFixed(2).padStart(8)} ${row.latencyP99Ms.median.toFixed(2).padStart(8)} ${ratio.padStart(9)}`,
       );
@@ -574,7 +486,7 @@ function printSummary(aggregates: readonly HttpAggregate[]): void {
     const current = aggregates.find(
       (row) => row.scenarioId === scenario.id && row.serverId === "typespex",
     );
-    if (current?.throughputRatioToBaseline) {
+    if (calibration.verified && current?.throughputRatioToBaseline) {
       console.log(
         `  TypeSpex vs baseline: ${current.throughputRatioToBaseline.median.toFixed(3)}x median paired throughput`,
       );
@@ -591,11 +503,26 @@ async function writeArtifact(
   artifactPath?: string,
   error?: unknown,
 ): Promise<string> {
-  const aggregates = samples.length === schedule.length ? aggregateSamples(samples) : [];
+  const headroom = assessHeadroom(samples, schedule);
+  const aggregates =
+    samples.length === schedule.length
+      ? aggregateSamples(samples).map((row) => {
+          const verified =
+            complete &&
+            headroom.find((assessment) => assessment.scenarioId === row.scenarioId)?.verified ===
+              true;
+          return {
+            ...row,
+            comparisonsVerified: verified,
+            throughputRatioToBare: verified ? row.throughputRatioToBare : undefined,
+            throughputRatioToBaseline: verified ? row.throughputRatioToBaseline : undefined,
+          };
+        })
+      : [];
   return writeBenchmarkArtifact(
     "http",
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "http",
       complete,
       metadata,
@@ -603,6 +530,12 @@ async function writeArtifact(
       schedule,
       samples,
       aggregates,
+      comparisonValidity: {
+        verified: complete && headroom.length > 0 && headroom.every((row) => row.verified),
+        scenarios: headroom,
+        bodyValidation:
+          "Exact bodies before, during (~10 probes/s), and after load; all timed statuses and total response bytes checked.",
+      },
       error:
         error === undefined
           ? undefined
@@ -624,7 +557,13 @@ async function main(): Promise<void> {
     }
   }
 
+  for (const setting of ["TYPESPEX_BENCH_PIPELINING", "TYPESPEX_BENCH_OVERALL_RATE"]) {
+    if (Bun.env[setting] !== undefined)
+      throw new Error(`${setting} is unsupported by the calibrated oha throughput benchmark.`);
+  }
+  const client = await prepareOha();
   const metadata = {
+    loadGenerator: client,
     ...(await benchmarkMetadata(REPOSITORY_ROOT)),
     baseline:
       BASELINE_ROOT === undefined
@@ -639,7 +578,7 @@ async function main(): Promise<void> {
     schedule.length * (HTTP_SETTINGS.durationSeconds + HTTP_SETTINGS.warmupSeconds);
   console.log(
     `HTTP benchmark: ${HTTP_SETTINGS.trials} trials, ${HTTP_SETTINGS.connections} connections, ` +
-      `pipelining ${HTTP_SETTINGS.pipelining}, ${HTTP_SETTINGS.warmupSeconds}s warmup + ` +
+      `oha ${client.version} (${HTTP_SETTINGS.clientThreads} threads), ${HTTP_SETTINGS.warmupSeconds}s warmup + ` +
       `${HTTP_SETTINGS.durationSeconds}s measurement per cell.`,
   );
   console.log(
@@ -655,15 +594,12 @@ async function main(): Promise<void> {
       console.log(
         `[${cell.sequence}/${schedule.length}] trial ${cell.trial}: ${server.name} — ${scenario.name}`,
       );
-      const running = await startServer(server);
+      const running = await startServer(server, scenario);
       try {
         await validateScenario(url, scenario, "preflight", validationFetch);
-        const warmup = await runAutocannon(
-          autocannonOptions(url, scenario, HTTP_SETTINGS.warmupSeconds),
-        );
-        validateAutocannonResult(warmup, scenario, "warmup");
-        const measured = await runAutocannon(autocannonOptions(url, scenario));
-        validateAutocannonResult(measured, scenario, "measurement");
+        const probe = () => validateScenario(url, scenario, "during load", validationFetch);
+        await runOha(client.path, url, scenario, HTTP_SETTINGS, probe, HTTP_SETTINGS.warmupSeconds);
+        const measured = await runOha(client.path, url, scenario, HTTP_SETTINGS, probe);
         await validateScenario(url, scenario, "postflight", validationFetch);
         const sample = extractSample(cell.trial, cell.sequence, server, scenario, measured);
         samples.push(sample);
@@ -684,13 +620,23 @@ async function main(): Promise<void> {
   }
 
   const aggregates = aggregateSamples(samples);
-  printSummary(aggregates);
+  const headroom = assessHeadroom(samples, schedule);
   await writeArtifact(true, metadata, schedule, samples, artifactPath);
+  printSummary(aggregates, headroom);
+  if (Bun.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(Bun.env.GITHUB_STEP_SUMMARY, headroomReport(headroom));
+    const unverified = headroom.filter((row) => !row.verified).map((row) => row.scenarioId);
+    if (unverified.length > 0)
+      console.warn(
+        `::warning title=Unverified HTTP comparisons::Headroom not demonstrated for ${unverified.join(", ")}; comparative ratios withheld.`,
+      );
+  }
   console.log(`Raw trials, schedule, settings, and machine metadata: ${artifactPath}`);
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
+    stopOha();
     activeChild?.kill(signal);
     process.exit(signal === "SIGINT" ? 130 : 143);
   });

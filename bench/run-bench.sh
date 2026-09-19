@@ -5,7 +5,7 @@ REPOSITORY_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 cd "$REPOSITORY_ROOT"
 
 if command -v lsof >/dev/null 2>&1; then
-  for port in 3456 3457 3458 3459 3461; do
+  for port in 3456 3457 3458 3459 3461 3462; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
       echo "Port $port is already in use; refusing to stop an unrelated process." >&2
       lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true

@@ -6,7 +6,6 @@ import { join } from "node:path";
 import {
   aggregateSamples,
   benchmarkServers,
-  autocannonOptions,
   type BenchmarkScenario,
   createSchedule,
   fetchWithTimeout,
@@ -14,8 +13,6 @@ import {
   HTTP_SETTINGS,
   SCENARIOS,
   SERVERS,
-  type ValidatableAutocannonResult,
-  validateAutocannonResult,
   validateScenario,
 } from "./bench.js";
 import {
@@ -32,25 +29,27 @@ import {
   type MatcherRoundSample,
   validateMatcher,
 } from "./bench-matchers.js";
+import { ohaArguments, validateOhaResult, type OhaResult, runOha } from "./oha.js";
+import { assessHeadroom, headroomReport } from "./headroom.js";
 import { CREATED_PET, createPetFixture } from "./fixture.js";
 
-function resultFor(
-  status: number,
-  total = 100,
-  overrides: Partial<ValidatableAutocannonResult> = {},
-): ValidatableAutocannonResult {
+function resultFor(scenario: BenchmarkScenario, total = 100): OhaResult {
+  const size = Buffer.byteLength(scenario.expectedBody);
   return {
-    requests: { average: 1_000, sent: total, total },
-    latency: { average: 1, p50: 1, p99: 2, max: 3 },
-    throughput: { average: 10_000 },
-    duration: 1,
-    errors: 0,
-    timeouts: 0,
-    mismatches: 0,
-    resets: 0,
-    non2xx: status >= 200 && status < 300 ? 0 : total,
-    statusCodeStats: { [String(status)]: { count: total } },
-    ...overrides,
+    summary: {
+      successRate: 1,
+      total: 1,
+      slowest: 0.003,
+      fastest: 0.0001,
+      average: 0.001,
+      requestsPerSec: total,
+      totalData: total * size,
+      sizePerRequest: size,
+      sizePerSec: total * size,
+    },
+    latencyPercentiles: { p50: 0.001, p99: 0.002 },
+    statusCodeDistribution: { [scenario.expectedStatus]: total },
+    errorDistribution: {},
   };
 }
 
@@ -70,17 +69,17 @@ describe("HTTP benchmark validation", () => {
     );
   });
 
-  test("passes the complete create request and expected body to autocannon", () => {
-    const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
-    const options = autocannonOptions("http://127.0.0.1:3456/pets", create, 3);
-    expect(options).toMatchObject({
-      method: "POST",
-      duration: 3,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Bench", tag: "test" }),
-      expectBody: JSON.stringify(CREATED_PET),
-      bailout: 1,
-    });
+  test("passes the complete request to oha without shell interpolation", () => {
+    const scenario = SCENARIOS.find((scenario) => scenario.id === "create-formatted")!;
+    const url = "http://127.0.0.1:3456/pets";
+    const args = ohaArguments(url, scenario, HTTP_SETTINGS, 3);
+    expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "POST"]);
+    expect(args.slice(args.indexOf("-d"), args.indexOf("-d") + 2)).toEqual(["-d", scenario.body!]);
+    expect(args).toContain("content-type: application/json");
+    expect(args).toContain("--no-tui");
+    expect(args).toContain("--wait-ongoing-requests-after-deadline");
+    expect(args.at(-1)).toBe(url);
+    expect(args[args.indexOf("-z") + 1]).toBe("3s");
   });
 
   test("preflight checks method, status, content type, and exact response body", async () => {
@@ -162,39 +161,89 @@ describe("HTTP benchmark validation", () => {
   });
 
   test("timed validation accepts exact success and modeled-error distributions", () => {
-    const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
-    const notFound = SCENARIOS.find((scenario) => scenario.id === "not-found")!;
-    expect(() => validateAutocannonResult(resultFor(200), create, "measurement")).not.toThrow();
-    expect(() => validateAutocannonResult(resultFor(404), notFound, "measurement")).not.toThrow();
+    for (const scenario of SCENARIOS)
+      expect(validateOhaResult(resultFor(scenario), scenario)).toEqual(resultFor(scenario));
   });
 
-  test("timed validation rejects transport errors, body mismatches, and hidden statuses", () => {
-    const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
-    const invalid = resultFor(200, 100, {
-      errors: 1,
-      mismatches: 2,
-      non2xx: 1,
-      statusCodeStats: { "200": { count: 99 }, "500": { count: 1 } },
-    });
-    expect(() => validateAutocannonResult(invalid, create, "measurement")).toThrow(
-      "1 connection errors",
-    );
-    expect(() => validateAutocannonResult(invalid, create, "measurement")).toThrow(
-      "unexpected statuses 500:1",
-    );
+  test("timed validation rejects errors, missing data, hidden statuses, and wrong body sizes", () => {
+    const scenario = SCENARIOS[0]!;
+    const result = resultFor(scenario);
+    for (const invalid of [
+      null,
+      {},
+      { ...result, summary: [] },
+      { ...result, errorDistribution: { timeout: 1 } },
+      { ...result, statusCodeDistribution: { 200: 99, 500: 1 } },
+      { ...result, statusCodeDistribution: { 200: -1 } },
+      { ...result, summary: { ...result.summary, totalData: 1 } },
+      { ...result, summary: { ...result.summary, requestsPerSec: NaN } },
+      { ...result, summary: { ...result.summary, requestsPerSec: 200 } },
+      { ...result, latencyPercentiles: { p50: 0, p99: Infinity } },
+    ])
+      expect(() => validateOhaResult(invalid, scenario)).toThrow();
   });
 
-  test("timed validation rejects corrupt numeric statistics", () => {
-    const create = SCENARIOS.find((scenario) => scenario.id === "create")!;
-    expect(() =>
-      validateAutocannonResult(
-        resultFor(200, 100, {
-          requests: { average: Number.NaN, sent: 99, total: 100 },
+  test("headroom requires every cell and 25% reserve in every paired trial", () => {
+    const samples = [
+      { scenarioId: "list", serverId: "calibration", trial: 1, requestsPerSecond: 150 },
+      { scenarioId: "list", serverId: "typespex", trial: 1, requestsPerSecond: 100 },
+      { scenarioId: "list", serverId: "elysia", trial: 1, requestsPerSecond: 120 },
+      { scenarioId: "list", serverId: "calibration", trial: 2, requestsPerSecond: 250 },
+      { scenarioId: "list", serverId: "typespex", trial: 2, requestsPerSecond: 200 },
+      { scenarioId: "list", serverId: "elysia", trial: 2, requestsPerSecond: 180 },
+    ];
+    expect(assessHeadroom(samples, samples)[0]?.verified).toBeTrue();
+    for (const incomplete of [samples.slice(1), samples.slice(0, 3), [...samples, samples[0]!]]) {
+      expect(assessHeadroom(incomplete, samples)[0]?.verified).toBeFalse();
+    }
+    const capped = samples.map((sample, index) =>
+      index === 3 ? { ...sample, requestsPerSecond: 249 } : sample,
+    );
+    expect(assessHeadroom(capped, samples)[0]?.verified).toBeFalse();
+    expect(assessHeadroom([], samples)[0]?.verified).toBeFalse();
+  });
+
+  test("a failed body probe stops the load generator", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oha-process-"));
+    const script = join(directory, "client");
+    const marker = join(directory, "stopped");
+    try {
+      await Bun.write(
+        script,
+        `#!${process.execPath}\nprocess.on('SIGTERM', () => {}); setTimeout(() => Bun.write(${JSON.stringify(marker)}, 'leaked'), 1500); setInterval(() => {}, 1000);`,
+      );
+      await Bun.$`chmod +x ${script}`.quiet();
+      await expect(
+        runOha(script, "http://localhost/", SCENARIOS[0]!, HTTP_SETTINGS, async () => {
+          throw new Error("wrong body");
         }),
-        create,
-        "measurement",
-      ),
-    ).toThrow("request rate was NaN");
+      ).rejects.toThrow("wrong body");
+      await Bun.sleep(1600);
+      expect(await Bun.file(marker).exists()).toBeFalse();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("CI summaries warn when headroom is missing and name unverified scenarios", () => {
+    const verified = {
+      scenarioId: "list",
+      verified: true,
+      requiredRatio: 1.25,
+      ratioToFastest: summarize([1.3, 1.5]),
+      trials: [
+        { trial: 1, ratio: 1.3 },
+        { trial: 2, ratio: 1.5 },
+      ],
+    };
+    expect(headroomReport([verified])).toContain("All scenarios passed");
+    const report = headroomReport([
+      verified,
+      { ...verified, scenarioId: "read", verified: false, ratioToFastest: null, trials: [] },
+    ]);
+    expect(report).toContain("**Warning:");
+    expect(report).toContain("| read | n/a | UNVERIFIED — ratios withheld |");
+    expect(headroomReport([])).toContain("**Warning:");
   });
 
   test("a full rotation places every server in every position for each scenario", () => {
@@ -203,7 +252,7 @@ describe("HTTP benchmark validation", () => {
       warmupSeconds: 1,
       trials: SERVERS.length,
       connections: 1,
-      pipelining: 1,
+      clientThreads: 1,
       timeoutSeconds: 1,
       seed: "schedule-test",
     });
@@ -302,18 +351,14 @@ describe("benchmark statistics and fixtures", () => {
         scenario: scenario.name,
         requestsPerSecond,
         requestsTotal: 1,
-        requestsSent: 1,
         latencyAverageMs: 1,
         latencyP50Ms: 1,
         latencyP99Ms: 2,
         latencyMaxMs: 3,
         throughputAverageBytesPerSecond: 1,
         durationSeconds: 1,
-        errors: 0,
-        timeouts: 0,
-        mismatches: 0,
-        resets: 0,
-        non2xx: 0,
+        bodyProbes: 1,
+        raw: resultFor(scenario),
         statusCodes: { "200": 1 },
         startedAt: "2026-01-01T00:00:00.000Z",
         finishedAt: "2026-01-01T00:00:01.000Z",

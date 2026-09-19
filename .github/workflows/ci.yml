@@ -18,13 +18,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # This advisory affects UUID v3/v5/v6 buffer writes. The locked UUID is
-      # reached only by the private benchmark's hyperid dependency, which uses v4.
       # GHSA-2q42-4q24-7rgv requires @typespec/openapi3's unsafe {version}
       # output path. We neither install nor invoke that emitter, and no patched
       # TypeSpec release exists yet.
@@ -40,7 +38,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -60,7 +58,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -102,7 +100,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -180,7 +178,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -253,7 +251,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -282,7 +280,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
@@ -309,7 +307,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
