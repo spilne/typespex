@@ -171,14 +171,20 @@ function objectJsonSerializer<A extends object>(
     const output: Record<string, unknown> = Object.create(null);
 
     for (const property of prepared) {
-      const propertyPath = path + property.pathSuffix;
       const present = Object.prototype.hasOwnProperty.call(source, property.property);
       const propertyValue = present ? source[property.property] : undefined;
       if (!present || propertyValue === undefined) {
         if (property.optional) continue;
-        throw new JsonSerializationError(propertyPath, "Required property is missing.");
+        throw new JsonSerializationError(
+          path + property.pathSuffix,
+          "Required property is missing.",
+        );
       }
-      output[property.wireName] = serializeNested(property.serializer, propertyValue, propertyPath);
+      output[property.wireName] = serializeNested(
+        property.serializer,
+        propertyValue,
+        path + property.pathSuffix,
+      );
     }
 
     if (additionalProperties) {
