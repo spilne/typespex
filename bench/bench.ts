@@ -88,6 +88,13 @@ export const SCENARIOS: readonly BenchmarkScenario[] = [
     expectedBody: JSON.stringify(INITIAL_PETS.slice(0, 10)),
   },
   {
+    id: "list-unused-query",
+    name: "GET /pets (29 unused query fields)",
+    path: `/pets?limit=10&${Array.from({ length: 29 }, (_, index) => `extra${index}=${index}`).join("&")}`,
+    expectedStatus: 200,
+    expectedBody: JSON.stringify(INITIAL_PETS.slice(0, 10)),
+  },
+  {
     id: "read",
     name: "GET /pets/:id (success)",
     path: "/pets/pet-0",

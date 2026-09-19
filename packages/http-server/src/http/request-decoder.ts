@@ -72,10 +72,15 @@ type RequestDecoderValues<TDecoders extends RequestDecoderTuple> = {
 // Request decoder constructors
 // ---------------------------------------------------------------------------
 
+const queryReadCounts = new WeakMap<RequestDecoder<unknown>, number>();
+
 function createRequestDecoder<A>(
   decode: (input: RequestInputSource) => DecoderResult<A>,
+  queryReads = 0,
 ): RequestDecoder<A> {
-  return Decoder.of(decode);
+  const decoder = Decoder.of(decode);
+  queryReadCounts.set(decoder, queryReads);
+  return decoder;
 }
 
 /** Decodes a path parameter. */
@@ -155,12 +160,15 @@ export function requiredQuery<A>(
     options.includedNames === undefined ? undefined : new Set(options.includedNames);
   const excludedNames = new Set(options.excludedNames ?? []);
   const prefix = `$query.${name}`;
-  return createRequestDecoder((input) => {
-    const value = readQueryValue(input, name, options, includedNames, excludedNames);
-    if (isLeft(value)) return prefixIssues(value, prefix);
-    const result = decoder.decode(value.right);
-    return isLeft(result) ? prefixIssues(result, prefix) : result;
-  });
+  return createRequestDecoder(
+    (input) => {
+      const value = readQueryValue(input, name, options, includedNames, excludedNames);
+      if (isLeft(value)) return prefixIssues(value, prefix);
+      const result = decoder.decode(value.right);
+      return isLeft(result) ? prefixIssues(result, prefix) : result;
+    },
+    options.record && options.explode === true ? 0 : 1,
+  );
 }
 
 /** Decodes a header. */
@@ -211,7 +219,14 @@ export function combineRequestDecoders<TDecoders extends RequestDecoderTuple, A>
   decoders: [...TDecoders],
   f: (...values: RequestDecoderValues<TDecoders>) => A,
 ): RequestDecoder<A> {
+  // Opaque/custom decoders count as one read; nested combinations retain their
+  // known count. Larger groups index once instead of repeatedly searching.
+  const queryReads = decoders.reduce(
+    (count, decoder) => count + (queryReadCounts.get(decoder) ?? 1),
+    0,
+  );
   return createRequestDecoder((input) => {
+    if (queryReads > MAX_DIRECT_QUERY_READS) indexedQueryInputs.add(input);
     let issues: ValidationIssue[] | null = null;
     const values: unknown[] = [];
 
@@ -229,7 +244,7 @@ export function combineRequestDecoders<TDecoders extends RequestDecoderTuple, A>
     }
 
     return Either.right(f(...(values as RequestDecoderValues<TDecoders>)));
-  });
+  }, queryReads);
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +548,7 @@ function readRawQueryValue(
   options: QueryParameterDecodeOptions,
 ): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
   const rawValues = rawQuery.includes("&")
-    ? (indexedQueryValues(input, rawQuery)[name] ?? [])
+    ? multipleQueryValues(input, rawQuery, name)
     : singleQueryValues(rawQuery, name);
 
   if (rawValues.length === 0) {
@@ -572,18 +587,63 @@ function readRawQueryValue(
   return Either.right(values.right.length === 1 ? values.right[0] : values.right);
 }
 
+// Direct lookup avoids allocating entries for unused fields. Beyond a small
+// group of readers, sharing an index is faster on both Bun and Node.
+const MAX_DIRECT_QUERY_READS = 5;
+const ENCODED_QUERY_NAME = /(?:^|&)[^=&]*[%+]/;
+const indexedQueryInputs = new WeakSet<RequestInputSource>();
 const queryIndexes = new WeakMap<
   RequestInputSource,
-  { text: string; values: Readonly<Record<string, readonly string[]>> }
+  { text: string; values?: Readonly<Record<string, readonly string[]>> }
 >();
+
+function multipleQueryValues(
+  input: RequestInputSource,
+  text: string,
+  name: string,
+): readonly string[] {
+  const cached = queryIndexes.get(input);
+  if (cached?.text === text && cached.values !== undefined) return cached.values[name] ?? [];
+  if (indexedQueryInputs.has(input)) return indexedQueryValues(input, text)[name] ?? [];
+
+  // Encoded names can alias literal names, but encoded values can stay lazy.
+  // Remember the name check so each requested value does not repeat the scan.
+  if (cached?.text !== text && (text.includes("%") || text.includes("+"))) {
+    if (ENCODED_QUERY_NAME.test(text)) return indexedQueryValues(input, text)[name] ?? [];
+    queryIndexes.set(input, { text });
+  }
+  return literalQueryValues(text, name);
+}
+
+function literalQueryValues(text: string, name: string): readonly string[] {
+  if (name.includes("&") || name.includes("=")) return [];
+  const needle = `&${name}`;
+  const values: string[] = [];
+  let match = 0;
+  if (!text.startsWith(name)) {
+    const separator = text.indexOf(needle);
+    if (separator === -1) return values;
+    match = separator + 1;
+  }
+  while (true) {
+    const afterName = match + name.length;
+    const next = text[afterName];
+    if (next === "=") {
+      const end = text.indexOf("&", afterName + 1);
+      values.push(text.substring(afterName + 1, end === -1 ? text.length : end));
+    } else if (next === "&" || afterName === text.length) values.push("");
+
+    // Check every occurrence: duplicates and bare/empty fields are significant.
+    const separator = text.indexOf(needle, afterName);
+    if (separator === -1) return values;
+    match = separator + 1;
+  }
+}
 
 function indexedQueryValues(
   input: RequestInputSource,
   text: string,
 ): Readonly<Record<string, readonly string[]>> {
-  const cached = queryIndexes.get(input);
-  if (cached?.text === text) return cached.values;
-
   // Named parameters share the scan, while values remain raw so composite
   // separators are still split before percent decoding. A changed source is
   // reindexed; no parsed query data is shared between requests.

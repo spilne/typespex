@@ -5,6 +5,9 @@ Hono with Zod validation, Elysia, and bare Bun. Hono with Zod and Elysia perform
 query and body validation used by the TypeSpex workloads; bare Bun and plain Hono
 provide comparisons without that validation.
 
+One GET scenario adds 29 unused query fields alongside `limit` to measure whether
+reading the declared parameters does unnecessary work on the rest of the query.
+
 POST requests cover both compact and formatted JSON with the same validated
 payload and expected response, so parsing comparisons include both representations.
 

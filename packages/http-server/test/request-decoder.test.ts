@@ -12,6 +12,70 @@ import {
 import type { Decoder, RequestDecoder } from "../src/server.js";
 
 describe("http request decoders (sync)", () => {
+  test("direct query reads preserve boundaries, duplicates, and empty names", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.query("x", Decoders.array(Decoders.string), { array: true }),
+        RequestDecoders.query("x1", Decoders.integer),
+        RequestDecoders.query("", Decoders.array(Decoders.string), { array: true }),
+        RequestDecoders.query("x=1", Decoders.string.optional()),
+        RequestDecoders.query("x&x1", Decoders.string.optional()),
+      ],
+      (...values) => values,
+    );
+    expect(
+      decodeRequestInput(
+        decoder,
+        new Request("http://localhost/?x1=9&x=1&x&=empty&&x=&=last&x-suffix=ignored"),
+        {},
+      ),
+    ).toEqual(Either.right([["1", "", ""], 9, ["empty", "", "last"], undefined, undefined]));
+  });
+
+  test("direct query reads keep encoded values raw until composite decoding", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.query("list", Decoders.array(Decoders.string), {
+          array: true,
+          explode: false,
+        }),
+        RequestDecoders.query("record", Decoders.record(Decoders.string), { record: true }),
+        RequestDecoders.query("bare", Decoders.string),
+      ],
+      (...values) => values,
+    );
+    expect(
+      decodeRequestInput(
+        decoder,
+        new Request("http://localhost/?unused=%ZZ&list=a%2Cb,c&record=a,x%2Cy,b,hello+world&bare"),
+        {},
+      ),
+    ).toEqual(Either.right([["a,b", "c"], { a: "x,y", b: "hello world" }, ""]));
+  });
+
+  test("nested query combinations preserve results for frozen request sources", () => {
+    const first = RequestDecoders.combine(
+      ["a", "b", "c"].map((name) => RequestDecoders.query(name, Decoders.integer)),
+      (...values) => values,
+    );
+    const second = RequestDecoders.combine(
+      ["d", "e", "f"].map((name) => RequestDecoders.query(name, Decoders.integer)),
+      (...values) => values,
+    );
+    const decoder = RequestDecoders.combine([first, second], (a, b) => [...a, ...b]);
+    expect(
+      decoder.decode(
+        Object.freeze({
+          rawQuery: "a=1&b=2&c=3&d=4&e=5&f=6&unused=%ZZ",
+          pathParams: {},
+          query: new URLSearchParams(),
+          headers: new Headers(),
+          cookies: {},
+        }),
+      ),
+    ).toEqual(Either.right([1, 2, 3, 4, 5, 6]));
+  });
+
   test("query indexes preserve encoded names, duplicates, and raw composite separators", () => {
     const decoder = RequestDecoders.combine(
       [
@@ -32,15 +96,33 @@ describe("http request decoders (sync)", () => {
         new Request(
           "http://localhost/?__proto__=p&constructor=c&n%61me=A&name=B&bad%ZZ=ignored&list=a%2Cb,c&record=a,1,%62,2",
         ),
+        {},
       ),
     ).toEqual(Either.right(["p", "c", ["A", "B"], ["a,b", "c"], { a: 1, b: 2 }]));
+  });
+
+  test("cached query name checks follow source changes", () => {
+    const source = {
+      pathParams: {},
+      query: new URLSearchParams(),
+      rawQuery: "a=hello%20world&b=2",
+      headers: new Headers(),
+      cookies: {},
+    };
+    const decoder = RequestDecoders.query("a", Decoders.array(Decoders.string), { array: true });
+    expect(decoder.decode(source)).toEqual(Either.right(["hello world"]));
+    expect(decoder.decode(source)).toEqual(Either.right(["hello world"]));
+    source.rawQuery = "%61=changed&a=last";
+    expect(decoder.decode(source)).toEqual(Either.right(["changed", "last"]));
+    source.rawQuery = "a=hello+again&b=2";
+    expect(decoder.decode(source)).toEqual(Either.right(["hello again"]));
   });
 
   test("query indexes follow source changes without sharing mutable decoded results", () => {
     const source = {
       pathParams: {},
       query: new URLSearchParams(),
-      rawQuery: "a=1&b=2&a=3",
+      rawQuery: "a=1&b=2&%61=3",
       headers: new Headers(),
       cookies: {},
     };
@@ -49,9 +131,9 @@ describe("http request decoders (sync)", () => {
     expect(first).toEqual(Either.right(["1", "3"]));
     if (first._tag === "Right") first.right.push("changed");
     expect(decoder.decode(source)).toEqual(Either.right(["1", "3"]));
-    source.rawQuery = "a=4&b=5";
+    source.rawQuery = "%61=4&b=5";
     expect(decoder.decode(source)).toEqual(Either.right(["4"]));
-    expect(decoder.decode({ ...source, rawQuery: "a=6&b=7" })).toEqual(Either.right(["6"]));
+    expect(decoder.decode({ ...source, rawQuery: "%61=6&b=7" })).toEqual(Either.right(["6"]));
     expect(decoder.decode(source)).toEqual(Either.right(["4"]));
   });
 
