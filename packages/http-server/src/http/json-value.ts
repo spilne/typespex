@@ -10,13 +10,14 @@ const NATIVE_JSON_FALLBACK_PATTERN = /\d{16}|[\r\n\t]|[,:] /;
 const LARGE_JSON_INTEGER_PATTERN = /\d{16}/;
 
 export function parseJsonText(text: string): unknown {
-  const multiline = text.includes("\n");
+  const noncanonical = NATIVE_JSON_FALLBACK_PATTERN.test(text);
+  const multiline = noncanonical && text.includes("\n");
   // Native parsing is lossless when small-number JSON survives a round trip,
   // allowing multiline whitespace only outside strings. The comparison also
   // rules out duplicate keys and negative-zero changes.
   // Large integer tokens retain the parser's bigint and digit-limit semantics.
   if (
-    !(multiline ? LARGE_JSON_INTEGER_PATTERN : NATIVE_JSON_FALLBACK_PATTERN).test(text) &&
+    (!noncanonical || (multiline && !LARGE_JSON_INTEGER_PATTERN.test(text))) &&
     !("toJSON" in Object.prototype) &&
     !("toJSON" in Array.prototype)
   ) {
