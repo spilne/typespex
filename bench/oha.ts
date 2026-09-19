@@ -221,7 +221,7 @@ export async function runOha(
     finished = true;
   });
   try {
-    await Promise.all([exit, sampleBodies]);
+    await Promise.all([exit, sampleBodies, stdout, stderr]);
     const [output, diagnostics] = await Promise.all([stdout, stderr]);
     if (timedOut || child.exitCode !== 0) {
       throw new Error(`oha ${timedOut ? "timed out" : `exited ${child.exitCode}`}: ${diagnostics}`);

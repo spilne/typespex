@@ -30,7 +30,7 @@ import {
   validateMatcher,
 } from "./bench-matchers.js";
 import { ohaArguments, validateOhaResult, type OhaResult, runOha } from "./oha.js";
-import { assessHeadroom } from "./headroom.js";
+import { assessHeadroom, headroomReport } from "./headroom.js";
 import { CREATED_PET, createPetFixture } from "./fixture.js";
 
 function resultFor(scenario: BenchmarkScenario, total = 100): OhaResult {
@@ -223,6 +223,27 @@ describe("HTTP benchmark validation", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  test("CI summaries warn when headroom is missing and name unverified scenarios", () => {
+    const verified = {
+      scenarioId: "list",
+      verified: true,
+      requiredRatio: 1.25,
+      ratioToFastest: summarize([1.3, 1.5]),
+      trials: [
+        { trial: 1, ratio: 1.3 },
+        { trial: 2, ratio: 1.5 },
+      ],
+    };
+    expect(headroomReport([verified])).toContain("All scenarios passed");
+    const report = headroomReport([
+      verified,
+      { ...verified, scenarioId: "read", verified: false, ratioToFastest: null, trials: [] },
+    ]);
+    expect(report).toContain("**Warning:");
+    expect(report).toContain("| read | n/a | UNVERIFIED — ratios withheld |");
+    expect(headroomReport([])).toContain("**Warning:");
   });
 
   test("a full rotation places every server in every position for each scenario", () => {

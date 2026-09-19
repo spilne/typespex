@@ -1,7 +1,8 @@
+import { appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { resolve } from "node:path";
 import { prepareOha, runOha, stopOha, type OhaResult } from "./oha.js";
-import { assessHeadroom, type HeadroomAssessment } from "./headroom.js";
+import { assessHeadroom, headroomReport, type HeadroomAssessment } from "./headroom.js";
 import {
   balancedOrder,
   benchmarkMetadata,
@@ -464,10 +465,10 @@ function printSummary(
   for (const scenario of SCENARIOS) {
     const calibration = headroom.find((row) => row.scenarioId === scenario.id)!;
     console.log(
-      `${scenario.name} — ${calibration.verified ? "headroom verified" : "UNVERIFIED: insufficient client headroom"}`,
+      `${scenario.name} — ${calibration.verified ? "headroom verified" : "UNVERIFIED: headroom not demonstrated"}`,
     );
     console.log(
-      `  Control / fastest implementation: ${calibration.ratioToFastest!.median.toFixed(3)}x median, ${calibration.ratioToFastest!.min.toFixed(3)}x minimum; require ${calibration.requiredRatio}x in every trial.`,
+      `  Control / fastest implementation: ${calibration.ratioToFastest?.median.toFixed(3) ?? "n/a"}x median, ${calibration.ratioToFastest?.min.toFixed(3) ?? "n/a"}x minimum; require ${calibration.requiredRatio}x in every trial.`,
     );
     console.log(
       `  ${"Server".padEnd(nameWidth)} req/s median ± MAD       observed range       p50 ms   p99 ms   vs Bare`,
@@ -619,8 +620,17 @@ async function main(): Promise<void> {
   }
 
   const aggregates = aggregateSamples(samples);
-  printSummary(aggregates, assessHeadroom(samples, schedule));
+  const headroom = assessHeadroom(samples, schedule);
   await writeArtifact(true, metadata, schedule, samples, artifactPath);
+  printSummary(aggregates, headroom);
+  if (Bun.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(Bun.env.GITHUB_STEP_SUMMARY, headroomReport(headroom));
+    const unverified = headroom.filter((row) => !row.verified).map((row) => row.scenarioId);
+    if (unverified.length > 0)
+      console.warn(
+        `::warning title=Unverified HTTP comparisons::Headroom not demonstrated for ${unverified.join(", ")}; comparative ratios withheld.`,
+      );
+  }
   console.log(`Raw trials, schedule, settings, and machine metadata: ${artifactPath}`);
 }
 

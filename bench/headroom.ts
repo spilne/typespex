@@ -22,6 +22,28 @@ export interface HeadroomAssessment {
 // the client's absolute ceiling or a statistical significance test for a gap.
 const REQUIRED_RATIO = 1.25;
 
+export function headroomReport(assessments: readonly HeadroomAssessment[]): string {
+  const verified = assessments.length > 0 && assessments.every((row) => row.verified);
+  const rows = assessments.map(
+    (row) =>
+      `| ${row.scenarioId} | ${row.ratioToFastest?.min.toFixed(3) ?? "n/a"} | ${row.verified ? "Verified" : "UNVERIFIED — ratios withheld"} |`,
+  );
+  return [
+    "## HTTP benchmark headroom",
+    "",
+    verified
+      ? "All scenarios passed the observed headroom check."
+      : "**Warning: headroom was not demonstrated for every scenario. Do not use unverified measurements for framework comparisons.**",
+    "",
+    "| Scenario | Minimum control / fastest implementation | Headroom |",
+    "| --- | ---: | --- |",
+    ...rows,
+    "",
+    "Requires at least 1.25× in every trial. This sequential calibration does not establish statistical significance or exclude shared-machine contention. See the raw JSON artifact for rates, variability, and sampled-body validation counts.",
+    "",
+  ].join("\n");
+}
+
 export function assessHeadroom(
   samples: readonly Rate[],
   schedule: readonly Cell[],

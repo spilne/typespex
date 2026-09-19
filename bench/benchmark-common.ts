@@ -19,16 +19,6 @@ export function positiveIntegerSetting(name: string, fallback: number): number {
   return value;
 }
 
-export function optionalPositiveIntegerSetting(name: string): number | undefined {
-  const raw = Bun.env[name];
-  if (raw === undefined) return undefined;
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer when set.`);
-  }
-  return value;
-}
-
 export function median(values: readonly number[]): number {
   if (values.length === 0) throw new Error("Cannot calculate a median without values.");
   const sorted = [...values].sort((left, right) => left - right);
