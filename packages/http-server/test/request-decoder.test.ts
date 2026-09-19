@@ -12,6 +12,49 @@ import {
 import type { Decoder, RequestDecoder } from "../src/server.js";
 
 describe("http request decoders (sync)", () => {
+  test("query indexes preserve encoded names, duplicates, and raw composite separators", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.query("__proto__", Decoders.string),
+        RequestDecoders.query("constructor", Decoders.string),
+        RequestDecoders.query("name", Decoders.array(Decoders.string), { array: true }),
+        RequestDecoders.query("list", Decoders.array(Decoders.string), {
+          array: true,
+          explode: false,
+        }),
+        RequestDecoders.query("record", Decoders.record(Decoders.integer), { record: true }),
+      ],
+      (...values) => values,
+    );
+    expect(
+      decodeRequestInput(
+        decoder,
+        new Request(
+          "http://localhost/?__proto__=p&constructor=c&n%61me=A&name=B&bad%ZZ=ignored&list=a%2Cb,c&record=a,1,%62,2",
+        ),
+      ),
+    ).toEqual(Either.right(["p", "c", ["A", "B"], ["a,b", "c"], { a: 1, b: 2 }]));
+  });
+
+  test("query indexes follow source changes without sharing mutable decoded results", () => {
+    const source = {
+      pathParams: {},
+      query: new URLSearchParams(),
+      rawQuery: "a=1&b=2&a=3",
+      headers: new Headers(),
+      cookies: {},
+    };
+    const decoder = RequestDecoders.query("a", Decoders.array(Decoders.string), { array: true });
+    const first = decoder.decode(source);
+    expect(first).toEqual(Either.right(["1", "3"]));
+    if (first._tag === "Right") first.right.push("changed");
+    expect(decoder.decode(source)).toEqual(Either.right(["1", "3"]));
+    source.rawQuery = "a=4&b=5";
+    expect(decoder.decode(source)).toEqual(Either.right(["4"]));
+    expect(decoder.decode({ ...source, rawQuery: "a=6&b=7" })).toEqual(Either.right(["6"]));
+    expect(decoder.decode(source)).toEqual(Either.right(["4"]));
+  });
+
   test("RequestDecoders.combine builds typed objects applicatively", () => {
     const decoder = RequestDecoders.combine(
       [

@@ -5,21 +5,27 @@ import { defineDataProperty } from "./object-properties.js";
 const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const DECIMAL_INTEGER_PATTERN = /^-?(?:0|[1-9]\d*)$/;
 const MAX_LOSSLESS_JSON_INTEGER_DIGITS = 20;
-// Skip common formatting so a failed round trip does not add two native passes.
+// Avoid failed native round trips for noncanonical single-line formatting.
 const NATIVE_JSON_FALLBACK_PATTERN = /\d{16}|[\r\n\t]|[,:] /;
+const LARGE_JSON_INTEGER_PATTERN = /\d{16}/;
 
 export function parseJsonText(text: string): unknown {
-  // Native parsing is lossless when small-number JSON survives an exact round
-  // trip. Equality also rules out duplicate keys and negative-zero changes.
+  const multiline = text.includes("\n");
+  // Native parsing is lossless when small-number JSON survives a round trip,
+  // allowing multiline whitespace only outside strings. The comparison also
+  // rules out duplicate keys and negative-zero changes.
   // Large integer tokens retain the parser's bigint and digit-limit semantics.
   if (
-    !NATIVE_JSON_FALLBACK_PATTERN.test(text) &&
+    !(multiline ? LARGE_JSON_INTEGER_PATTERN : NATIVE_JSON_FALLBACK_PATTERN).test(text) &&
     !("toJSON" in Object.prototype) &&
     !("toJSON" in Array.prototype)
   ) {
     const value = JSON.parse(text);
     try {
-      if (JSON.stringify(value) === text) return value;
+      const serialized = JSON.stringify(value);
+      if (serialized === text || (multiline && matchesJsonWhitespace(serialized, text))) {
+        return value;
+      }
     } catch {
       // A native serialization depth limit must not change parsing support.
     }
@@ -31,6 +37,31 @@ export function parseJsonText(text: string): unknown {
   // those inputs; ordinary payloads need neither a second parse nor a copy.
   if (!text.includes("__proto__") && !text.includes("\\u")) return preciseValue;
   return rebuildJsonValue(JSON.parse(text), preciseValue);
+}
+
+/** Compares JSON spellings while ignoring only whitespace outside strings. */
+function matchesJsonWhitespace(serialized: string, text: string): boolean {
+  let cursor = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < serialized.length; index++) {
+    const expected = serialized.charCodeAt(index);
+    if (!inString) {
+      while (isJsonWhitespace(text.charCodeAt(cursor))) cursor++;
+    }
+    if (text.charCodeAt(cursor++) !== expected) return false;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (expected === 92) escaped = true;
+      else if (expected === 34) inString = false;
+    } else if (expected === 34) inString = true;
+  }
+  while (isJsonWhitespace(text.charCodeAt(cursor))) cursor++;
+  return cursor === text.length;
+}
+
+function isJsonWhitespace(code: number): boolean {
+  return code === 32 || code === 9 || code === 10 || code === 13;
 }
 
 function parseJsonNumber(value: string): number | bigint {

@@ -5,6 +5,9 @@ Hono with Zod validation, Elysia, and bare Bun. Hono with Zod and Elysia perform
 query and body validation used by the TypeSpex workloads; bare Bun and plain Hono
 provide comparisons without that validation.
 
+POST requests cover both compact and formatted JSON with the same validated
+payload and expected response, so parsing comparisons include both representations.
+
 The harness starts a fresh server for each measurement, warms it up, rotates server
 and scenario order across repeated trials, and checks exact response bodies and
 status codes. It records medians, median absolute deviations, individual trials,

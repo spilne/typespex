@@ -498,7 +498,7 @@ function readQueryValue(
         );
   }
   if (input.rawQuery !== undefined) {
-    return readRawQueryValue(input.rawQuery, name, options);
+    return readRawQueryValue(input, input.rawQuery, name, options);
   }
   const query = input.query;
   if (!query.has(name)) {
@@ -527,18 +527,14 @@ function readQueryValue(
 }
 
 function readRawQueryValue(
+  input: RequestInputSource,
   rawQuery: string,
   name: string,
   options: QueryParameterDecodeOptions,
 ): DecoderResult<string | readonly string[] | Record<string, string> | undefined> {
-  const rawValues: string[] = [];
-  for (const pair of rawQuery.split("&")) {
-    const equals = pair.indexOf("=");
-    const rawName = equals === -1 ? pair : pair.substring(0, equals);
-    const decodedName = decodeQueryComponent(rawName);
-    if (isLeft(decodedName) || decodedName.right !== name) continue;
-    rawValues.push(equals === -1 ? "" : pair.substring(equals + 1));
-  }
+  const rawValues = rawQuery.includes("&")
+    ? (indexedQueryValues(input, rawQuery)[name] ?? [])
+    : singleQueryValues(rawQuery, name);
 
   if (rawValues.length === 0) {
     return options.record && options.emptyComposite ? Either.right({}) : Either.right(undefined);
@@ -574,6 +570,43 @@ function readRawQueryValue(
   if (isLeft(values)) return values;
   if (options.array) return values;
   return Either.right(values.right.length === 1 ? values.right[0] : values.right);
+}
+
+const queryIndexes = new WeakMap<
+  RequestInputSource,
+  { text: string; values: Readonly<Record<string, readonly string[]>> }
+>();
+
+function indexedQueryValues(
+  input: RequestInputSource,
+  text: string,
+): Readonly<Record<string, readonly string[]>> {
+  const cached = queryIndexes.get(input);
+  if (cached?.text === text) return cached.values;
+
+  // Named parameters share the scan, while values remain raw so composite
+  // separators are still split before percent decoding. A changed source is
+  // reindexed; no parsed query data is shared between requests.
+  const values: Record<string, string[]> = Object.create(null);
+  for (const pair of text.split("&")) {
+    const equals = pair.indexOf("=");
+    const name = decodeQueryComponent(equals === -1 ? pair : pair.substring(0, equals));
+    if (isLeft(name)) continue;
+    const value = equals === -1 ? "" : pair.substring(equals + 1);
+    const previous = values[name.right];
+    if (previous) previous.push(value);
+    else values[name.right] = [value];
+  }
+  queryIndexes.set(input, { text, values });
+  return values;
+}
+
+function singleQueryValues(text: string, name: string): readonly string[] {
+  const equals = text.indexOf("=");
+  const decoded = decodeQueryComponent(equals === -1 ? text : text.substring(0, equals));
+  return isLeft(decoded) || decoded.right !== name
+    ? []
+    : [equals === -1 ? "" : text.substring(equals + 1)];
 }
 
 function readExplodedQueryRecord(
