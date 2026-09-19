@@ -18,7 +18,7 @@ describe("JSON response serialization", () => {
         tail,
       };
 
-      expect(stringifyJson(value)).toBe(`{"first":{"nested":"AQL/"},"tail":${String(tail)}}`);
+      expect(stringifyJson([value])).toBe(`[{"first":{"nested":"AQL/"},"tail":${String(tail)}}]`);
       expect(events).toEqual(["get first", "toJSON first"]);
     }
   });
@@ -101,13 +101,13 @@ describe("JSON response serialization", () => {
           return this;
         },
       });
-      serialized = stringifyJson({ items: [{ value: "kept" }] });
+      serialized = stringifyJson([{ items: [{ value: "kept" }] }]);
     } finally {
       if (previous) Object.defineProperty(Object.prototype, "toJSON", previous);
       else Reflect.deleteProperty(Object.prototype, "toJSON");
     }
-    expect(serialized!).toBe('{"items":[{"value":"kept"}]}');
-    expect(calls).toBe(3);
+    expect(serialized!).toBe('[{"items":[{"value":"kept"}]}]');
+    expect(calls).toBe(4);
   });
 
   test("escapes property names and values in the bigint fallback", () => {
@@ -115,6 +115,9 @@ describe("JSON response serialization", () => {
     const text = '日本語 "\n\udfff';
     expect(stringifyJson({ [key]: 1n, text })).toBe(
       `{${JSON.stringify(key)}:1,"text":${JSON.stringify(text)}}`,
+    );
+    expect(stringifyJson([{ [key]: 1n, text }])).toBe(
+      `[{${JSON.stringify(key)}:1,"text":${JSON.stringify(text)}}]`,
     );
   });
 
@@ -134,12 +137,12 @@ describe("JSON response serialization", () => {
       const value = Object.create(null);
       value[property] = "kept";
       value.__proto__ = { data: true };
-      serialized = stringifyJson(value);
+      serialized = stringifyJson([value]);
     } finally {
       if (previous) Object.defineProperty(Object.prototype, property, previous);
       else Reflect.deleteProperty(Object.prototype, property);
     }
-    expect(serialized!).toBe('{"__typespex_json_value__":"kept","__proto__":{"data":true}}');
+    expect(serialized!).toBe('[{"__typespex_json_value__":"kept","__proto__":{"data":true}}]');
     expect(writes).toBe(0);
   });
 
@@ -161,7 +164,7 @@ describe("JSON response serialization", () => {
         ownKeys: () => ["name", "2", "1"],
       },
     );
-    expect(stringifyJson({ value })).toBe('{"value":{"name":"kept","2":"second","1":"first"}}');
+    expect(stringifyJson([{ value }])).toBe('[{"value":{"name":"kept","2":"second","1":"first"}}]');
   });
 
   test("combines numeric records with ordinary objects and lossless wire values", () => {
@@ -177,8 +180,8 @@ describe("JSON response serialization", () => {
       3: undefined,
       4: { name: "kept" },
     };
-    expect(stringifyJson({ items: [record], next: { value: true } })).toBe(
-      '{"items":[{"1":9223372036854775807,"2":"/w==","4":{"name":"kept"}}],"next":{"value":true}}',
+    expect(stringifyJson([record, { value: true }])).toBe(
+      '[{"1":9223372036854775807,"2":"/w==","4":{"name":"kept"}},{"value":true}]',
     );
     expect(keys).toEqual(["2"]);
   });
@@ -193,9 +196,9 @@ describe("JSON response serialization", () => {
         child["1"] = next;
         child = next;
       }
-      expect(stringifyJson(root)).toBe(JSON.stringify(root));
+      expect(stringifyJson([root])).toBe(JSON.stringify([root]));
       child["1"] = root;
-      expect(() => stringifyJson(root)).toThrow("circular");
+      expect(() => stringifyJson([root])).toThrow("circular");
     }
   });
 
@@ -217,12 +220,12 @@ describe("JSON response serialization", () => {
       2: { value: "second" },
     };
     try {
-      serialized = stringifyJson(value);
+      serialized = stringifyJson([value]);
     } finally {
       if (previous) Object.defineProperty(Object.prototype, "toJSON", previous);
       else Reflect.deleteProperty(Object.prototype, "toJSON");
     }
-    expect(serialized!).toBe('{"1":{"value":"first"},"2":{"value":"second"}}');
+    expect(serialized!).toBe('[{"1":{"value":"first"},"2":{"value":"second"}}]');
     expect(keys).toEqual(["1", "2"]);
   });
 });

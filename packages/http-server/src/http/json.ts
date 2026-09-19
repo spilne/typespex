@@ -21,11 +21,16 @@ class EncodedJsonValue {
 
 /** Serializes TypeSpec wire values without losing bigint or bytes values. */
 export function stringifyJson(value: unknown): string {
-  const preparation: JsonPreparation = { requiresDirectWriter: false };
-  // Native JSON produces a flat string from this snapshot. Preparing it first
-  // preserves TypeSpec encodings without a second traversal of user values.
-  const prepared = prepareJsonValue(value, [], "", preparation);
-  const serialized = stringifySnapshot(prepared, preparation);
+  let serialized: string | undefined;
+  // Arrays benefit from native stringification of a prepared snapshot. Keep
+  // other responses on the direct writer to avoid copying small objects.
+  if (Array.isArray(value)) {
+    const preparation: JsonPreparation = { requiresDirectWriter: false };
+    const prepared = prepareJsonValue(value, [], "", preparation);
+    serialized = stringifySnapshot(prepared, preparation);
+  } else {
+    serialized = serializeJsonValue(value, []);
+  }
   if (serialized === undefined) throw new TypeError("Value is not JSON serializable.");
   return serialized;
 }
@@ -115,10 +120,15 @@ function startsWithDigit(value: string): boolean {
   return first >= 48 && first <= 57;
 }
 
-// Prepared values contain only primitives and own data properties. Their hooks
-// and cycles have already been handled, and bigint needs an unquoted token.
-function stringifyPreparedValue(value: unknown): string | undefined {
+// An ancestor stack selects live-input serialization. Without one, the values
+// are snapshots whose hooks and cycles have already been handled.
+function serializeJsonValue(
+  value: unknown,
+  ancestors?: object[] | Set<object>,
+  key: string | number = "",
+): string | undefined {
   if (value === null) return "null";
+
   switch (typeof value) {
     case "string":
       return quoteJsonString(value);
@@ -133,24 +143,67 @@ function stringifyPreparedValue(value: unknown): string | undefined {
     case "symbol":
       return undefined;
   }
-  if (value instanceof EncodedJsonValue) return value.text;
+
+  if (ancestors !== undefined) {
+    if (value instanceof Uint8Array) {
+      return JSON.stringify(bytesToBase64(value));
+    }
+
+    if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+      return serializeJsonValue(value.valueOf(), ancestors, key);
+    }
+
+    const toJSON = (value as { toJSON?: (key: string) => unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      const replacement = toJSON.call(value, typeof key === "number" ? String(key) : key);
+      if (replacement !== value) {
+        return serializeJsonValue(replacement, ancestors, key);
+      }
+    }
+
+    // Small stacks avoid Set allocations for ordinary shallow JSON. Switch to a
+    // Set for deeper graphs so cycle detection stays linear in the graph size.
+    if (Array.isArray(ancestors) && ancestors.length === 16) ancestors = new Set(ancestors);
+    if (Array.isArray(ancestors)) {
+      if (ancestors.includes(value)) throw new TypeError("Converting circular structure to JSON.");
+      ancestors.push(value);
+    } else {
+      if (ancestors.has(value)) throw new TypeError("Converting circular structure to JSON.");
+      ancestors.add(value);
+    }
+  } else if (value instanceof EncodedJsonValue) {
+    return value.text;
+  }
+
+  let serialized: string;
   if (Array.isArray(value)) {
     let items = "";
     for (let index = 0; index < value.length; index++) {
       if (index > 0) items += ",";
-      items += stringifyPreparedValue(value[index]) ?? "null";
+      items += serializeJsonValue(value[index], ancestors, index) ?? "null";
     }
-    return `[${items}]`;
-  }
-  let entries = "";
-  for (const property of Object.keys(value)) {
-    const item = stringifyPreparedValue((value as Record<string, unknown>)[property]);
-    if (item !== undefined) {
-      if (entries.length > 0) entries += ",";
-      entries += `${quoteJsonString(property)}:${item}`;
+    serialized = `[${items}]`;
+  } else {
+    let entries = "";
+    for (const property of Object.keys(value)) {
+      const item = serializeJsonValue(
+        (value as Record<string, unknown>)[property],
+        ancestors,
+        property,
+      );
+      if (item !== undefined) {
+        if (entries.length > 0) entries += ",";
+        entries += `${quoteJsonString(property)}:${item}`;
+      }
     }
+    serialized = `{${entries}}`;
   }
-  return `{${entries}}`;
+
+  if (ancestors !== undefined) {
+    if (Array.isArray(ancestors)) ancestors.pop();
+    else ancestors.delete(value);
+  }
+  return serialized;
 }
 
 function quoteJsonString(value: string): string {
@@ -161,7 +214,7 @@ function stringifySnapshot(value: unknown, preparation: JsonPreparation): string
   // Arrays have null prototypes. Object hooks may be installed by input getters;
   // the direct writer avoids invoking those hooks again on prepared values.
   return preparation.requiresDirectWriter || Object.hasOwn(Object.prototype, "toJSON")
-    ? stringifyPreparedValue(value)
+    ? serializeJsonValue(value)
     : JSON.stringify(value);
 }
 
@@ -176,7 +229,7 @@ function prepareEncodedObject(
     const member = (value as Record<string, unknown>)[property];
     const item =
       member === null || typeof member !== "object"
-        ? stringifyPreparedValue(member)
+        ? serializeJsonValue(member)
         : stringifySnapshot(
             prepareJsonValue(member, ancestors, property, preparation),
             preparation,
