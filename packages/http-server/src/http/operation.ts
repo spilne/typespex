@@ -13,5 +13,12 @@ export type DecodeResult<I> = Either<DecodeError, I> | Promise<Either<DecodeErro
 export interface ServerOperation<I, R> {
   readonly endpoint: EndpointMeta;
   decodeInput(request: Request, pathParams: Readonly<Record<string, string>>): DecodeResult<I>;
+  /**
+   * Optional generated entry point for operations with only scalar path inputs.
+   * The transport must verify routing and percent-decoding before using it.
+   * Raw captures remain available through the handler's request context.
+   * @internal
+   */
+  decodeNativePathInput?(pathParams: Readonly<Record<string, string>>): DecodeResult<I>;
   encodeResult(result: R): Response;
 }

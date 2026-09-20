@@ -186,6 +186,7 @@ const reservedRuntimeIdentifiers = [
   "RequestDecoders",
   "Validators",
   "decodeRequestInput",
+  "decodePathInput",
   "decodeRequestInputAndBody",
   "decodeRequestInputAndJsonlBody",
   "decodeBody",

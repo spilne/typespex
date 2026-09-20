@@ -7,6 +7,8 @@ import {
   Decoders,
   Either,
   emptyHints,
+  ValidationError,
+  type MatchedRequestContext,
   type HttpRouter,
   type RoutePattern,
   type ServerOperation,
@@ -622,4 +624,130 @@ describe("createBunServer", () => {
       await server.stop(true);
     }
   });
+});
+
+test("decoded fast path agrees with ordinary routing and preserves raw context captures", async () => {
+  const bindings = [
+    "/pets",
+    "/pets/:id",
+    "/pets/:id/",
+    "/pets/special",
+    "/:category/:id",
+    "/safe/path/:id",
+    "/groups/:g/pets/:p",
+  ].map((path) => {
+    type Captures = Readonly<Record<string, string>>;
+    type Echo = { path: string; decoded: Captures; raw: Captures };
+    const op: ServerOperation<Captures, Echo> = {
+      ...operation(path, "GET", {
+        segments: path
+          .split("/")
+          .filter(Boolean)
+          .map((segment) => [
+            segment.startsWith(":")
+              ? { kind: "parameter", name: segment.slice(1) }
+              : { kind: "literal", value: segment },
+          ]),
+        trailingSlash: path.endsWith("/"),
+      }),
+      decodeInput: (_request: Request, params: Readonly<Record<string, string>>) => {
+        try {
+          return Either.right(
+            Object.fromEntries(
+              Object.entries(params).map(([key, value]) => [key, decodeURIComponent(value)]),
+            ),
+          );
+        } catch {
+          return Either.left(
+            new ValidationError([{ path: "$path", message: "Invalid path encoding." }]),
+          );
+        }
+      },
+      decodeNativePathInput: (params: Readonly<Record<string, string>>) => Either.right(params),
+      encodeResult: (value: unknown) => Response.json(value),
+    };
+    return bindRoute(op, (value, ctx: MatchedRequestContext) => ({
+      path,
+      decoded: value,
+      raw: ctx.match.pathParams,
+    }));
+  });
+  const router = createHttpRouter(bindings);
+  const ordinary = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (r) => router.handle(r) });
+  const native = createBunServer(router, { port: 0, hostname: "127.0.0.1" });
+  const targets = [
+    "/safe/path/a",
+    "/SAFE/path/a",
+    "/safe/PATH/a",
+    "/groups/a/pets/b",
+    "/groups/%61/pets/b",
+    "/groups/a/pets/b/",
+    "/PETS",
+    "/Pets",
+    "/safe/path/%61",
+    "/safe/path/%2e",
+    "/safe/path/a%2Fb",
+    "/safe/path/%FF",
+    "/safe/path/a\\b",
+    "/pets",
+    "/pets/",
+    "//pets",
+    "/%70ets",
+    "/pets/a",
+    "/pets/%61",
+    "/pets/a/",
+    "//pets/a",
+    "/pets//a",
+    "/%70ets/a",
+    "/pets/special",
+    "/pets/%73pecial",
+    "/pets/a%2Fb",
+    "/pets/a%252Fb",
+    "/pets/%FF",
+    "/pets/%00",
+    "/pets/%2e",
+    "/pets/%2e%2e",
+    "/.\\pets/a",
+    "/pets/a\\b",
+    "/pets/./a",
+    "/x/../pets/a",
+    "/pets/a?extra=unused",
+    "http://localhost/pets/%61",
+  ];
+  try {
+    for (const target of targets)
+      for (const host of [
+        "localhost",
+        "localhost:44321",
+        "localhost:65535",
+        "localhost:65536",
+        "localhost:70000",
+        ".",
+        "..",
+        "0",
+        "09",
+        "9999999999",
+        "256.256.256.256",
+        "a.5",
+        "127.0.0.1",
+        "localhost/other",
+        "localhost?path=x",
+        "localhost\\other",
+        "localhost\r\nHost: localhost/other",
+      ]) {
+        const message = `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`;
+        const expected = await rawHttp(ordinary.port!, message);
+        const actual = await rawHttp(native.port!, message);
+        expect(actual.split("\r\n")[0], `${target} / ${JSON.stringify(host)}`).toBe(
+          expected.split("\r\n")[0],
+        );
+        expect(
+          actual.split("\r\n\r\n").slice(1).join("\r\n\r\n"),
+          `${target} / ${JSON.stringify(host)}`,
+        ).toBe(expected.split("\r\n\r\n").slice(1).join("\r\n\r\n"));
+      }
+  } finally {
+    await ordinary.stop(true);
+    await native.stop(true);
+  }
 });

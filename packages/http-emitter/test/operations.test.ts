@@ -103,6 +103,39 @@ interface AwaitOperations {
 // ---------------------------------------------------------------------------
 
 describe("operation structures", () => {
+  test("path-only operations keep narrow decoder inputs through mappings and combinations", () => {
+    const r = compileFixture(
+      "path-only-input",
+      `
+import "@typespec/http";
+using TypeSpec.Http;
+@service namespace PathOnlyApi;
+@route("/items/{name}") @get op read(@path name: string): string;
+@route("/items/{name}/{ids}") @get op list(@path name: string, @path ids: int32[]): string;
+@route("/mixed/{name}") @get op mixed(@path name: string, @query filter: string): string;
+`,
+    );
+    const operations = r.readFile("path-only-api", "server-operations.ts");
+    expect(operations).toContain("decodePathInput<{ name: string }>");
+    expect(operations).toContain("decodePathInput<{ name: string; ids: number[] }>");
+    expect(operations).toContain("decodeRequestInput<{ name: string; filter: string }>");
+    expect(operations.match(/decodeNativePathInput:/g)).toHaveLength(1);
+    r.typecheck("path-only-api", {
+      "path-input-types.ts": `
+import { Decoders, RequestDecoders, decodePathInput } from "@typespex/http-server";
+const path = RequestDecoders.path("id", Decoders.string).map(id => ({ id }));
+decodePathInput(path.decode, { id: "encoded%20id" });
+path.decode({ pathParams: {}, query: new URLSearchParams(), headers: new Headers(), cookies: {} });
+const query = RequestDecoders.query("limit", Decoders.integer);
+// @ts-expect-error Query decoders need more than path captures.
+decodePathInput(query.decode, {});
+const mixed = RequestDecoders.combine([path, query], (path, limit) => ({ ...path, limit }));
+// @ts-expect-error A mixed combination still requires the full request source.
+decodePathInput(mixed.decode, {});
+`,
+    });
+  });
+
   test("standalone operations — no interface wrapper", () => {
     const r = compileFixture("standalone", standaloneSpec);
 
