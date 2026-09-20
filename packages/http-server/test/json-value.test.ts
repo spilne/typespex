@@ -19,6 +19,25 @@ describe("lossless JSON values", () => {
     expect(value).toEqual(JSON.parse('{"__proto__":"data","constructor":"kept"}'));
   });
 
+  test("small and large formatted bodies retain duplicate and precision rules", () => {
+    for (const size of [0, 8192]) {
+      const padding = "x".repeat(size);
+      const prefix = `{\n "padding": ${JSON.stringify(padding)},\n`;
+      expect(parseJsonText(`${prefix} "id": 1\n}`)).toEqual({ padding, id: 1 });
+      expect(() => parseJsonText(`${prefix} "id": 1, "id": 2\n}`)).toThrow(SyntaxError);
+      expect(parseJsonText(`${prefix} "id": 1, "id": 1\n}`)).toEqual({ padding, id: 1 });
+      expect(parseJsonText(`${prefix} "id": 9223372036854775807\n}`)).toEqual({
+        padding,
+        id: 9223372036854775807n,
+      });
+      expect(parseJsonText(`${prefix} "id": 1e19\n}`)).toEqual({
+        padding,
+        id: 10000000000000000000n,
+      });
+      expect(() => parseJsonText(`${prefix} "id": 123456789012345678901\n}`)).toThrow(SyntaxError);
+    }
+  });
+
   test("multiline JSON preserves whitespace, quotes, and backslashes inside strings", () => {
     const value = {
       'quote"key': ' space \\ "\t\r\n 日本語 🦊 ',
