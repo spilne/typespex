@@ -187,6 +187,40 @@ describe("direct transport dispatch", () => {
     }
   });
 
+  test("converts asynchronous decode, handler, and encode failures exactly once", async () => {
+    for (const stage of ["decode", "handler", "encode"] as const) {
+      for (const asynchronousDecode of [false, true]) {
+        let conversions = 0;
+        class TrackedError extends HttpError {
+          override toResponse(): Response {
+            conversions++;
+            return super.toResponse();
+          }
+        }
+        const error = new TrackedError(409, "conflict");
+        const op = operation();
+        op.decodeInput = () => {
+          if (stage === "decode") return Promise.reject(error);
+          const result = Either.right(undefined);
+          return asynchronousDecode ? Promise.resolve(result) : result;
+        };
+        if (stage === "encode")
+          op.encodeResult = () => {
+            throw error;
+          };
+        const route = registration(async () => {
+          await Promise.resolve();
+          if (stage === "handler") throw error;
+          return "ok";
+        }, op);
+        const response = await route.dispatch!(request(), {}, Bun.peek);
+        expect(response.status).toBe(409);
+        expect(conversions).toBe(1);
+        await response.text();
+      }
+    }
+  });
+
   test("rejects invalid transport facts before a handler can run", async () => {
     const route = registration(() => {
       throw new Error("handler must not run");

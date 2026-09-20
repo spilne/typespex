@@ -355,7 +355,7 @@ describe("TypeSpec lifecycle visibility projections", () => {
       ),
     ).toBe(true);
     expect(operations).toContain('RequestDecoders.header("x-create-token"');
-    expect(operations).toContain('headers: [["readToken", "x-read-token"]]');
+    expect(operations).toContain('[["readToken", "x-read-token"]]');
     result.typecheck("visibility-override-api");
 
     const { createVisibilityOverrideApiServerRouter } = await import(

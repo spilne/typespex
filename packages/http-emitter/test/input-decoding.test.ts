@@ -410,10 +410,51 @@ describe("input decoding", () => {
     expect(r.readFile("params-api", "server.ts")).toMatchSnapshot();
   });
 
-  test("validation decorators become runtime validators", () => {
+  test("validation decorators preserve successful values and staged diagnostics", async () => {
     const r = compileFixture("validations", validationSpec);
 
     expect(r.readFile("validation-api", "server-operations.ts")).toMatchSnapshot();
+    r.typecheck("validation-api");
+    const { ItemsOperations } = await import(`${r.outputDir}/validation-api/server-operations.ts`);
+    for (const [text, value] of [
+      ["1", 1],
+      ["1e2", 100],
+      ["1.0", 1],
+    ] as const) {
+      const decoded = ItemsOperations.list.decodeInput(
+        new Request(`http://localhost/items?limit=${text}&ratio=0.5`),
+        {},
+      );
+      expect(decoded).toEqual({ _tag: "Right", right: { limit: value, ratio: 0.5 } });
+    }
+    for (const [text, message] of [
+      ["0", "Expected a value greater than or equal to 1."],
+      ["101", "Expected a value less than or equal to 100."],
+      ["-2147483649", "Expected a value greater than or equal to -2147483648."],
+      ["2147483648", "Expected a value less than or equal to 2147483647."],
+      ["1.5", "Expected an integer."],
+      ["NaN", "Expected a finite number."],
+    ]) {
+      const decoded = ItemsOperations.list.decodeInput(
+        new Request(`http://localhost/items?limit=${text}&ratio=0.5`),
+        {},
+      );
+      expect(decoded._tag).toBe("Left");
+      expect(decoded.left.issues).toEqual([{ path: "$query.limit", message }]);
+    }
+    const body = await ItemsOperations.create.decodeInput(
+      new Request("http://localhost/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "", tags: ["a"], count: -2147483649 }),
+      }),
+    );
+    expect(body._tag).toBe("Left");
+    expect(body.left.issues).toEqual([
+      { path: "$body.name", message: "Expected length greater than or equal to 1." },
+      { path: "$body.name", message: "Must start with uppercase." },
+      { path: "$body.count", message: "Expected a value greater than or equal to -2147483648." },
+    ]);
   });
 
   test("path + query + body combined", () => {
@@ -531,8 +572,8 @@ describe("input decoding", () => {
     expect(operations).toContain("payload: Decoders.strictBytes");
     expect(operations).toContain("json: Decoders.object<FlexibleItem>");
     expect(operations).toContain("form: Decoders.object<FlexibleItem>");
-    expect(operations).toContain("count: Decoders.strictInteger");
-    expect(operations).toContain("count: Decoders.integer");
+    expect(operations).toContain("Decoders.strictInteger.decode(input)");
+    expect(operations).toContain("Decoders.integer.decode(input)");
     expect(operations).toContain("enabled: Decoders.strictBoolean");
     expect(operations).toContain("enabled: Decoders.boolean");
     expect(operations).toContain("mediaType: true");
@@ -610,8 +651,8 @@ describe("input decoding", () => {
     const r = compileFixture("integer-ranges", integerRangesSpec);
     const operations = r.readFile("integer-ranges-api", "server-operations.ts");
 
-    expect(operations).toContain("int8Value: Decoders.strictInteger.validate(");
-    expect(operations).toContain("uint32Value: Decoders.strictInteger.validate(");
+    expect(operations).toContain("decoded.right >= -128 && decoded.right <= 127");
+    expect(operations).toContain("decoded.right >= 0 && decoded.right <= 4294967295");
     expect(operations).toContain("Validators.minValue(-128)");
     expect(operations).toContain("Validators.maxValue(4294967295)");
     expect(operations).toContain("Validators.minValue(-9223372036854775808n)");
@@ -619,9 +660,7 @@ describe("input decoding", () => {
     expect(operations).toContain("Validators.maxValue(18446744073709551615n)");
     expect(operations).toContain("integerValue: Decoders.strictInteger");
     expect(operations).toContain("safeValue: Decoders.strictSafeInteger");
-    expect(operations).toContain(
-      "Decoders.integer.validate(Validators.minValue(0), Validators.maxValue(4294967295))",
-    );
+    expect(operations).toContain("Decoders.integer.decode(input)");
     r.typecheck("integer-ranges-api");
   });
 });

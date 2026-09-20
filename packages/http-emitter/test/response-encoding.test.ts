@@ -407,7 +407,7 @@ describe("response encoding", () => {
     const r = compileFixture("implicit-error-status", implicitErrorStatusSpec);
     const operations = r.readFile("implicit-error-api", "server-operations.ts");
 
-    expect(operations).toContain("ResponseEncoders.variant<Oops>({ status: 500");
+    expect(operations).toContain("ResponseEncoders.json<Oops>(500)");
     r.typecheck("implicit-error-api");
   });
 

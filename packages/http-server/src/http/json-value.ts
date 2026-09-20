@@ -6,25 +6,39 @@ const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const DECIMAL_INTEGER_PATTERN = /^-?(?:0|[1-9]\d*)$/;
 const MAX_LOSSLESS_JSON_INTEGER_DIGITS = 20;
 // Avoid failed native round trips for noncanonical single-line formatting.
-const NATIVE_JSON_FALLBACK_PATTERN = /\d{16}|[\r\n\t]|[,:] /;
+const NATIVE_JSON_FALLBACK_PATTERN = /[\r\n\t]|[,:] /;
 const LARGE_JSON_INTEGER_PATTERN = /\d{16}/;
+const JSON_EXPONENT_PATTERN = /\d[eE]/;
+// Bun's native round trip is faster on wide objects; limit its extra flat scan.
+// Node benefits from the flat check for both small and large objects.
+const FLAT_JSON_TEXT_LIMIT = "Bun" in globalThis ? 4096 : Infinity;
 
 export function parseJsonText(text: string): unknown {
+  // Check this once: a large integer always needs bigint/digit-limit handling.
+  if (LARGE_JSON_INTEGER_PATTERN.test(text)) return parsePreciseJson(text);
   const noncanonical = NATIVE_JSON_FALLBACK_PATTERN.test(text);
   const multiline = noncanonical && text.includes("\n");
-  // Native parsing is lossless when small-number JSON survives a round trip,
-  // allowing multiline whitespace only outside strings. The comparison also
-  // rules out duplicate keys and negative-zero changes.
-  // Large integer tokens retain the parser's bigint and digit-limit semantics.
+  const flatObject = noncanonical && isFlatJsonObjectCandidate(text);
+  // Flat, small-number objects only need a duplicate-key check. Other native
+  // candidates must survive a round trip, allowing multiline whitespace only
+  // outside strings. Exponents retain the lossless fallback.
   if (
-    (!noncanonical || (multiline && !LARGE_JSON_INTEGER_PATTERN.test(text))) &&
+    (!noncanonical || multiline || flatObject) &&
     !("toJSON" in Object.prototype) &&
     !("toJSON" in Array.prototype)
   ) {
     const value = JSON.parse(text);
+    if (flatObject && hasUniqueFlatObjectKeys(text, value)) return value;
     try {
       const serialized = JSON.stringify(value);
       if (serialized === text || (multiline && matchesJsonWhitespace(serialized, text))) {
+        return value;
+      }
+      if (
+        !noncanonical &&
+        isFlatJsonObjectCandidate(text) &&
+        hasUniqueFlatObjectKeys(text, value)
+      ) {
         return value;
       }
     } catch {
@@ -32,12 +46,50 @@ export function parseJsonText(text: string): unknown {
     }
   }
 
+  return parsePreciseJson(text);
+}
+
+function parsePreciseJson(text: string): unknown {
   const preciseValue = parseLosslessJson(text, undefined, { parseNumber: parseJsonNumber });
   // Only a literal or Unicode-escaped __proto__ key can invoke the prototype
   // setter in the lossless parser. Keep native JSON's safe object shape for
   // those inputs; ordinary payloads need neither a second parse nor a copy.
   if (!text.includes("__proto__") && !text.includes("\\u")) return preciseValue;
   return rebuildJsonValue(JSON.parse(text), preciseValue);
+}
+
+function isFlatJsonObjectCandidate(text: string): boolean {
+  if (text.length > FLAT_JSON_TEXT_LIMIT) return false;
+  const object = text.indexOf("{");
+  return (
+    object !== -1 &&
+    text.indexOf("{", object + 1) === -1 &&
+    !text.includes("[") &&
+    !JSON_EXPONENT_PATTERN.test(text)
+  );
+}
+
+function hasUniqueFlatObjectKeys(text: string, value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  let properties = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 58) properties++;
+    else if (code === 34) {
+      let end = text.indexOf('"', index + 1);
+      while (end !== -1 && text.charCodeAt(end - 1) === 92) {
+        let slash = end - 1;
+        while (text.charCodeAt(slash - 1) === 92) slash--;
+        if ((end - slash) % 2 === 0) break;
+        end = text.indexOf('"', end + 1);
+      }
+      // JSON.parse has already checked string termination and escapes.
+      index = end;
+    }
+  }
+  // A duplicate key can only reduce the parsed key count. Escaped aliases are
+  // included because native parsing has already decoded the property names.
+  return properties === Object.keys(value).length;
 }
 
 /** Compares JSON spellings while ignoring only whitespace outside strings. */

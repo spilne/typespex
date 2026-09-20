@@ -5,6 +5,10 @@ export { bytesToBase64 } from "@typespex/codec";
 
 const NEEDS_JSON_ESCAPE = /["\\\u0000-\u001f\uD800-\uDFFF]/;
 
+// Bun writes JSON directly into the response buffer. Other runtimes currently
+// benefit from the string body's lazy encoding instead of an extra snapshot.
+const NATIVE_JSON_RESPONSE = "Bun" in globalThis;
+
 interface JsonPreparation {
   requiresDirectWriter: boolean;
 }
@@ -35,6 +39,19 @@ export function stringifyJson(value: unknown): string {
   return serialized;
 }
 
+/** Encodes a prepared wire value. Callers supply an explicit content type. */
+export function jsonResponse(value: unknown, init: ResponseInit): Response {
+  if (!NATIVE_JSON_RESPONSE) {
+    return new Response(stringifyJson(value), init);
+  }
+  const preparation: JsonPreparation = { requiresDirectWriter: false };
+  const prepared = prepareJsonValue(value, [], "", preparation);
+  if (prepared === undefined) throw new TypeError("Value is not JSON serializable.");
+  return requiresDirectWriter(preparation)
+    ? new Response(serializeJsonValue(prepared), init)
+    : Response.json(prepared, init);
+}
+
 function prepareJsonValue(
   value: unknown,
   ancestors: object[] | Set<object>,
@@ -55,6 +72,15 @@ function prepareJsonValue(
       return value;
   }
 
+  return prepareJsonObject(value, ancestors, key, preparation);
+}
+
+function prepareJsonObject(
+  value: object,
+  ancestors: object[] | Set<object>,
+  key: string | number,
+  preparation: JsonPreparation,
+): unknown {
   if (value instanceof Uint8Array) return bytesToBase64(value);
   if (value instanceof Number || value instanceof String || value instanceof Boolean) {
     return prepareJsonValue(value.valueOf(), ancestors, key, preparation);
@@ -80,10 +106,18 @@ function prepareJsonValue(
   let output: unknown;
   if (Array.isArray(value)) {
     const items: unknown[] = [];
-    // Snapshots must not inherit another toJSON hook or indexed setter.
-    Object.setPrototypeOf(items, null);
     for (let index = 0; index < value.length; index++) {
-      items[index] = prepareJsonValue(value[index], ancestors, index, preparation);
+      const item = prepareJsonValue(value[index], ancestors, index, preparation);
+      // Ordinary arrays retain native JSON's fast path. Define inherited indices
+      // explicitly so a user hook cannot redirect writes through a setter.
+      if (index in items) {
+        Object.defineProperty(items, index, {
+          configurable: true,
+          enumerable: true,
+          value: item,
+          writable: true,
+        });
+      } else items[index] = item;
     }
     output = items;
   } else {
@@ -144,6 +178,14 @@ function serializeJsonValue(
       return undefined;
   }
 
+  return serializeJsonObject(value, ancestors, key);
+}
+
+function serializeJsonObject(
+  value: object,
+  ancestors: object[] | Set<object> | undefined,
+  key: string | number,
+): string | undefined {
   if (ancestors !== undefined) {
     if (value instanceof Uint8Array) {
       return JSON.stringify(bytesToBase64(value));
@@ -211,11 +253,17 @@ function quoteJsonString(value: string): string {
 }
 
 function stringifySnapshot(value: unknown, preparation: JsonPreparation): string | undefined {
-  // Arrays have null prototypes. Object hooks may be installed by input getters;
-  // the direct writer avoids invoking those hooks again on prepared values.
-  return preparation.requiresDirectWriter || Object.hasOwn(Object.prototype, "toJSON")
-    ? serializeJsonValue(value)
-    : JSON.stringify(value);
+  return requiresDirectWriter(preparation) ? serializeJsonValue(value) : JSON.stringify(value);
+}
+
+function requiresDirectWriter(preparation: JsonPreparation): boolean {
+  // Input getters can install hooks after a value was visited. Do not run
+  // those hooks a second time on the snapshots.
+  return (
+    preparation.requiresDirectWriter ||
+    "toJSON" in Array.prototype ||
+    Object.hasOwn(Object.prototype, "toJSON")
+  );
 }
 
 function prepareEncodedObject(
