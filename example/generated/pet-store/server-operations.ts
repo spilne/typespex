@@ -102,42 +102,62 @@ const PetsInput = {
     (limit, offset) => ({ limit, offset }),
   ),
   create: {
-    json: Decoders.object<CreatePetInput>(
-      {
-        name: (() => {
-          const fallback = Decoders.string.validate(
-            Validators.minLength(1),
-            Validators.maxLength(80),
-            Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
-          );
-          const pattern0 = new RegExp("^[A-Za-z].*");
-          return Decoder.of<string>((input) => {
-            if (
-              typeof input === "string" &&
-              input.length >= 1 &&
-              input.length <= 80 &&
-              pattern0.test(input)
-            ) {
-              return Either.right(input);
+    json: (() => {
+      const pattern0 = new RegExp("^[A-Za-z].*");
+      const fallback0 = Decoders.string.validate(
+        Validators.minLength(1),
+        Validators.maxLength(80),
+        Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
+      );
+      const fallback1 = Decoders.optional(Decoders.string.validate(Validators.maxLength(40)));
+      return Decoder.of<CreatePetInput>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "name")
+          ? source["name"]
+          : undefined;
+        if (
+          !(
+            typeof value0 === "string" &&
+            value0.length >= 1 &&
+            value0.length <= 80 &&
+            pattern0.test(value0)
+          )
+        ) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".name" + issue.path, message: issue.message });
             }
-            return fallback.decode(input);
-          });
-        })(),
-        tag: Decoders.optional(
-          (() => {
-            const fallback = Decoders.string.validate(Validators.maxLength(40));
-
-            return Decoder.of<string>((input) => {
-              if (typeof input === "string" && input.length <= 40) {
-                return Either.right(input);
-              }
-              return fallback.decode(input);
-            });
-          })(),
-        ),
-      },
-      { allowUnknown: true },
-    ),
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "tag")
+          ? source["tag"]
+          : undefined;
+        if (!(value1 === undefined || (typeof value1 === "string" && value1.length <= 40))) {
+          const decoded = fallback1.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".tag" + issue.path, message: issue.message });
+            }
+          } else value1 = decoded.right;
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right(
+              (value1 !== undefined
+                ? { name: value0, tag: value1 }
+                : { name: value0 }) as CreatePetInput,
+            );
+      });
+    })(),
   },
   read: RequestDecoders.path(
     "petId",

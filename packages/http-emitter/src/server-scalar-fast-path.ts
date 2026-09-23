@@ -77,6 +77,46 @@ export function emitScalarFastPath(
   })()`;
 }
 
+/** A strict JSON scalar check for an enclosing generated object decoder. */
+export function emitStrictScalarGuard(
+  ctx: EmitterCtx,
+  property: ModelProperty,
+  value: string,
+  declarations: string[],
+): string | undefined {
+  if (property.type.kind !== "Scalar") return undefined;
+  const scalar = property.type;
+  const intrinsic = getIntrinsicScalarName(scalar);
+  const string = intrinsic === "string";
+  const range = scalarIntegerRange(intrinsic);
+  const integer =
+    intrinsic === "integer" ||
+    intrinsic === "safeint" ||
+    (range !== undefined && intrinsic !== "int64" && intrinsic !== "uint64");
+  if (!string && !integer) return undefined;
+  const context = isHeader(ctx.program, property) ? "header" : "value";
+  if (resolveScalarEncoding(ctx, scalar, property, context).status !== "none") return undefined;
+  const kind = string ? "string" : "number";
+  const conditions = string
+    ? [`typeof ${value} === "string"`]
+    : [`typeof ${value} === "number"`, `Number.isSafeInteger(${value})`];
+  if (range) conditions.push(`${value} >= ${range[0]}`, `${value} <= ${range[1]}`);
+  for (const rule of [
+    ...getValidationRules(ctx, scalar, kind),
+    ...getValidationRules(ctx, property, kind),
+  ]) {
+    if (
+      string
+        ? ["minValue", "maxValue", "minValueExclusive", "maxValueExclusive"].includes(rule.kind)
+        : ["minLength", "maxLength", "minItems", "maxItems", "pattern"].includes(rule.kind)
+    ) {
+      return undefined;
+    }
+    conditions.push(validationCondition(rule, value, declarations));
+  }
+  return conditions.join(" && ");
+}
+
 function validationCondition(rule: ValidationRule, value: string, declarations: string[]): string {
   switch (rule.kind) {
     case "minValue":

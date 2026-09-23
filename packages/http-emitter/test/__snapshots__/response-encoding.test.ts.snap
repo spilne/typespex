@@ -343,10 +343,42 @@ const ItemsInput = {
   remove: RequestDecoders.path("itemId", Decoders.string).map((itemId) => ({ itemId })),
   updateRequest: RequestDecoders.path("itemId", Decoders.string).map((itemId) => ({ itemId })),
   updateBody: {
-    json: Decoders.object<Item>(
-      { id: Decoders.string, name: Decoders.string },
-      { allowUnknown: true },
-    ),
+    json: (() => {
+      const fallback0 = Decoders.string;
+      const fallback1 = Decoders.string;
+      return Decoder.of<Item>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "id") ? source["id"] : undefined;
+        if (!(typeof value0 === "string")) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".id" + issue.path, message: issue.message });
+            }
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "name")
+          ? source["name"]
+          : undefined;
+        if (!(typeof value1 === "string")) {
+          const decoded = fallback1.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".name" + issue.path, message: issue.message });
+            }
+          } else value1 = decoded.right;
+        }
+        return issues ? Either.left(issues) : Either.right({ id: value0, name: value1 } as Item);
+      });
+    })(),
   },
 };
 
