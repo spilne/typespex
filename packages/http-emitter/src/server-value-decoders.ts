@@ -37,6 +37,7 @@ import {
 import { getIntrinsicScalarName } from "./scalar-map.js";
 import { scalarIntegerRange } from "./scalar-integer-ranges.js";
 import { emitScalarFastPath } from "./server-scalar-fast-path.js";
+import { emitFlatJsonObjectDecoder } from "./server-object-fast-path.js";
 import { emitScalarEncodingDecoder, resolveScalarEncoding } from "./scalar-encoding.js";
 import {
   enumMemberLiteralExpression,
@@ -94,6 +95,7 @@ export function emitDecoderExpression(
   target?: ModelProperty,
   projection?: PayloadProjection,
   encodingTarget: ModelProperty | undefined = target,
+  scalarFastPath = true,
 ): string {
   let expression: string;
   switch (type.kind) {
@@ -219,7 +221,7 @@ export function emitDecoderExpression(
   }
 
   const validated = applyValidationDecorators(ctx, expression, type, target);
-  return type.kind === "Scalar"
+  return type.kind === "Scalar" && scalarFastPath
     ? emitScalarFastPath(ctx, type, target, encodingTarget, mode, validated)
     : validated;
 }
@@ -326,6 +328,32 @@ function emitObjectDecoderBody(
   },
 ): string {
   const properties = payloadModelProperties(model, projection);
+  if (
+    mode === "json" &&
+    !syntheticDiscriminator &&
+    getAdditionalPropertiesValue(model) === undefined &&
+    [...walkPropertiesInherited(model)].length === properties.length
+  ) {
+    const flat = emitFlatJsonObjectDecoder(
+      ctx,
+      properties,
+      projection,
+      (property) =>
+        emitDecoderExpression(
+          ctx,
+          dec,
+          property.type,
+          mode,
+          seenTypes,
+          property,
+          projection,
+          property,
+          false,
+        ),
+      payloadTypeToTs(ctx, model, projection),
+    );
+    if (flat !== undefined) return flat;
+  }
   const fields: string[] = [];
   if (
     syntheticDiscriminator &&

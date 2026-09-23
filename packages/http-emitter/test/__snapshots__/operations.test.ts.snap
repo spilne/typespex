@@ -254,15 +254,84 @@ const ItemsInput = {
     (defaultValue) => ({ defaultValue }),
   ),
   createBody: {
-    json: Decoders.object<EscapedModel>(
-      {
-        default: Decoders.string,
-        "x-request-id": Decoders.string,
-        readonly: Decoders.optional(Decoders.string),
-        ["__proto__"]: Decoders.optional(Decoders.string),
-      },
-      { allowUnknown: true },
-    ),
+    json: (() => {
+      const fallback0 = Decoders.string;
+      const fallback1 = Decoders.string;
+      const fallback2 = Decoders.optional(Decoders.string);
+      const fallback3 = Decoders.optional(Decoders.string);
+      return Decoder.of<EscapedModel>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "default")
+          ? source["default"]
+          : undefined;
+        if (!(typeof value0 === "string")) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".default" + issue.path, message: issue.message });
+            }
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "x-request-id")
+          ? source["x-request-id"]
+          : undefined;
+        if (!(typeof value1 === "string")) {
+          const decoded = fallback1.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".x-request-id" + issue.path, message: issue.message });
+            }
+          } else value1 = decoded.right;
+        }
+        let value2 = Object.prototype.hasOwnProperty.call(source, "readonly")
+          ? source["readonly"]
+          : undefined;
+        if (!(value2 === undefined || typeof value2 === "string")) {
+          const decoded = fallback2.decode(value2);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".readonly" + issue.path, message: issue.message });
+            }
+          } else value2 = decoded.right;
+        }
+        let value3 = Object.prototype.hasOwnProperty.call(source, "__proto__")
+          ? source["__proto__"]
+          : undefined;
+        if (!(value3 === undefined || typeof value3 === "string")) {
+          const decoded = fallback3.decode(value3);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".__proto__" + issue.path, message: issue.message });
+            }
+          } else value3 = decoded.right;
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right(
+              (value2 !== undefined && value3 !== undefined
+                ? {
+                    default: value0,
+                    "x-request-id": value1,
+                    readonly: value2,
+                    ["__proto__"]: value3,
+                  }
+                : {
+                    default: value0,
+                    "x-request-id": value1,
+                    ...(value2 === undefined ? {} : { readonly: value2 }),
+                    ...(value3 === undefined ? {} : { ["__proto__"]: value3 }),
+                  }) as EscapedModel,
+            );
+      });
+    })(),
   },
 };
 
