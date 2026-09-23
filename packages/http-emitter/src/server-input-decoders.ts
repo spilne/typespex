@@ -16,6 +16,7 @@ import {
 } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { buildInputType } from "./server-input-types.js";
+import { emitNativePathDecoder } from "./server-path-fast-path.js";
 import { propertiesShareSource } from "./http-models.js";
 import { getExplodedQueryModelProperties, isExplodedQueryRecord } from "./http-parameter-shapes.js";
 import { multipartBodyTypeToTs } from "./multipart-input.js";
@@ -314,7 +315,7 @@ export function buildInputDecoderPlan(
         : `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
       decodeNativePathExpression:
         pathOnly && !hasCompositePathInput
-          ? `decodePathInput<${inputType}>(${ref}.decode, pathParams, true)`
+          ? emitNativePathDecoder(ctx, pathParams, inputType, ref)
           : undefined,
       needsPathParams: true,
       isAsync: false,

@@ -366,8 +366,12 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodePathInput<{ petId: string }>(PetsInput.read.decode, pathParams),
-    decodeNativePathInput: (pathParams) =>
-      decodePathInput<{ petId: string }>(PetsInput.read.decode, pathParams, true),
+    decodeNativePathInput: (pathParams) => {
+      const value: string | undefined = pathParams["petId"];
+      return typeof value === "string" && value.length >= 1
+        ? Either.right<{ petId: string }>({ petId: value })
+        : decodePathInput<{ petId: string }>(PetsInput.read.decode, { petId: value! }, true);
+    },
     encodeResult: (result: Pet | _TypespexPayload_NotFoundError_response_1_payload) =>
       PetsOutput.read.encode(result),
   } satisfies ServerOperation<
@@ -398,8 +402,12 @@ export const PetsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodePathInput<{ petId: string }>(PetsInput.delete.decode, pathParams),
-    decodeNativePathInput: (pathParams) =>
-      decodePathInput<{ petId: string }>(PetsInput.delete.decode, pathParams, true),
+    decodeNativePathInput: (pathParams) => {
+      const value: string | undefined = pathParams["petId"];
+      return typeof value === "string" && value.length >= 1
+        ? Either.right<{ petId: string }>({ petId: value })
+        : decodePathInput<{ petId: string }>(PetsInput.delete.decode, { petId: value! }, true);
+    },
     encodeResult: (
       result:
         | void
