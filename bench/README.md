@@ -18,7 +18,7 @@ on macOS or Linux (ARM64 or x64). `TYPESPEX_BENCH_OHA=/absolute/path/to/oha` use
 an existing binary of that version; its checksum is recorded in the artifact.
 No global installation is required.
 
-Each measurement starts a fresh server, warms it up, and uses HTTP/1.1 keep-alive
+Each measurement starts a fresh server with `NODE_ENV=production`, warms it up, and uses HTTP/1.1 keep-alive
 with 500 connections and two client threads. Server and scenario order rotate
 across trials. `TYPESPEX_BENCH_CONNECTIONS` and `TYPESPEX_BENCH_CLIENT_THREADS`
 override those defaults. Throughput is unlimited and closed-loop; latency under

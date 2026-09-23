@@ -54,6 +54,62 @@ function trackedPromise(state: "fulfilled" | "pending" | "rejected", reads: stri
 }
 
 describe("direct transport dispatch", () => {
+  test("native path decoding is lazy and replaced decoders retain control", async () => {
+    let rawReads = 0;
+    let nativeCalls = 0;
+    const raw = () => {
+      rawReads++;
+      return { id: "encoded%20id" };
+    };
+    const op = operation();
+    op.decodeNativePathInput = () => {
+      nativeCalls++;
+      return Either.right(undefined);
+    };
+    const route = registration(() => "ok", op);
+    expect(route.dispatchDecodedPath).toBeTypeOf("function");
+    expect(
+      await (
+        await route.dispatchDecodedPath!(request(), { id: "encoded id" }, raw, Bun.peek)
+      ).text(),
+    ).toBe("ok");
+    expect(rawReads).toBe(0);
+    expect(nativeCalls).toBe(1);
+    op.decodeInput = (_request, params) => {
+      expect(params).toEqual({ id: "encoded%20id" });
+      throw new HttpError(401, "Unauthorized");
+    };
+    const denied = await route.dispatchDecodedPath!(request(), { id: "encoded id" }, raw, Bun.peek);
+    expect(denied.status).toBe(401);
+    expect(rawReads).toBe(1);
+    expect(nativeCalls).toBe(1);
+  });
+
+  test("converts synchronous failures after an asynchronous decoder exactly once", async () => {
+    for (const stage of ["handler", "encode"] as const) {
+      let conversions = 0;
+      class TrackedError extends HttpError {
+        override toResponse(): Response {
+          conversions++;
+          return super.toResponse();
+        }
+      }
+      const error = new TrackedError(409, "conflict");
+      const op = operation();
+      op.decodeInput = async () => Either.right(undefined);
+      if (stage === "encode")
+        op.encodeResult = () => {
+          throw error;
+        };
+      const route = registration(() => {
+        if (stage === "handler") throw error;
+        return "ok";
+      }, op);
+      expect((await route.dispatch!(request(), {}, Bun.peek)).status).toBe(409);
+      expect(conversions).toBe(1);
+    }
+  });
+
   test("returns synchronous responses while the existing entry point stays Promise-based", async () => {
     for (const handler of [() => "ok", () => Promise.resolve("ok")]) {
       const route = registration(handler);

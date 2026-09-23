@@ -169,6 +169,21 @@ export interface HttpTransportRoute {
     peek: HttpPromiseInspector,
     transport?: HttpRequestTransportInfo,
   ): Response | Promise<Response>;
+  /** Verified scalar captures, with the original encoded spelling available lazily. */
+  dispatchDecodedPath?(
+    request: Request,
+    pathParams: Readonly<Record<string, string>>,
+    readRawPathParams: () => Readonly<Record<string, string>>,
+    peek: HttpPromiseInspector,
+    transport?: HttpRequestTransportInfo,
+  ): Response | Promise<Response>;
+}
+
+interface NativePathInput {
+  readonly values: Readonly<Record<string, string>>;
+  readonly readRaw: () => Readonly<Record<string, string>>;
+  readonly originalDecoder: ServerOperation<unknown, unknown>["decodeInput"];
+  readonly nativeDecoder: NonNullable<ServerOperation<unknown, unknown>["decodeNativePathInput"]>;
 }
 
 /**
@@ -310,28 +325,43 @@ export function createHttpRouter<Ctx extends RequestContext>(
     pathParams: Readonly<Record<string, string>>,
     peek: HttpPromiseInspector,
     transport?: HttpRequestTransportInfo,
+    nativePath?: NativePathInput,
   ): Response | Promise<Response> {
     let context: Ctx | undefined;
     try {
       // Checking presence avoids evaluating hook getters on successful requests.
       if (hasMiddleware || "createContext" in options || "onUnhandledError" in options) {
-        return execute(request, { route, pathParams }, transport);
+        return execute(
+          request,
+          { route, pathParams: nativePath?.readRaw() ?? pathParams },
+          transport,
+        );
       }
       request = enforceRequestBodyLimit(
         request,
         maxRequestBodyBytes,
         transport?.request === request ? transport.verifiedBodyLength : undefined,
       );
-      context = createDefaultContext(request, {
-        endpoint: route.operation.endpoint,
-        pathParams,
-      }) as Ctx;
-      const decoded = route.operation.decodeInput(request, pathParams);
-      const response =
-        decoded instanceof Promise
-          ? finishDecoded(decoded, route, context, peek)
-          : finishDirect(decoded, route, context, peek);
-      return response instanceof Promise ? catchDirectError(response, context) : response;
+      const match: MatchedEndpoint = nativePath
+        ? {
+            endpoint: route.operation.endpoint,
+            get pathParams() {
+              return nativePath.readRaw();
+            },
+          }
+        : { endpoint: route.operation.endpoint, pathParams };
+      context = createDefaultContext(request, match) as Ctx;
+      // Replaced decoders retain control, including custom authorization.
+      const useNativeDecoder =
+        nativePath &&
+        route.operation.decodeInput === nativePath.originalDecoder &&
+        route.operation.decodeNativePathInput === nativePath.nativeDecoder;
+      const decoded = useNativeDecoder
+        ? route.operation.decodeNativePathInput!(nativePath.values)
+        : route.operation.decodeInput(request, nativePath?.readRaw() ?? pathParams);
+      return decoded instanceof Promise
+        ? finishDecoded(decoded, route, context, peek)
+        : finishDirect(decoded, route, context, peek);
     } catch (error) {
       return directFailure(error, context);
     }
@@ -351,7 +381,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
       peek.status(handled) === "fulfilled" ? Promise.resolve(handled) : (handled as Promise<R>);
     return peek.status(pending) === "fulfilled"
       ? route.operation.encodeResult(peek(pending) as R)
-      : encodePending(pending, route);
+      : encodePending(pending, route, context);
   }
 
   async function finishDecoded<I, R>(
@@ -360,14 +390,23 @@ export function createHttpRouter<Ctx extends RequestContext>(
     context: Ctx,
     peek: HttpPromiseInspector,
   ): Promise<Response> {
-    return finishDirect(await decoded, route, context, peek);
+    try {
+      return finishDirect(await decoded, route, context, peek);
+    } catch (error) {
+      return directFailure(error, context);
+    }
   }
 
   async function encodePending<I, R>(
     pending: Promise<R>,
     route: RouteBinding<I, R, Ctx>,
+    context: Ctx,
   ): Promise<Response> {
-    return route.operation.encodeResult(await pending);
+    try {
+      return route.operation.encodeResult(await pending);
+    } catch (error) {
+      return directFailure(error, context);
+    }
   }
 
   function directFailure(error: unknown, context?: Ctx): Response | Promise<Response> {
@@ -378,14 +417,6 @@ export function createHttpRouter<Ctx extends RequestContext>(
       return Promise.reject(conversionError);
     }
     return Promise.reject(error);
-  }
-
-  async function catchDirectError(response: Promise<Response>, context: Ctx): Promise<Response> {
-    try {
-      return await response;
-    } catch (error) {
-      return directFailure(error, context);
-    }
   }
 
   const router: ComposableHttpRouter = {
@@ -405,26 +436,45 @@ export function createHttpRouter<Ctx extends RequestContext>(
     !normalizedRoutes || normalizedRoutes.some(({ selection }) => selection !== undefined)
       ? undefined
       : () =>
-          (transportRoutes ??= normalizedRoutes.map(({ method, pattern, route }) => ({
-            method,
-            pattern,
-            handle(
-              request: Request,
-              pathParams: Readonly<Record<string, string>>,
-              transport?: HttpRequestTransportInfo,
-            ) {
-              if (router.handle !== originalHandle) return router.handle(request);
-              return execute(request, { route, pathParams }, transport);
-            },
-            dispatch(request, pathParams, peek, transport) {
-              try {
+          (transportRoutes ??= normalizedRoutes.map(({ method, pattern, route }) => {
+            const nativeDecoder = route.operation.decodeNativePathInput;
+            const originalDecoder = nativeDecoder ? route.operation.decodeInput : undefined;
+            return {
+              method,
+              pattern,
+              dispatchDecodedPath: nativeDecoder
+                ? (request, pathParams, readRawPathParams, peek, transport) => {
+                    try {
+                      if (router.handle !== originalHandle) return router.handle(request);
+                      return executeDirect(request, route, pathParams, peek, transport, {
+                        values: pathParams,
+                        readRaw: readRawPathParams,
+                        originalDecoder: originalDecoder!,
+                        nativeDecoder,
+                      });
+                    } catch (error) {
+                      return Promise.reject(error);
+                    }
+                  }
+                : undefined,
+              handle(
+                request: Request,
+                pathParams: Readonly<Record<string, string>>,
+                transport?: HttpRequestTransportInfo,
+              ) {
                 if (router.handle !== originalHandle) return router.handle(request);
-                return executeDirect(request, route, pathParams, peek, transport);
-              } catch (error) {
-                return Promise.reject(error);
-              }
-            },
-          })));
+                return execute(request, { route, pathParams }, transport);
+              },
+              dispatch(request, pathParams, peek, transport) {
+                try {
+                  if (router.handle !== originalHandle) return router.handle(request);
+                  return executeDirect(request, route, pathParams, peek, transport);
+                } catch (error) {
+                  return Promise.reject(error);
+                }
+              },
+            };
+          }));
   transportHandlers.set(router, {
     handle: router.handle,
     getRoutes: getTransportRoutes,

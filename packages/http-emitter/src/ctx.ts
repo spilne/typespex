@@ -29,6 +29,7 @@ export const GENERATED_TYPE_RESERVED_NAMES: ReadonlySet<string> = new Set([
   "RequestDecoders",
   "Validators",
   "decodeRequestInput",
+  "decodePathInput",
   "decodeRequestInputAndBody",
   "decodeRequestInputAndJsonlBody",
   "decodeBody",

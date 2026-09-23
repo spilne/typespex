@@ -375,6 +375,7 @@ async function startServer(
     cwd: import.meta.dir,
     env: {
       ...Bun.env,
+      NODE_ENV: "production",
       TYPESPEX_BENCH_PORT: String(server.port),
       TYPESPEX_BENCH_CONTROL_BODY: scenario.expectedBody,
       TYPESPEX_BENCH_CONTROL_STATUS: String(scenario.expectedStatus),
@@ -564,6 +565,7 @@ async function main(): Promise<void> {
   const client = await prepareOha();
   const metadata = {
     loadGenerator: client,
+    serverEnvironment: { NODE_ENV: "production" },
     ...(await benchmarkMetadata(REPOSITORY_ROOT)),
     baseline:
       BASELINE_ROOT === undefined

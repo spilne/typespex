@@ -14,6 +14,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -49,7 +50,9 @@ export const ItemsOperations = {
       },
     },
     decodeInput: (request, pathParams) =>
-      decodeRequestInput<{ itemId: string }>(ItemsInput.remove, request, pathParams),
+      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams),
+    decodeNativePathInput: (pathParams) =>
+      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams, true),
     encodeResult: () => ItemsOutput.remove.encode(undefined),
   } satisfies ServerOperation<{ itemId: string }, void>,
 } as const;
@@ -132,6 +135,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -214,6 +218,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -295,6 +300,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -469,7 +475,9 @@ export const ItemsOperations = {
       },
     },
     decodeInput: (request, pathParams) =>
-      decodeRequestInput<{ itemId: string }>(ItemsInput.read, request, pathParams),
+      decodePathInput<{ itemId: string }>(ItemsInput.read.decode, pathParams),
+    decodeNativePathInput: (pathParams) =>
+      decodePathInput<{ itemId: string }>(ItemsInput.read.decode, pathParams, true),
     encodeResult: (result: Item | _TypespexPayload_NotFoundError_response_1_payload) =>
       ItemsOutput.read.encode(result),
   } satisfies ServerOperation<
@@ -497,7 +505,9 @@ export const ItemsOperations = {
       },
     },
     decodeInput: (request, pathParams) =>
-      decodeRequestInput<{ itemId: string }>(ItemsInput.remove, request, pathParams),
+      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams),
+    decodeNativePathInput: (pathParams) =>
+      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams, true),
     encodeResult: (
       result:
         | void
@@ -597,6 +607,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -725,6 +736,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -805,6 +817,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,

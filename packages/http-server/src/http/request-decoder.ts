@@ -19,9 +19,20 @@ import {
 } from "./decoder.js";
 import { type ValidationIssue, ValidationError } from "./validation.js";
 
-/** Request data available to path/query/header/cookie decoders. */
-export interface RequestInputSource {
+/** Raw captures needed by path parameter decoders. */
+export interface PathInputSource {
   readonly pathParams: Readonly<Record<string, string>>;
+  /** Scalar captures already percent-decoded by a verified HTTP transport. */
+  readonly pathParamsDecoded?: boolean;
+  // Accept existing full-source object literals without requiring request data.
+  readonly query?: URLSearchParams;
+  readonly rawQuery?: string;
+  readonly headers?: Headers;
+  readonly cookies?: Readonly<Record<string, string>>;
+}
+
+/** Request data available to path/query/header/cookie decoders. */
+export interface RequestInputSource extends PathInputSource {
   readonly query: URLSearchParams;
   readonly rawQuery?: string;
   readonly headers: Headers;
@@ -62,22 +73,33 @@ export type RequestDecoder<A> = Decoder<A, RequestInputSource>;
 // Type-level helpers
 // ---------------------------------------------------------------------------
 
-type RequestDecoderTuple = readonly RequestDecoder<unknown>[];
+type RequestDecoderTuple = readonly Decoder<unknown, PathInputSource>[];
 
 type RequestDecoderValues<TDecoders extends RequestDecoderTuple> = {
-  [TKey in keyof TDecoders]: TDecoders[TKey] extends RequestDecoder<infer A> ? A : never;
+  [TKey in keyof TDecoders]: TDecoders[TKey] extends Decoder<infer A, PathInputSource> ? A : never;
 };
+
+type DecoderSource<T> = T extends Decoder<unknown, infer Input> ? Input : never;
+type UnionToIntersection<T> = (T extends unknown ? (input: T) => void : never) extends (
+  input: infer Input,
+) => void
+  ? Input
+  : never;
+type CombinedRequestSource<T extends RequestDecoderTuple> = UnionToIntersection<
+  DecoderSource<T[number]>
+> &
+  PathInputSource;
 
 // ---------------------------------------------------------------------------
 // Request decoder constructors
 // ---------------------------------------------------------------------------
 
-const queryReadCounts = new WeakMap<RequestDecoder<unknown>, number>();
+const queryReadCounts = new WeakMap<Decoder<unknown, PathInputSource>, number>();
 
-function createRequestDecoder<A>(
-  decode: (input: RequestInputSource) => DecoderResult<A>,
+function createRequestDecoder<A, Input extends PathInputSource = RequestInputSource>(
+  decode: (input: Input) => DecoderResult<A>,
   queryReads = 0,
-): RequestDecoder<A> {
+): Decoder<A, Input> {
   const decoder = Decoder.of(decode);
   queryReadCounts.set(decoder, queryReads);
   return decoder;
@@ -88,7 +110,7 @@ export function requiredPath<A>(
   name: string,
   decoder: Decoder<A>,
   options: PathParameterDecodeOptions = {},
-): RequestDecoder<A> {
+): Decoder<A, PathInputSource> {
   if (options.array && options.record) {
     throw new TypeError("Path parameters cannot use array and record decoding together.");
   }
@@ -110,7 +132,22 @@ export function requiredPath<A>(
   const arraySeparator = options.arraySeparator ?? ",";
   const recordSeparator = options.recordSeparator ?? ",";
   const prefix = `$path.${name}`;
+  if (!options.array && !options.record) {
+    return createRequestDecoder((input) => {
+      let value = input.pathParams[name];
+      if (value !== undefined && !input.pathParamsDecoded && value.includes("%")) {
+        const decoded = uriDecode(value);
+        if (isLeft(decoded)) return prefixIssues(decoded, prefix);
+        value = decoded.right;
+      }
+      const result = decoder.decode(value);
+      return isLeft(result) ? prefixIssues(result, prefix) : result;
+    });
+  }
   return createRequestDecoder((input) => {
+    if (input.pathParamsDecoded) {
+      throw new TypeError("Predecoded path captures cannot preserve composite separators.");
+    }
     const raw = input.pathParams[name];
     const decodedValue: DecoderResult<string | string[] | Record<string, string>> | undefined =
       options.emptyComposite && raw === undefined
@@ -218,7 +255,7 @@ export function requiredCookie<A>(
 export function combineRequestDecoders<TDecoders extends RequestDecoderTuple, A>(
   decoders: [...TDecoders],
   f: (...values: RequestDecoderValues<TDecoders>) => A,
-): RequestDecoder<A> {
+): Decoder<A, CombinedRequestSource<TDecoders>> {
   // Opaque/custom decoders count as one read; nested combinations retain their
   // known count. Larger groups index once instead of repeatedly searching.
   const queryReads = decoders.reduce(
@@ -250,6 +287,16 @@ export function combineRequestDecoders<TDecoders extends RequestDecoderTuple, A>
 // ---------------------------------------------------------------------------
 // Boundary functions — convert lightweight DecoderResult to ValidationError
 // ---------------------------------------------------------------------------
+
+/** Decodes path-only input without materializing a request's URL or headers. */
+export function decodePathInput<A>(
+  decode: (input: PathInputSource) => DecoderResult<A>,
+  pathParams: Readonly<Record<string, string>>,
+  pathParamsDecoded = false,
+): EitherT<ValidationError, A> {
+  const result = decode({ pathParams, pathParamsDecoded });
+  return isLeft(result) ? Either.left(new ValidationError(result.left)) : result;
+}
 
 /**
  * Runs a sync request decoder against a request.
@@ -608,7 +655,7 @@ function readSingleQueryValue(text: string, name: string): DecoderResult<string 
 // group of readers, sharing an index is faster on both Bun and Node.
 const MAX_DIRECT_QUERY_READS = 5;
 const ENCODED_QUERY_NAME = /(?:^|&)[^=&]*[%+]/;
-const indexedQueryInputs = new WeakSet<RequestInputSource>();
+const indexedQueryInputs = new WeakSet<PathInputSource>();
 const queryIndexes = new WeakMap<
   RequestInputSource,
   { text: string; values?: Readonly<Record<string, readonly string[]>> }

@@ -4,6 +4,7 @@ import {
   Either,
   UnsupportedMediaTypeError,
   ValidationError,
+  decodePathInput,
   decodeRequestInput,
   decodeRequestInputAndBody,
   isLeft,
@@ -12,6 +13,41 @@ import {
 import type { Decoder, RequestDecoder } from "../src/server.js";
 
 describe("http request decoders (sync)", () => {
+  test("transport-decoded scalars validate without a second percent decode", () => {
+    const decoder = RequestDecoders.path("name", Decoders.string).map((name) => ({ name }));
+    expect(decodePathInput(decoder.decode, { name: "literal%20value" }, true)).toEqual(
+      Either.right({ name: "literal%20value" }),
+    );
+    const composite = RequestDecoders.path("items", Decoders.array(Decoders.string), {
+      array: true,
+    });
+    expect(() => decodePathInput(composite.decode, { items: "a,b" }, true)).toThrow(
+      "Predecoded path captures cannot preserve composite separators.",
+    );
+  });
+
+  test("path-only decoding preserves URI decoding and accumulated validation issues", () => {
+    const decoder = RequestDecoders.combine(
+      [
+        RequestDecoders.path("name", Decoders.string),
+        RequestDecoders.path("ids", Decoders.array(Decoders.integer), { array: true }),
+      ],
+      (name, ids) => ({ name, ids }),
+    );
+    for (const params of [
+      { name: "a%2Fb", ids: "1,2,3" },
+      { name: "%E6%97%A5%E6%9C%AC", ids: "1%2C2,3" },
+      { name: "%FF", ids: "x,y" },
+      {},
+    ]) {
+      const expected = decodeRequestInput(decoder, new Request("http://localhost/"), params);
+      expect(decodePathInput(decoder.decode, params)).toEqual(expected);
+    }
+    expect(decodePathInput(decoder.decode, { name: "a%2Fb", ids: "1,2" })).toEqual(
+      Either.right({ name: "a/b", ids: [1, 2] }),
+    );
+  });
+
   test("direct query reads preserve boundaries, duplicates, and empty names", () => {
     const decoder = RequestDecoders.combine(
       [

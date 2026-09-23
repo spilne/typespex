@@ -53,6 +53,7 @@ const SERVER_INPUT_DECODER_IMPORTS = [
   "RequestDecoders",
   "Validators",
   "decodeRequestInput",
+  "decodePathInput",
   "decodeRequestInputAndBody",
   "decodeBody",
   "decodeJsonBody",
@@ -89,6 +90,8 @@ export interface InputDecoderPlan {
   readonly inputEntries: readonly InputDecoderEntry[];
   /** The decode expression (used as arrow body). */
   readonly decodeExpression: string;
+  /** Path-only scalar decoding for a transport that has verified decoded captures. */
+  readonly decodeNativePathExpression?: string;
   /** Whether decodeInput needs pathParams in its signature. */
   readonly needsPathParams: boolean;
   /** Whether decodeInput returns a Promise (body involved). */
@@ -122,6 +125,7 @@ export function buildInputDecoderPlan(
     pathParams.length + queryParams.length + headerParams.length + cookieParams.length > 0;
   // Build request input decoder entries.
   const requestEntries: Array<{ name: string; expr: string }> = [];
+  let hasCompositePathInput = false;
   for (const param of pathParams) {
     const valueDecoder = emitDecoderExpression(
       ctx,
@@ -157,6 +161,7 @@ export function buildInputDecoderPlan(
       }
     }
     const options = optionValues.length > 0 ? `, { ${optionValues.join(", ")} }` : "";
+    if (optionValues.length > 0) hasCompositePathInput = true;
     requestEntries.push({
       name: param.param.name,
       expr: `RequestDecoders.path(${tsLiteral(param.name)}, ${decoder}${options})`,
@@ -301,9 +306,16 @@ export function buildInputDecoderPlan(
   // Case 2: request input only — sync Either
   if (hasRequestInput && !hasBody) {
     const ref = tsPropertyAccess(inputsRef, opName);
+    const pathOnly = pathParams.length === parameters.length;
     return {
       inputEntries: [emitRequestDecoderEntry(opName, requestEntries)],
-      decodeExpression: `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
+      decodeExpression: pathOnly
+        ? `decodePathInput<${inputType}>(${ref}.decode, pathParams)`
+        : `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
+      decodeNativePathExpression:
+        pathOnly && !hasCompositePathInput
+          ? `decodePathInput<${inputType}>(${ref}.decode, pathParams, true)`
+          : undefined,
       needsPathParams: true,
       isAsync: false,
       hoistedDecoders,

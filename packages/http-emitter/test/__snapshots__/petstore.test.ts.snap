@@ -78,6 +78,7 @@ import {
   RequestDecoders,
   Validators,
   decodeRequestInput,
+  decodePathInput,
   decodeRequestInputAndBody,
   decodeBody,
   decodeJsonBody,
@@ -302,7 +303,9 @@ export const PetsOperations = {
       },
     },
     decodeInput: (request, pathParams) =>
-      decodeRequestInput<{ petId: string }>(PetsInput.read, request, pathParams),
+      decodePathInput<{ petId: string }>(PetsInput.read.decode, pathParams),
+    decodeNativePathInput: (pathParams) =>
+      decodePathInput<{ petId: string }>(PetsInput.read.decode, pathParams, true),
     encodeResult: (result: Pet | _TypespexPayload_NotFoundError_response_1_payload) =>
       PetsOutput.read.encode(result),
   } satisfies ServerOperation<
@@ -327,7 +330,9 @@ export const PetsOperations = {
       },
     },
     decodeInput: (request, pathParams) =>
-      decodeRequestInput<{ petId: string }>(PetsInput.delete, request, pathParams),
+      decodePathInput<{ petId: string }>(PetsInput.delete.decode, pathParams),
+    decodeNativePathInput: (pathParams) =>
+      decodePathInput<{ petId: string }>(PetsInput.delete.decode, pathParams, true),
     encodeResult: (result: void | _TypespexPayload_NotFoundError_response_1_payload) =>
       PetsOutput.delete.encode(result),
   } satisfies ServerOperation<
