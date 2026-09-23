@@ -51,8 +51,12 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams),
-    decodeNativePathInput: (pathParams) =>
-      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams, true),
+    decodeNativePathInput: (pathParams) => {
+      const value: string | undefined = pathParams["itemId"];
+      return typeof value === "string"
+        ? Either.right<{ itemId: string }>({ itemId: value })
+        : decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, { itemId: value! }, true);
+    },
     encodeResult: () => ItemsOutput.remove.encode(undefined),
   } satisfies ServerOperation<{ itemId: string }, void>,
 } as const;
@@ -508,8 +512,12 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodePathInput<{ itemId: string }>(ItemsInput.read.decode, pathParams),
-    decodeNativePathInput: (pathParams) =>
-      decodePathInput<{ itemId: string }>(ItemsInput.read.decode, pathParams, true),
+    decodeNativePathInput: (pathParams) => {
+      const value: string | undefined = pathParams["itemId"];
+      return typeof value === "string"
+        ? Either.right<{ itemId: string }>({ itemId: value })
+        : decodePathInput<{ itemId: string }>(ItemsInput.read.decode, { itemId: value! }, true);
+    },
     encodeResult: (result: Item | _TypespexPayload_NotFoundError_response_1_payload) =>
       ItemsOutput.read.encode(result),
   } satisfies ServerOperation<
@@ -538,8 +546,12 @@ export const ItemsOperations = {
     },
     decodeInput: (request, pathParams) =>
       decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams),
-    decodeNativePathInput: (pathParams) =>
-      decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, pathParams, true),
+    decodeNativePathInput: (pathParams) => {
+      const value: string | undefined = pathParams["itemId"];
+      return typeof value === "string"
+        ? Either.right<{ itemId: string }>({ itemId: value })
+        : decodePathInput<{ itemId: string }>(ItemsInput.remove.decode, { itemId: value! }, true);
+    },
     encodeResult: (
       result:
         | void
