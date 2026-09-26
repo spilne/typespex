@@ -108,6 +108,9 @@ export function enforceRequestBodyLimit(
     throw new RangeError("Verified request body length must be a non-negative safe integer.");
   }
   const maximum = resolveRequestBodyLimit(configuredLimit);
+  // A transport-verified empty body has nothing to count or drain; the request
+  // needs no limit state until a decoder applies a policy of its own.
+  if (verifiedBodyLength === 0) return request;
   if (maximum === false) {
     requestBodyLimitStates.set(request, {
       maximum,
