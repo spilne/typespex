@@ -517,7 +517,7 @@ function mirrorFileNameMetadata<A extends object>(value: A, options: BodyDecodeO
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a RequestInputSource with lazy query/cookie parsing. */
+/** Builds a RequestInputSource with lazy query, cookie, and header access. */
 function createRequestInputSource(
   request: Request,
   pathParams: Readonly<Record<string, string>>,
@@ -533,7 +533,11 @@ function createRequestInputSource(
     get cookies() {
       return (_cookies ??= parseCookies(request.headers.get("cookie")));
     },
-    headers: request.headers,
+    // The platform builds the Headers object on first access; inputs without
+    // header or cookie parameters never pay for it.
+    get headers() {
+      return request.headers;
+    },
   };
 }
 
