@@ -308,7 +308,7 @@ describe("generic models", () => {
     expect(r.readFile("generic-api", "server.ts")).toContain(
       "OperationHandler<Page<Pet>, Page<Pet>, Ctx>",
     );
-    expect(serverOperations).toContain("ResponseEncoders.json<Page<Pet>>(200)");
+    expect(serverOperations).toContain("ResponseEncoders.nativeJson<Page<Pet>>(200)");
     expect(serverOperations).toContain("Decoders.object<Page<Pet>>");
     expect(serverOperations).toContain(
       "Decoders.object<Pet>({ id: Decoders.string }, { allowUnknown: true })",
@@ -432,8 +432,8 @@ export const handlers: NestedGenericApiServer = {
     expect(server).toContain(
       "readonly readFromTemplate: OperationHandler<Record<string, never>, Page<Pet>, Ctx>",
     );
-    expect(operations).toContain("read: ResponseEncoders.json<Page<Pet>>(200)");
-    expect(operations).toContain("readFromTemplate: ResponseEncoders.json<Page<Pet>>(200)");
+    expect(operations).toContain("read: ResponseEncoders.nativeJson<Page<Pet>>(200)");
+    expect(operations).toContain("readFromTemplate: ResponseEncoders.nativeJson<Page<Pet>>(200)");
     r.typecheck("template-surface-api");
   });
 
@@ -473,7 +473,7 @@ export const handlers: NestedGenericApiServer = {
     expect(server).toContain(
       'readonly search: OperationHandler<{ tag: Tagged<"pet"> }, TaggedPet, Ctx>',
     );
-    expect(operations).toContain("ResponseEncoders.json<Maybe<Pet>>(200)");
+    expect(operations).toContain("ResponseEncoders.nativeJson<Maybe<Pet>>(200)");
     expect(operations).toContain("Pet | _TypespexPayload_Accepted_response_");
     expect(operations).toContain("Box<Pet> | _TypespexPayload_Accepted_response_");
     expect(operations).toContain("createTagged: ResponseEncoders.text(200)");
