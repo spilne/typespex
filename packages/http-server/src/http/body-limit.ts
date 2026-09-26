@@ -163,8 +163,12 @@ function createLimitedRequest(
     drainRequested: false,
   };
 
+  // A transport-verified length is the framed body length, so the declared
+  // Content-Length header adds nothing and its Headers need not be materialized.
   const earlyError =
-    contentLengthError(request, maximum) ?? verifiedLengthError(verifiedBodyLength, maximum);
+    verifiedBodyLength === undefined
+      ? contentLengthError(request, maximum)
+      : verifiedLengthError(verifiedBodyLength, maximum);
   if (earlyError) {
     state.error = earlyError;
     beginSafeDrain(state);

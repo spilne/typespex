@@ -31,7 +31,7 @@ export function createNativeRoutes(
   > = Object.create(null);
   for (const route of registrations) {
     if (!METHODS.has(route.method)) return undefined;
-    // Bun exposes no GET/HEAD body; the ordinary limiter still checks Content-Length.
+    // Bun exposes no GET/HEAD body, so those requests need no header at all.
     const needsBodyFraming = route.method !== "GET" && route.method !== "HEAD";
     const captureSteps: CaptureStep[] = [];
     let literalPrefix = "";
@@ -71,7 +71,7 @@ export function createNativeRoutes(
       // retain the URL verification below.
       if ((!captureSteps.length || decodedDispatch) && hasSimpleAuthority(request)) {
         if (!captureSteps.length) {
-          const transport = needsBodyFraming ? framedRequestBody(request) : undefined;
+          const transport = framedRequestBody(request);
           return route.dispatch
             ? route.dispatch(request, EMPTY_PARAMS, Bun.peek, transport)
             : route.handle(request, EMPTY_PARAMS, transport);
@@ -94,7 +94,7 @@ export function createNativeRoutes(
             decoded,
             () => (raw ??= readRawCaptures(request.url, captureSteps)),
             Bun.peek,
-            needsBodyFraming ? framedRequestBody(request) : undefined,
+            framedRequestBody(request),
           );
         }
       }
@@ -123,7 +123,7 @@ export function createNativeRoutes(
       // segments and backslashes and incorporates Host. Only trust its selection
       // when reconstructing that target agrees with the router's pathname.
       if (matchedPath !== pathname) return fallback(request);
-      const transport = needsBodyFraming ? framedRequestBody(request) : undefined;
+      const transport = framedRequestBody(request);
       return route.dispatch
         ? route.dispatch(request, pathParams, Bun.peek, transport)
         : route.handle(request, pathParams, transport);

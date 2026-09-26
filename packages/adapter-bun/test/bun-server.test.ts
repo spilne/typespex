@@ -77,7 +77,7 @@ function rawHttp(port: number, message: string): Promise<string> {
 }
 
 describe("createBunServer", () => {
-  test("native GET/HEAD bodies stay empty and declared limits run before handlers", async () => {
+  test("GET/HEAD requests carry no body and skip declared Content-Length limits", async () => {
     const bodies: boolean[] = [];
     const router = createHttpRouter(
       ["GET", "HEAD"].map((method) =>
@@ -99,12 +99,14 @@ describe("createBunServer", () => {
               server.port!,
               `${method} /framing/a HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: ${body.length}\r\n\r\n${body}`,
             );
-            expect(response).toStartWith(`HTTP/1.1 ${body.length > 3 ? 413 : 200} `);
-            expect(bodies.length - previousCalls).toBe(body.length > 3 ? 0 : 1);
+            // Bun never exposes a GET/HEAD body, so the transport reports an
+            // empty framed body and no header is consulted.
+            expect(response).toStartWith("HTTP/1.1 200 ");
+            expect(bodies.length - previousCalls).toBe(1);
           }
         }
       }
-      expect(bodies).toEqual(Array(8).fill(true));
+      expect(bodies).toEqual(Array(12).fill(true));
     } finally {
       await ordinary.stop(true);
       await native.stop(true);
