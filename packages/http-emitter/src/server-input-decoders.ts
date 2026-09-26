@@ -28,6 +28,7 @@ import {
   type PayloadProjection,
 } from "./payload-context.js";
 import { getRequestInputPlan, type RequestBodyInputPlan } from "./request-input-plan.js";
+import { emitFlatQueryDecoder } from "./server-query-fast-path.js";
 import { getHandlerRequestParameters, getJsonlRequestStream } from "./request-streams.js";
 import {
   buildHoistedDecoders,
@@ -307,8 +308,21 @@ export function buildInputDecoderPlan(
   if (hasRequestInput && !hasBody) {
     const ref = tsPropertyAccess(inputsRef, opName);
     const pathOnly = pathParams.length === parameters.length;
+    const flatQuery =
+      queryParams.length === parameters.length
+        ? emitFlatQueryDecoder(
+            ctx,
+            queryParams,
+            requestDecoderExpression(requestEntries),
+            inputType,
+          )
+        : undefined;
     return {
-      inputEntries: [emitRequestDecoderEntry(opName, requestEntries)],
+      inputEntries: [
+        flatQuery
+          ? { lines: [`  ${tsObjectKey(opName)}: ${flatQuery},`] }
+          : emitRequestDecoderEntry(opName, requestEntries),
+      ],
       decodeExpression: pathOnly
         ? `decodePathInput<${inputType}>(${ref}.decode, pathParams)`
         : `decodeRequestInput<${inputType}>(${ref}, request, pathParams)`,
@@ -476,6 +490,20 @@ function emitRequestDecoderEntry(
     lines.push(`  ),`);
   }
   return { lines };
+}
+
+/** The generic request decoder as one expression, used as a fast path's fallback. */
+function requestDecoderExpression(entries: ReadonlyArray<{ name: string; expr: string }>): string {
+  const localNames = requestDecoderLocalNames(entries);
+  if (entries.length === 1) {
+    const [e] = entries;
+    return `${e.expr}.map((${localNames[0]}) => ({ ${emitObjectAssignment(e.name, localNames[0])} }))`;
+  }
+  const decoders = entries.map((e) => e.expr).join(", ");
+  const resultProperties = entries
+    .map((e, i) => emitObjectAssignment(e.name, localNames[i]))
+    .join(", ");
+  return `RequestDecoders.combine([${decoders}], (${localNames.join(", ")}) => ({ ${resultProperties} }))`;
 }
 
 function requestDecoderLocalNames(
