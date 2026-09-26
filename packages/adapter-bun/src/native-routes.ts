@@ -9,7 +9,6 @@ import { framedRequestBody } from "./transport.js";
 const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze(Object.create(null));
 const METHODS = new Set<string>(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
 const UNRESERVED_CAPTURE = /^[A-Za-z0-9_~-]+$/;
-const SIMPLE_AUTHORITY = /^[A-Za-z0-9._-]+(?::[0-9]{1,5})?$/;
 
 interface CaptureStep {
   readonly name: string;
@@ -67,16 +66,11 @@ export function createNativeRoutes(
       if (request.method !== route.method) return fallback(request);
       // Bun matches literals and separators on the raw request target before
       // decoding captures, so a literal match with unreserved captures selects
-      // exactly the operation the target names. Bodiless requests therefore
-      // dispatch without reading any header; values derived from Request.url
-      // are verified when they are read. Requests with bodies materialize
-      // their framing headers anyway, and a simple authority keeps Request.url
-      // in step with the raw target for them. Escaped separators, dot segments
-      // and invalid UTF-8 retain the URL verification below.
-      if (
-        (!captureSteps.length || decodedDispatch) &&
-        (!needsBodyFraming || hasSimpleAuthority(request))
-      ) {
+      // exactly the operation the target names, whatever the Host header says.
+      // Values derived from Request.url are verified when they are read.
+      // Escaped separators, dot segments and invalid UTF-8 retain the URL
+      // verification below.
+      if (!captureSteps.length || decodedDispatch) {
         if (!captureSteps.length) {
           const transport = framedRequestBody(request);
           return route.dispatch
@@ -137,13 +131,6 @@ export function createNativeRoutes(
     };
   }
   return routes;
-}
-
-function hasSimpleAuthority(request: Request): boolean {
-  const host = request.headers.get("host");
-  if (!host || !SIMPLE_AUTHORITY.test(host)) return false;
-  const colon = host.lastIndexOf(":");
-  return colon === -1 || Number(host.substring(colon + 1)) <= 65535;
 }
 
 function patternsOverlap(left: HttpTransportRoute, right: HttpTransportRoute): boolean {
