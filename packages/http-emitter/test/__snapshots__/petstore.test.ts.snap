@@ -300,7 +300,7 @@ const PetsOutput = {
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -317,7 +317,7 @@ const PetsOutput = {
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && !Array.isArray(result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,

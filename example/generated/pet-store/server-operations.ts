@@ -279,7 +279,7 @@ const PetsOutput = {
     {
       when: (result): result is _TypespexPayload_ConflictError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(409).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(409).mapInput(
         (value: _TypespexPayload_ConflictError_response_1_payload) =>
           _jsonSerializer_ConflictError_response_1_payload.serialize(
             value as _TypespexPayload_ConflictError_response_1_payload,
@@ -297,7 +297,7 @@ const PetsOutput = {
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -321,7 +321,7 @@ const PetsOutput = {
         result !== null &&
         "code" in result &&
         result["code"] === "NOT_FOUND",
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -335,7 +335,7 @@ const PetsOutput = {
         result !== null &&
         "code" in result &&
         result["code"] === "UNAUTHORIZED",
-      encoder: ResponseEncoders.json<unknown>(401).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(401).mapInput(
         (value: _TypespexPayload_UnauthorizedError_response_1_payload) =>
           _jsonSerializer_UnauthorizedError_response_1_payload.serialize(
             value as _TypespexPayload_UnauthorizedError_response_1_payload,
@@ -355,7 +355,7 @@ const PetsOutput = {
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,

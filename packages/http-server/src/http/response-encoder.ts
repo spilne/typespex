@@ -1,5 +1,6 @@
 import { bytesToBase64, jsonResponse, nativeJsonResponse, stringifyJson } from "./json.js";
 import { isContentTypeAccepted, parseMediaType } from "./media-type.js";
+import { defineDataProperty } from "./object-properties.js";
 
 // Response copies Headers, so each response can reuse this private template
 // without repeating header parsing or sharing its mutable response headers.
@@ -352,7 +353,7 @@ function jsonWithHeadersResponseEncoder<A>(
   return ResponseEncoder.of((value) => {
     const src = value as Record<string, unknown>;
     const responseHeaders = new Headers();
-    const body: Record<string, unknown> = Object.create(null);
+    const body: Record<string, unknown> = {};
     for (const key of Object.keys(src)) {
       const header = headerMap.get(key);
       if (header !== undefined) {
@@ -366,7 +367,7 @@ function jsonWithHeadersResponseEncoder<A>(
           );
         }
       } else {
-        body[key] = src[key];
+        defineDataProperty(body, key, src[key]);
       }
     }
     if (isBodyForbiddenStatus(status)) {
@@ -677,9 +678,11 @@ function omitVariantProperties(src: Record<string, unknown>, variant: ResponseVa
 
   if (omit.size === 0) return src;
 
-  const body: Record<string, unknown> = Object.create(null);
+  // An ordinary object keeps the platform JSON fast path; prototype-sensitive
+  // names such as __proto__ are defined rather than assigned.
+  const body: Record<string, unknown> = {};
   for (const key of Object.keys(src)) {
-    if (!omit.has(key)) body[key] = src[key];
+    if (!omit.has(key)) defineDataProperty(body, key, src[key]);
   }
   return body;
 }

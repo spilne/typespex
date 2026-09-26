@@ -100,15 +100,16 @@ describe("native JSON response encoders", () => {
 
     expect(operations).toContain("list: ResponseEncoders.nativeJson<Pet[]>(200)");
     expect(operations).toContain("encoder: ResponseEncoders.nativeJson<Pet>(200)");
-    // Serializers, header extraction, and omitted metadata rebuild the body with a
-    // null prototype, which keeps the runtime's prepared snapshot.
-    expect(operations).toMatch(/ResponseEncoders\.json<unknown>\(404\)\.mapInput\(/);
+    // Serializer and projection outputs are ordinary objects, so they stay native.
+    expect(operations).toMatch(/ResponseEncoders\.nativeJson<unknown>\(404\)\.mapInput\(/);
     expect(operations).toMatch(
-      /ResponseEncoders\.json<unknown>\(200\)\.mapInput\(\(value: Encoded\)/,
+      /ResponseEncoders\.nativeJson<unknown>\(200\)\.mapInput\(\(value: Encoded\)/,
     );
-    expect(operations).toMatch(/headers: \[\["requestId", "x-request-id"\]\]/);
-    expect(operations).not.toContain("nativeJson: true");
-    expect(operations).not.toContain("ResponseEncoders.json<Pet");
+    expect(operations).toMatch(
+      /status: 200,[\s\S]*?headers: \[\["requestId", "x-request-id"\]\],[\s\S]*?nativeJson: true,/,
+    );
+    expect(operations).toMatch(/status: 201,[\s\S]*?transformBody: [\s\S]*?nativeJson: true,/);
+    expect(operations).not.toContain("ResponseEncoders.json<");
     r.typecheck("native-json-api");
   });
 

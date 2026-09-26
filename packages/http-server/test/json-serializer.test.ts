@@ -119,7 +119,8 @@ describe("JsonSerializers", () => {
     expect(serialized.display_name).toBe("Safe");
     expect(Object.prototype.hasOwnProperty.call(serialized, "__proto__")).toBe(true);
     expect(serialized.__proto__).toBe("data");
-    expect(Object.getPrototypeOf(serialized)).toBeNull();
+    // The output stays an ordinary object whose prototype the key did not change.
+    expect(Object.getPrototypeOf(serialized)).toBe(Object.prototype);
   });
 
   test("preserves prototype-sensitive declared wire names and record keys", () => {
@@ -131,7 +132,7 @@ describe("JsonSerializers", () => {
       model.serialize({ value: "safe" }),
       record.serialize(JSON.parse('{"__proto__":"safe"}')),
     ]) {
-      expect(Object.getPrototypeOf(output)).toBeNull();
+      expect([Object.prototype, null]).toContain(Object.getPrototypeOf(output));
       expect(Object.getOwnPropertyDescriptor(output, "__proto__")).toEqual({
         value: "safe",
         enumerable: true,

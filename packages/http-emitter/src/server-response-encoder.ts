@@ -92,7 +92,7 @@ export function buildResponseEncoder(
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
   const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
-  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response, bodyTransform);
+  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response);
 
   if (kind === "sse") {
     const result = buildSseResponsePlan(ctx, response.streamType!, response.projection);
@@ -145,28 +145,13 @@ export function buildResponseEncoder(
 }
 
 /**
- * The handler value reaches the encoder untouched and holds only native JSON
- * values. Serializers, omitted metadata, and header extraction produce
- * null-prototype copies, which JavaScriptCore serializes on its slow path, so
- * those bodies keep the runtime's prepared snapshot.
+ * The JSON wire body, after any generated serializer or metadata projection,
+ * holds only native JSON values.
  */
-function isNativeJsonResponse(
-  ctx: EmitterCtx,
-  response: ResponseVariant,
-  bodyTransform: ResponseBodyTransform | undefined,
-): boolean {
+function isNativeJsonResponse(ctx: EmitterCtx, response: ResponseVariant): boolean {
   const body = response.body;
   const serializationType = response.serializationType;
-  if (
-    bodyTransform ||
-    response.omitProperties.length > 0 ||
-    response.headers.length > 0 ||
-    !body ||
-    body.bodyKind !== "single" ||
-    !serializationType
-  ) {
-    return false;
-  }
+  if (!body || body.bodyKind !== "single" || !serializationType) return false;
   return isNativeJsonWireType(
     ctx,
     serializationType,
@@ -342,7 +327,7 @@ function emitResponseBranchEncoder(
   response: ResponseVariant,
 ): string {
   const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
-  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response, bodyTransform);
+  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response);
   // A required model body with a fixed status needs no envelope resolution.
   if (
     kind === "json" &&
