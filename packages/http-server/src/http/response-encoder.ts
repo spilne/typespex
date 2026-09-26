@@ -413,8 +413,8 @@ export interface ResponseVariant {
   readonly transformBody?: (value: unknown) => unknown;
   /**
    * The resolved body is a plain value without bigint or bytes members; see
-   * `ResponseEncoders.nativeJson`. Bodies rebuilt by `omit`, `headers`, or
-   * `transformBody` have null prototypes, which native JSON serializes slowly.
+   * `ResponseEncoders.nativeJson`. Bodies rebuilt by `omit` or `headers` stay
+   * ordinary objects, so they keep the platform serializer's fast path.
    */
   readonly nativeJson?: boolean;
 }
