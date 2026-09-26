@@ -174,7 +174,7 @@ describe("JSON wire transforms", () => {
     const operations = result.readFile("json-wire-api", "server-operations.ts");
 
     expect(operations).toContain("JsonSerializers");
-    expect(operations).toContain('userId: "user_id"');
+    expect(operations).toContain('source["user_id"]');
     expect(operations).toContain('displayName: "display_name"');
     expect(operations).toContain('wireName: "optional_profile"');
     expect(operations).toContain("JsonSerializers.array(");

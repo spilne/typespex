@@ -285,48 +285,102 @@ const ItemsInput = {
       .validate(Validators.minValue(1n)),
   ).map((itemId) => ({ itemId })),
   create: {
-    json: Decoders.object<CreateItem>(
-      {
-        name: (() => {
-          const fallback = Decoders.string.validate(
-            Validators.minLength(1),
-            Validators.maxLength(20),
-            Validators.pattern("^[A-Z].*", "Must start with uppercase."),
-          );
-          const pattern0 = new RegExp("^[A-Z].*");
-          return Decoder.of<string>((input) => {
-            if (
-              typeof input === "string" &&
-              input.length >= 1 &&
-              input.length <= 20 &&
-              pattern0.test(input)
-            ) {
-              return Either.right(input);
+    json: (() => {
+      const pattern0 = new RegExp("^[A-Z].*");
+      const fallback0 = Decoders.string.validate(
+        Validators.minLength(1),
+        Validators.maxLength(20),
+        Validators.pattern("^[A-Z].*", "Must start with uppercase."),
+      );
+      const fallback1 = Decoders.string;
+      const fallback2 = Decoders.strictArray(fallback1).validate(
+        Validators.minItems(1),
+        Validators.maxItems(3),
+      );
+      const fallback3 = Decoders.strictInteger
+        .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
+        .validate(Validators.minValue(0));
+      return Decoder.of<CreateItem>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "name")
+          ? source["name"]
+          : undefined;
+        if (
+          !(
+            typeof value0 === "string" &&
+            value0.length >= 1 &&
+            value0.length <= 20 &&
+            pattern0.test(value0)
+          )
+        ) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".name" + issue.path, message: issue.message });
             }
-            return fallback.decode(input);
-          });
-        })(),
-        tags: Decoders.strictArray(Decoders.string).validate(
-          Validators.minItems(1),
-          Validators.maxItems(3),
-        ),
-        count: (() => {
-          const fallback = Decoders.strictInteger
-            .validate(Validators.minValue(-2147483648), Validators.maxValue(2147483647))
-            .validate(Validators.minValue(0));
-
-          return Decoder.of<number>((input) => {
-            const decoded = Decoders.strictInteger.decode(input);
-            if (decoded._tag === "Left") return decoded;
-            if (decoded.right >= -2147483648 && decoded.right <= 2147483647 && decoded.right >= 0) {
-              return decoded;
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "tags")
+          ? source["tags"]
+          : undefined;
+        if (!(Array.isArray(value1) && value1.length >= 1 && value1.length <= 3)) {
+          const decoded = fallback2.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".tags" + issue.path, message: issue.message });
             }
-            return fallback.decode(input);
-          });
-        })(),
-      },
-      { allowUnknown: true },
-    ),
+          } else value1 = decoded.right;
+        } else {
+          const value1Items: unknown[] = new Array(value1.length);
+          for (let value1Index = 0; value1Index < value1.length; value1Index++) {
+            let value1Item = value1[value1Index];
+            if (!(typeof value1Item === "string")) {
+              const decoded = fallback1.decode(value1Item);
+              if (decoded._tag === "Left") {
+                for (const issue of decoded.left) {
+                  (issues ??= []).push({
+                    path: ".tags" + "[" + value1Index + "]" + issue.path,
+                    message: issue.message,
+                  });
+                }
+              } else value1Item = decoded.right;
+            }
+            value1Items[value1Index] = value1Item;
+          }
+          value1 = value1Items;
+        }
+        let value2 = Object.prototype.hasOwnProperty.call(source, "count")
+          ? source["count"]
+          : undefined;
+        if (
+          !(
+            typeof value2 === "number" &&
+            Number.isSafeInteger(value2) &&
+            value2 >= -2147483648 &&
+            value2 <= 2147483647 &&
+            value2 >= 0
+          )
+        ) {
+          const decoded = fallback3.decode(value2);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".count" + issue.path, message: issue.message });
+            }
+          } else value2 = decoded.right;
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right({ name: value0, tags: value1, count: value2 } as CreateItem);
+      });
+    })(),
   },
 };
 
@@ -442,10 +496,71 @@ const ItemsInput = {
     (itemId, dryRun) => ({ itemId, dryRun }),
   ),
   updateBody: {
-    json: Decoders.object<UpdatePayload>(
-      { name: Decoders.string, tags: Decoders.optional(Decoders.strictArray(Decoders.string)) },
-      { allowUnknown: true },
-    ),
+    json: (() => {
+      const fallback0 = Decoders.string;
+      const fallback1 = Decoders.string;
+      const fallback2 = Decoders.strictArray(fallback1);
+      return Decoder.of<UpdatePayload>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "name")
+          ? source["name"]
+          : undefined;
+        if (!(typeof value0 === "string")) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".name" + issue.path, message: issue.message });
+            }
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "tags")
+          ? source["tags"]
+          : undefined;
+        if (value1 !== undefined) {
+          if (!Array.isArray(value1)) {
+            const decoded = fallback2.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".tags" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          } else {
+            const value1Items: unknown[] = new Array(value1.length);
+            for (let value1Index = 0; value1Index < value1.length; value1Index++) {
+              let value1Item = value1[value1Index];
+              if (!(typeof value1Item === "string")) {
+                const decoded = fallback1.decode(value1Item);
+                if (decoded._tag === "Left") {
+                  for (const issue of decoded.left) {
+                    (issues ??= []).push({
+                      path: ".tags" + "[" + value1Index + "]" + issue.path,
+                      message: issue.message,
+                    });
+                  }
+                } else value1Item = decoded.right;
+              }
+              value1Items[value1Index] = value1Item;
+            }
+            value1 = value1Items;
+          }
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right(
+              (value1 !== undefined
+                ? { name: value0, tags: value1 }
+                : { name: value0 }) as UpdatePayload,
+            );
+      });
+    })(),
   },
 };
 
@@ -587,24 +702,140 @@ import * as ServerHints from "./server-hints.js";
 import type { TreeNode } from "./models.js";
 
 const _lazy16_TreeInput_create_8_TreeNode_json: Decoder<TreeNode> = Decoders.lazy(() =>
-  Decoders.object<TreeNode>(
-    {
-      value: Decoders.string,
-      children: Decoders.optional(Decoders.strictArray(_lazy16_TreeInput_create_8_TreeNode_json)),
-    },
-    { allowUnknown: true },
-  ),
+  (() => {
+    const fallback0 = Decoders.string;
+    const decoder0 = _lazy16_TreeInput_create_8_TreeNode_json;
+    const fallback1 = Decoders.strictArray(decoder0);
+    return Decoder.of<TreeNode>((input) => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        return Either.left([{ path: "", message: "Expected an object." }]);
+      }
+      const prototype = Object.getPrototypeOf(input);
+      if (prototype !== Object.prototype && prototype !== null) {
+        return Either.left([{ path: "", message: "Expected a plain object." }]);
+      }
+      const source = input as Record<string, unknown>;
+      let issues: { path: string; message: string }[] | undefined;
+      let value0 = Object.prototype.hasOwnProperty.call(source, "value")
+        ? source["value"]
+        : undefined;
+      if (!(typeof value0 === "string")) {
+        const decoded = fallback0.decode(value0);
+        if (decoded._tag === "Left") {
+          for (const issue of decoded.left) {
+            (issues ??= []).push({ path: ".value" + issue.path, message: issue.message });
+          }
+        } else value0 = decoded.right;
+      }
+      let value1 = Object.prototype.hasOwnProperty.call(source, "children")
+        ? source["children"]
+        : undefined;
+      if (value1 !== undefined) {
+        if (!Array.isArray(value1)) {
+          const decoded = fallback1.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".children" + issue.path, message: issue.message });
+            }
+          } else value1 = decoded.right;
+        } else {
+          const value1Items: unknown[] = new Array(value1.length);
+          for (let value1Index = 0; value1Index < value1.length; value1Index++) {
+            let value1Item = value1[value1Index];
+            {
+              const decoded = decoder0.decode(value1Item);
+              if (decoded._tag === "Left") {
+                for (const issue of decoded.left) {
+                  (issues ??= []).push({
+                    path: ".children" + "[" + value1Index + "]" + issue.path,
+                    message: issue.message,
+                  });
+                }
+              } else value1Item = decoded.right;
+            }
+            value1Items[value1Index] = value1Item;
+          }
+          value1 = value1Items;
+        }
+      }
+      return issues
+        ? Either.left(issues)
+        : Either.right(
+            (value1 !== undefined
+              ? { value: value0, children: value1 }
+              : { value: value0 }) as TreeNode,
+          );
+    });
+  })(),
 );
 
 const TreeInput = {
   create: {
-    json: Decoders.object<TreeNode>(
-      {
-        value: Decoders.string,
-        children: Decoders.optional(Decoders.strictArray(_lazy16_TreeInput_create_8_TreeNode_json)),
-      },
-      { allowUnknown: true },
-    ),
+    json: (() => {
+      const fallback0 = Decoders.string;
+      const decoder0 = _lazy16_TreeInput_create_8_TreeNode_json;
+      const fallback1 = Decoders.strictArray(decoder0);
+      return Decoder.of<TreeNode>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "value")
+          ? source["value"]
+          : undefined;
+        if (!(typeof value0 === "string")) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".value" + issue.path, message: issue.message });
+            }
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "children")
+          ? source["children"]
+          : undefined;
+        if (value1 !== undefined) {
+          if (!Array.isArray(value1)) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".children" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          } else {
+            const value1Items: unknown[] = new Array(value1.length);
+            for (let value1Index = 0; value1Index < value1.length; value1Index++) {
+              let value1Item = value1[value1Index];
+              {
+                const decoded = decoder0.decode(value1Item);
+                if (decoded._tag === "Left") {
+                  for (const issue of decoded.left) {
+                    (issues ??= []).push({
+                      path: ".children" + "[" + value1Index + "]" + issue.path,
+                      message: issue.message,
+                    });
+                  }
+                } else value1Item = decoded.right;
+              }
+              value1Items[value1Index] = value1Item;
+            }
+            value1 = value1Items;
+          }
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right(
+              (value1 !== undefined
+                ? { value: value0, children: value1 }
+                : { value: value0 }) as TreeNode,
+            );
+      });
+    })(),
   },
 };
 
@@ -852,26 +1083,170 @@ import type { Cat, Circle, Dog, Left, Mixed, Pet, Right, Shape, Square } from ".
 const ShapesInput = {
   create: {
     json: Decoders.discriminated<Shape>("kind", {
-      circle: Decoders.object<Circle>(
-        { kind: Decoders.strictLiteral("circle"), radius: Decoders.strictNumber },
-        { allowUnknown: true },
-      ),
-      square: Decoders.object<Square>(
-        { kind: Decoders.strictLiteral("square"), size: Decoders.strictNumber },
-        { allowUnknown: true },
-      ),
+      circle: (() => {
+        const fallback0 = Decoders.strictLiteral("circle");
+        const fallback1 = Decoders.strictNumber;
+        return Decoder.of<Circle>((input) => {
+          if (typeof input !== "object" || input === null || Array.isArray(input)) {
+            return Either.left([{ path: "", message: "Expected an object." }]);
+          }
+          const prototype = Object.getPrototypeOf(input);
+          if (prototype !== Object.prototype && prototype !== null) {
+            return Either.left([{ path: "", message: "Expected a plain object." }]);
+          }
+          const source = input as Record<string, unknown>;
+          let issues: { path: string; message: string }[] | undefined;
+          let value0 = Object.prototype.hasOwnProperty.call(source, "kind")
+            ? source["kind"]
+            : undefined;
+          if (!(value0 === "circle")) {
+            const decoded = fallback0.decode(value0);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".kind" + issue.path, message: issue.message });
+              }
+            } else value0 = decoded.right;
+          }
+          let value1 = Object.prototype.hasOwnProperty.call(source, "radius")
+            ? source["radius"]
+            : undefined;
+          if (!(typeof value1 === "number" && Number.isFinite(value1))) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".radius" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          }
+          return issues
+            ? Either.left(issues)
+            : Either.right({ kind: value0, radius: value1 } as Circle);
+        });
+      })(),
+      square: (() => {
+        const fallback0 = Decoders.strictLiteral("square");
+        const fallback1 = Decoders.strictNumber;
+        return Decoder.of<Square>((input) => {
+          if (typeof input !== "object" || input === null || Array.isArray(input)) {
+            return Either.left([{ path: "", message: "Expected an object." }]);
+          }
+          const prototype = Object.getPrototypeOf(input);
+          if (prototype !== Object.prototype && prototype !== null) {
+            return Either.left([{ path: "", message: "Expected a plain object." }]);
+          }
+          const source = input as Record<string, unknown>;
+          let issues: { path: string; message: string }[] | undefined;
+          let value0 = Object.prototype.hasOwnProperty.call(source, "kind")
+            ? source["kind"]
+            : undefined;
+          if (!(value0 === "square")) {
+            const decoded = fallback0.decode(value0);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".kind" + issue.path, message: issue.message });
+              }
+            } else value0 = decoded.right;
+          }
+          let value1 = Object.prototype.hasOwnProperty.call(source, "size")
+            ? source["size"]
+            : undefined;
+          if (!(typeof value1 === "number" && Number.isFinite(value1))) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".size" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          }
+          return issues
+            ? Either.left(issues)
+            : Either.right({ kind: value0, size: value1 } as Square);
+        });
+      })(),
     }),
   },
   adopt: {
     json: Decoders.discriminated<Pet>("species", {
-      cat: Decoders.object<Cat>(
-        { species: Decoders.strictLiteral("cat"), meows: Decoders.strictBoolean },
-        { allowUnknown: true },
-      ),
-      dog: Decoders.object<Dog>(
-        { species: Decoders.strictLiteral("dog"), barks: Decoders.strictBoolean },
-        { allowUnknown: true },
-      ),
+      cat: (() => {
+        const fallback0 = Decoders.strictLiteral("cat");
+        const fallback1 = Decoders.strictBoolean;
+        return Decoder.of<Cat>((input) => {
+          if (typeof input !== "object" || input === null || Array.isArray(input)) {
+            return Either.left([{ path: "", message: "Expected an object." }]);
+          }
+          const prototype = Object.getPrototypeOf(input);
+          if (prototype !== Object.prototype && prototype !== null) {
+            return Either.left([{ path: "", message: "Expected a plain object." }]);
+          }
+          const source = input as Record<string, unknown>;
+          let issues: { path: string; message: string }[] | undefined;
+          let value0 = Object.prototype.hasOwnProperty.call(source, "species")
+            ? source["species"]
+            : undefined;
+          if (!(value0 === "cat")) {
+            const decoded = fallback0.decode(value0);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".species" + issue.path, message: issue.message });
+              }
+            } else value0 = decoded.right;
+          }
+          let value1 = Object.prototype.hasOwnProperty.call(source, "meows")
+            ? source["meows"]
+            : undefined;
+          if (!(typeof value1 === "boolean")) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".meows" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          }
+          return issues
+            ? Either.left(issues)
+            : Either.right({ species: value0, meows: value1 } as Cat);
+        });
+      })(),
+      dog: (() => {
+        const fallback0 = Decoders.strictLiteral("dog");
+        const fallback1 = Decoders.strictBoolean;
+        return Decoder.of<Dog>((input) => {
+          if (typeof input !== "object" || input === null || Array.isArray(input)) {
+            return Either.left([{ path: "", message: "Expected an object." }]);
+          }
+          const prototype = Object.getPrototypeOf(input);
+          if (prototype !== Object.prototype && prototype !== null) {
+            return Either.left([{ path: "", message: "Expected a plain object." }]);
+          }
+          const source = input as Record<string, unknown>;
+          let issues: { path: string; message: string }[] | undefined;
+          let value0 = Object.prototype.hasOwnProperty.call(source, "species")
+            ? source["species"]
+            : undefined;
+          if (!(value0 === "dog")) {
+            const decoded = fallback0.decode(value0);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".species" + issue.path, message: issue.message });
+              }
+            } else value0 = decoded.right;
+          }
+          let value1 = Object.prototype.hasOwnProperty.call(source, "barks")
+            ? source["barks"]
+            : undefined;
+          if (!(typeof value1 === "boolean")) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".barks" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          }
+          return issues
+            ? Either.left(issues)
+            : Either.right({ species: value0, barks: value1 } as Dog);
+        });
+      })(),
     }),
   },
   mix: {

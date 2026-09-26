@@ -779,10 +779,46 @@ import type { Circle, Square } from "./models.js";
 
 const ShapesInput = {
   create: {
-    json: Decoders.object<Circle>(
-      { kind: Decoders.strictLiteral("circle"), radius: Decoders.strictNumber },
-      { allowUnknown: true },
-    ),
+    json: (() => {
+      const fallback0 = Decoders.strictLiteral("circle");
+      const fallback1 = Decoders.strictNumber;
+      return Decoder.of<Circle>((input) => {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return Either.left([{ path: "", message: "Expected an object." }]);
+        }
+        const prototype = Object.getPrototypeOf(input);
+        if (prototype !== Object.prototype && prototype !== null) {
+          return Either.left([{ path: "", message: "Expected a plain object." }]);
+        }
+        const source = input as Record<string, unknown>;
+        let issues: { path: string; message: string }[] | undefined;
+        let value0 = Object.prototype.hasOwnProperty.call(source, "kind")
+          ? source["kind"]
+          : undefined;
+        if (!(value0 === "circle")) {
+          const decoded = fallback0.decode(value0);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".kind" + issue.path, message: issue.message });
+            }
+          } else value0 = decoded.right;
+        }
+        let value1 = Object.prototype.hasOwnProperty.call(source, "radius")
+          ? source["radius"]
+          : undefined;
+        if (!(typeof value1 === "number" && Number.isFinite(value1))) {
+          const decoded = fallback1.decode(value1);
+          if (decoded._tag === "Left") {
+            for (const issue of decoded.left) {
+              (issues ??= []).push({ path: ".radius" + issue.path, message: issue.message });
+            }
+          } else value1 = decoded.right;
+        }
+        return issues
+          ? Either.left(issues)
+          : Either.right({ kind: value0, radius: value1 } as Circle);
+      });
+    })(),
   },
 };
 

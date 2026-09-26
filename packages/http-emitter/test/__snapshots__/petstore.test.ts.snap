@@ -267,7 +267,7 @@ const PetsInput = {
         Validators.maxLength(80),
         Validators.pattern("^[A-Za-z].*", "Must start with a letter."),
       );
-      const fallback1 = Decoders.optional(Decoders.string.validate(Validators.maxLength(40)));
+      const fallback1 = Decoders.string.validate(Validators.maxLength(40));
       return Decoder.of<CreatePetInput>((input) => {
         if (typeof input !== "object" || input === null || Array.isArray(input)) {
           return Either.left([{ path: "", message: "Expected an object." }]);
@@ -299,13 +299,15 @@ const PetsInput = {
         let value1 = Object.prototype.hasOwnProperty.call(source, "tag")
           ? source["tag"]
           : undefined;
-        if (!(value1 === undefined || (typeof value1 === "string" && value1.length <= 40))) {
-          const decoded = fallback1.decode(value1);
-          if (decoded._tag === "Left") {
-            for (const issue of decoded.left) {
-              (issues ??= []).push({ path: ".tag" + issue.path, message: issue.message });
-            }
-          } else value1 = decoded.right;
+        if (value1 !== undefined) {
+          if (!(typeof value1 === "string" && value1.length <= 40)) {
+            const decoded = fallback1.decode(value1);
+            if (decoded._tag === "Left") {
+              for (const issue of decoded.left) {
+                (issues ??= []).push({ path: ".tag" + issue.path, message: issue.message });
+              }
+            } else value1 = decoded.right;
+          }
         }
         return issues
           ? Either.left(issues)

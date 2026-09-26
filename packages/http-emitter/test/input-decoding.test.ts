@@ -545,8 +545,9 @@ describe("input decoding", () => {
     const r = compileFixture("prototype-discriminator", prototypeDiscriminatorSpec);
     const operations = r.readFile("prototype-discriminator-api", "server-operations.ts");
 
-    expect(operations).toContain('["__proto__"]: Decoders.object<PrototypeVariant>');
-    expect(operations).toContain("constructor: Decoders.object<ConstructorVariant>");
+    expect(operations).toMatch(/\["__proto__"\]: \(\(\) => \{/);
+    expect(operations).toContain("constructor: (() => {");
+    expect(operations).toContain("Decoder.of<ConstructorVariant>(");
     r.typecheck("prototype-discriminator-api");
   });
 
@@ -569,12 +570,13 @@ describe("input decoding", () => {
     expect(operations).toContain(`contentTypes: ["multipart/form-data"]`);
     expect(operations).toContain("text: Decoders.string");
     expect(operations).toContain("binary: Decoders.bytes");
-    expect(operations).toContain("payload: Decoders.strictBytes");
-    expect(operations).toContain("json: Decoders.object<FlexibleItem>");
+    expect(operations).toContain("Decoders.strictBytes");
+    expect(operations).toContain("Decoder.of<FlexibleItem>(");
     expect(operations).toContain("form: Decoders.object<FlexibleItem>");
-    expect(operations).toContain("Decoders.strictInteger.decode(input)");
+    expect(operations).toMatch(/const fallback\d+ = Decoders.strictInteger.validate\(/);
     expect(operations).toContain("Decoders.integer.decode(input)");
-    expect(operations).toContain("enabled: Decoders.strictBoolean");
+    expect(operations).toMatch(/const fallback\d+ = Decoders.strictBoolean;/);
+    expect(operations).toMatch(/typeof value\d+ === "boolean"/);
     expect(operations).toContain("enabled: Decoders.boolean");
     expect(operations).toContain("mediaType: true");
     expect(operations).toContain('decodeRequestInputAndBody<{ contentType: "text/plain" }');
@@ -651,15 +653,15 @@ describe("input decoding", () => {
     const r = compileFixture("integer-ranges", integerRangesSpec);
     const operations = r.readFile("integer-ranges-api", "server-operations.ts");
 
-    expect(operations).toContain("decoded.right >= -128 && decoded.right <= 127");
+    expect(operations).toMatch(/value\d+ >= -128 &&\s+value\d+ <= 127/);
     expect(operations).toContain("decoded.right >= 0 && decoded.right <= 4294967295");
     expect(operations).toContain("Validators.minValue(-128)");
     expect(operations).toContain("Validators.maxValue(4294967295)");
     expect(operations).toContain("Validators.minValue(-9223372036854775808n)");
     expect(operations).toContain("Validators.maxValue(9223372036854775807n)");
     expect(operations).toContain("Validators.maxValue(18446744073709551615n)");
-    expect(operations).toContain("integerValue: Decoders.strictInteger");
-    expect(operations).toContain("safeValue: Decoders.strictSafeInteger");
+    expect(operations).toMatch(/const fallback\d+ = Decoders.strictInteger;/);
+    expect(operations).toMatch(/const fallback\d+ = Decoders.strictSafeInteger;/);
     expect(operations).toContain("Decoders.integer.decode(input)");
     r.typecheck("integer-ranges-api");
   });
