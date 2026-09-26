@@ -38,7 +38,7 @@ describe("typed stream diagnostics", () => {
     expect(server).toContain("OperationHandler<AsyncIterable<Info>, void");
     expect(server).not.toContain("contentType");
     expect(operations).toContain("decodeJsonlBody<Info>(request");
-    expect(operations).toContain('wireNames: { desc: "description" }');
+    expect(operations).toContain('source["description"]');
     expect(operations).toContain("Validators.minLength(2)");
     result.typecheck("typed-jsonl-request-api");
 

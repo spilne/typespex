@@ -346,7 +346,7 @@ describe("generic models", () => {
     expect(models).toContain("export interface Pair<L, R>");
     expect(server).toContain("OperationHandler<Record<string, never>, Page<Pair<Pet, User>>, Ctx>");
     expect(server).toContain("OperationHandler<Page<Pair<Pet, User>>, Page<Pair<Pet, User>>, Ctx>");
-    expect(operations).toContain("data: Decoders.object<Pair<Pet, User>>");
+    expect(operations).toContain("Decoder.of<Pair<Pet, User>>");
     expect(operations).toContain("Decoders.record(");
     expect(operations).toContain("Decoders.tuple<[Pair<Pet, User>, string]>");
     r.typecheck("nested-generic-api", {
@@ -483,8 +483,8 @@ export const handlers: NestedGenericApiServer = {
       "decodeJsonBody<Maybe<Pet>>(request, TypesInput.createMaybe.json, {",
     );
     expect(operations).toContain('decodeBody<Tagged<"pet">>(request, TypesInput.echoTagged, {');
-    expect(operations).toContain("Decoders.object<TaggedPet>(");
-    expect(operations).toContain("maybe: Decoders.union<Maybe<Pet>>");
+    expect(operations).toContain("Decoder.of<TaggedPet>(");
+    expect(operations).toMatch(/const decoder\d+ = Decoders.union<Maybe<Pet>>\(/);
     expect(operations).toContain(".map((body) => ({ body }))");
     expect(operations).toContain(
       "decodeRequestInputAndBody<{ ownerId: string }, { body: Maybe<Pet> }>",
