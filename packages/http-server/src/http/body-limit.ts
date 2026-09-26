@@ -108,6 +108,9 @@ export function enforceRequestBodyLimit(
     throw new RangeError("Verified request body length must be a non-negative safe integer.");
   }
   const maximum = resolveRequestBodyLimit(configuredLimit);
+  // A transport-verified empty body has nothing to count or drain; the request
+  // needs no limit state until a decoder applies a policy of its own.
+  if (verifiedBodyLength === 0) return request;
   if (maximum === false) {
     requestBodyLimitStates.set(request, {
       maximum,
@@ -163,8 +166,12 @@ function createLimitedRequest(
     drainRequested: false,
   };
 
+  // A transport-verified length is the framed body length, so the declared
+  // Content-Length header adds nothing and its Headers need not be materialized.
   const earlyError =
-    contentLengthError(request, maximum) ?? verifiedLengthError(verifiedBodyLength, maximum);
+    verifiedBodyLength === undefined
+      ? contentLengthError(request, maximum)
+      : verifiedLengthError(verifiedBodyLength, maximum);
   if (earlyError) {
     state.error = earlyError;
     beginSafeDrain(state);

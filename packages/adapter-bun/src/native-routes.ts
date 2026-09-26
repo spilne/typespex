@@ -9,7 +9,6 @@ import { framedRequestBody } from "./transport.js";
 const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze(Object.create(null));
 const METHODS = new Set<string>(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
 const UNRESERVED_CAPTURE = /^[A-Za-z0-9_~-]+$/;
-const SIMPLE_AUTHORITY = /^[A-Za-z0-9._-]+(?::[0-9]{1,5})?$/;
 
 interface CaptureStep {
   readonly name: string;
@@ -31,7 +30,7 @@ export function createNativeRoutes(
   > = Object.create(null);
   for (const route of registrations) {
     if (!METHODS.has(route.method)) return undefined;
-    // Bun exposes no GET/HEAD body; the ordinary limiter still checks Content-Length.
+    // Bun exposes no GET/HEAD body, so those requests need no header at all.
     const needsBodyFraming = route.method !== "GET" && route.method !== "HEAD";
     const captureSteps: CaptureStep[] = [];
     let literalPrefix = "";
@@ -65,13 +64,15 @@ export function createNativeRoutes(
     const methods = (routes[path] ??= {});
     methods[route.method as Serve.HTTPMethod] = (request) => {
       if (request.method !== route.method) return fallback(request);
-      // Bun matches literals and separators before decoding captures. A simple
-      // authority and unreserved captures cannot change pathname normalization.
-      // Other authorities, escaped separators, dot segments and invalid UTF-8
-      // retain the URL verification below.
-      if ((!captureSteps.length || decodedDispatch) && hasSimpleAuthority(request)) {
+      // Bun matches literals and separators on the raw request target before
+      // decoding captures, so a literal match with unreserved captures selects
+      // exactly the operation the target names, whatever the Host header says.
+      // Values derived from Request.url are verified when they are read.
+      // Escaped separators, dot segments and invalid UTF-8 retain the URL
+      // verification below.
+      if (!captureSteps.length || decodedDispatch) {
         if (!captureSteps.length) {
-          const transport = needsBodyFraming ? framedRequestBody(request) : undefined;
+          const transport = framedRequestBody(request);
           return route.dispatch
             ? route.dispatch(request, EMPTY_PARAMS, Bun.peek, transport)
             : route.handle(request, EMPTY_PARAMS, transport);
@@ -92,9 +93,9 @@ export function createNativeRoutes(
           return decodedDispatch!(
             request,
             decoded,
-            () => (raw ??= readRawCaptures(request.url, captureSteps)),
+            () => (raw ??= readRawCaptures(request.url, captureSteps, decoded)),
             Bun.peek,
-            needsBodyFraming ? framedRequestBody(request) : undefined,
+            framedRequestBody(request),
           );
         }
       }
@@ -123,20 +124,13 @@ export function createNativeRoutes(
       // segments and backslashes and incorporates Host. Only trust its selection
       // when reconstructing that target agrees with the router's pathname.
       if (matchedPath !== pathname) return fallback(request);
-      const transport = needsBodyFraming ? framedRequestBody(request) : undefined;
+      const transport = framedRequestBody(request);
       return route.dispatch
         ? route.dispatch(request, pathParams, Bun.peek, transport)
         : route.handle(request, pathParams, transport);
     };
   }
   return routes;
-}
-
-function hasSimpleAuthority(request: Request): boolean {
-  const host = request.headers.get("host");
-  if (!host || !SIMPLE_AUTHORITY.test(host)) return false;
-  const colon = host.lastIndexOf(":");
-  return colon === -1 || Number(host.substring(colon + 1)) <= 65535;
 }
 
 function patternsOverlap(left: HttpTransportRoute, right: HttpTransportRoute): boolean {
@@ -172,18 +166,33 @@ function readPathname(url: string): string {
   return url.substring(start, query === -1 ? url.length : query);
 }
 
+/**
+ * Reads the raw spelling of each capture from Request.url. An invalid Host
+ * header can make Request.url disagree with the raw target Bun matched; the
+ * decoded captures are then the only trustworthy spelling and are returned.
+ */
 function readRawCaptures(
   url: string,
   captures: readonly CaptureStep[],
+  decoded: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
   const pathname = readPathname(url);
   const output: Record<string, string> = Object.create(null);
   let cursor = 0;
   for (const capture of captures) {
+    if (pathname.substring(cursor, cursor + capture.prefix.length) !== capture.prefix) {
+      return decoded;
+    }
     cursor += capture.prefix.length;
     const slash = pathname.indexOf("/", cursor);
     const end = slash === -1 ? pathname.length : slash;
-    output[capture.name] = pathname.substring(cursor, end);
+    const raw = pathname.substring(cursor, end);
+    try {
+      if (decodeURIComponent(raw) !== decoded[capture.name]) return decoded;
+    } catch {
+      return decoded;
+    }
+    output[capture.name] = raw;
     cursor = end;
   }
   return output;

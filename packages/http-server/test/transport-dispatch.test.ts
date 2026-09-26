@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   bindRoute,
   createHttpRouter,
+  decodeJsonBody,
+  Decoders,
   Either,
   emptyHints,
   getHttpTransportRoutes,
@@ -364,5 +366,64 @@ describe("direct transport dispatch", () => {
     const response = route.dispatch!(request(), {}, Bun.peek);
     expect(response).toBeInstanceOf(Promise);
     await expect(response as Promise<Response>).rejects.toBe(failure);
+  });
+
+  test("generated body decoders finish inside their own frame unless replaced", async () => {
+    const decoder = Decoders.object<{ value: string }>({ value: Decoders.string });
+    const calls = { decodeInput: 0, decodeInputThen: 0, handler: 0 };
+    const op: ServerOperation<{ value: string }, string> = {
+      ...operation(),
+      decodeInput: (request) => {
+        calls.decodeInput++;
+        return decodeJsonBody(request, decoder);
+      },
+      decodeInputThen: (request, _pathParams, finish) => {
+        calls.decodeInputThen++;
+        return decodeJsonBody(request, decoder, undefined, finish);
+      },
+      encodeResult: (value) => new Response(value),
+    };
+    const router = createHttpRouter([
+      bindRoute(op, ({ value }) => {
+        calls.handler++;
+        return value;
+      }),
+    ]);
+    const route = getHttpTransportRoutes(router)![0]!;
+    const post = (body: string) =>
+      new Request("http://localhost/value", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+
+    const response = route.dispatch!(post('{"value":"ok"}'), {}, Bun.peek);
+    expect(response).toBeInstanceOf(Promise);
+    expect(await (await response).text()).toBe("ok");
+    expect(calls).toEqual({ decodeInput: 0, decodeInputThen: 1, handler: 1 });
+
+    const invalid = await route.dispatch!(post('{"value":1}'), {}, Bun.peek);
+    expect(invalid.status).toBe(400);
+    await invalid.text();
+    expect(calls).toEqual({ decodeInput: 0, decodeInputThen: 2, handler: 1 });
+
+    // Encoding failures are still routed through the ordinary error conversion.
+    const failure = new Error("failed");
+    op.encodeResult = () => {
+      throw failure;
+    };
+    await expect(route.dispatch!(post('{"value":"ok"}'), {}, Bun.peek)).rejects.toBe(failure);
+    op.encodeResult = () => {
+      throw new HttpError(409, "conflict");
+    };
+    expect((await route.dispatch!(post('{"value":"ok"}'), {}, Bun.peek)).status).toBe(409);
+
+    // A replaced decoder keeps control, so the generated shortcut is bypassed.
+    op.encodeResult = (value) => new Response(value);
+    op.decodeInput = async () => Either.right({ value: "replaced" });
+    expect(await (await route.dispatch!(post('{"value":"ok"}'), {}, Bun.peek)).text()).toBe(
+      "replaced",
+    );
+    expect(calls.decodeInputThen).toBe(4);
   });
 });

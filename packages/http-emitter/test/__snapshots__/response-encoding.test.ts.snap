@@ -165,6 +165,7 @@ const DataOutput = {
         body as _TypespexPayload_RateLimitedResponse_response_1_payload,
         "$response",
       ),
+    nativeJson: true,
   }),
 };
 
@@ -387,12 +388,12 @@ const ItemsOutput = {
     {
       when: (result): result is Item =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
-      encoder: ResponseEncoders.json<Item>(200),
+      encoder: ResponseEncoders.nativeJson<Item>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
         typeof result === "object" && result !== null && "code" in result && !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -416,7 +417,7 @@ const ItemsOutput = {
         result !== null &&
         "code" in result &&
         result["code"] === "NOT_FOUND",
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -430,7 +431,7 @@ const ItemsOutput = {
         result !== null &&
         "code" in result &&
         result["code"] === "FORBIDDEN",
-      encoder: ResponseEncoders.json<unknown>(403).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(403).mapInput(
         (value: _TypespexPayload_ForbiddenError_response_1_payload) =>
           _jsonSerializer_ForbiddenError_response_1_payload.serialize(
             value as _TypespexPayload_ForbiddenError_response_1_payload,
@@ -451,7 +452,7 @@ const ItemsOutput = {
         "id" in result &&
         !("code" in result) &&
         !("conflictId" in result),
-      encoder: ResponseEncoders.json<Item>(200),
+      encoder: ResponseEncoders.nativeJson<Item>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
@@ -460,7 +461,7 @@ const ItemsOutput = {
         "code" in result &&
         !("id" in result) &&
         !("conflictId" in result),
-      encoder: ResponseEncoders.json<unknown>(404).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(404).mapInput(
         (value: _TypespexPayload_NotFoundError_response_1_payload) =>
           _jsonSerializer_NotFoundError_response_1_payload.serialize(
             value as _TypespexPayload_NotFoundError_response_1_payload,
@@ -475,7 +476,7 @@ const ItemsOutput = {
         "conflictId" in result &&
         !("id" in result) &&
         !("code" in result),
-      encoder: ResponseEncoders.json<unknown>(409).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(409).mapInput(
         (value: _TypespexPayload_ConflictError_response_1_payload) =>
           _jsonSerializer_ConflictError_response_1_payload.serialize(
             value as _TypespexPayload_ConflictError_response_1_payload,
@@ -678,7 +679,7 @@ const ItemsOutput = {
         result !== null &&
         "id" in result &&
         !("operationId" in result),
-      encoder: ResponseEncoders.json<unknown>(201).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(201).mapInput(
         (value: _TypespexPayload_CreatedItem_response_1_payload) =>
           _jsonSerializer_CreatedItem_response_1_payload.serialize(
             value as _TypespexPayload_CreatedItem_response_1_payload,
@@ -692,7 +693,7 @@ const ItemsOutput = {
         result !== null &&
         "operationId" in result &&
         !("id" in result),
-      encoder: ResponseEncoders.json<unknown>(202).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(202).mapInput(
         (value: _TypespexPayload_AcceptedJob_response_1_payload) =>
           _jsonSerializer_AcceptedJob_response_1_payload.serialize(
             value as _TypespexPayload_AcceptedJob_response_1_payload,
@@ -786,7 +787,7 @@ const ShapesInput = {
 };
 
 const ShapesOutput = {
-  create: ResponseEncoders.json<Circle | Square>(200),
+  create: ResponseEncoders.nativeJson<Circle | Square>(200),
 };
 
 export const ShapesOperations = {
@@ -807,6 +808,13 @@ export const ShapesOperations = {
       decodeJsonBody<Circle>(request, ShapesInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<Circle, Response>(
+        request,
+        ShapesInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Circle | Square) => ShapesOutput.create.encode(result),
   } satisfies ServerOperation<Circle, Circle | Square>,
 } as const;
@@ -890,7 +898,7 @@ const ItemsOutput = {
         result !== null &&
         "kind" in result &&
         result["kind"] === "created",
-      encoder: ResponseEncoders.json<unknown>(201).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(201).mapInput(
         (value: _TypespexPayload_CreatedItem_response_1_payload) =>
           _jsonSerializer_CreatedItem_response_1_payload.serialize(
             value as _TypespexPayload_CreatedItem_response_1_payload,
@@ -904,7 +912,7 @@ const ItemsOutput = {
         result !== null &&
         "kind" in result &&
         result["kind"] === "accepted",
-      encoder: ResponseEncoders.json<unknown>(202).mapInput(
+      encoder: ResponseEncoders.nativeJson<unknown>(202).mapInput(
         (value: _TypespexPayload_AcceptedJob_response_1_payload) =>
           _jsonSerializer_AcceptedJob_response_1_payload.serialize(
             value as _TypespexPayload_AcceptedJob_response_1_payload,

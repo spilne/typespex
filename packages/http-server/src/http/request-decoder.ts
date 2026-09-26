@@ -821,7 +821,10 @@ function splitCommaSeparated(value: string): string[] {
 }
 
 function extractRawQuery(url: string): string | undefined {
-  const question = url.indexOf("?");
+  // The query follows the path; an authority containing "?" must not start it.
+  const scheme = url.indexOf("://");
+  const path = scheme === -1 ? 0 : url.indexOf("/", scheme + 3);
+  const question = url.indexOf("?", path === -1 ? scheme + 3 : path);
   if (question === -1) return undefined;
   const hash = url.indexOf("#", question + 1);
   return url.substring(question + 1, hash === -1 ? url.length : hash);

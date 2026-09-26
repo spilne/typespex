@@ -35,7 +35,7 @@ import * as ServerHints from "./server-hints.js";
 import type { HealthStatus } from "./models.js";
 
 const StatusApiOutput = {
-  health: ResponseEncoders.json<HealthStatus>(200),
+  health: ResponseEncoders.nativeJson<HealthStatus>(200),
 };
 
 export const StatusApiOperations = {
@@ -103,7 +103,7 @@ import * as ServerHints from "./server-hints.js";
 import type { Config } from "./models.js";
 
 const NestedApiOutput = {
-  getConfig: ResponseEncoders.json<Config>(200),
+  getConfig: ResponseEncoders.nativeJson<Config>(200),
 };
 
 export const NestedApiOperations = {
@@ -336,8 +336,8 @@ const ItemsInput = {
 };
 
 const ItemsOutput = {
-  delete: ResponseEncoders.json<EscapedModel>(200),
-  create: ResponseEncoders.json<EscapedModel>(200),
+  delete: ResponseEncoders.nativeJson<EscapedModel>(200),
+  create: ResponseEncoders.nativeJson<EscapedModel>(200),
 };
 
 export const ItemsOperations = {

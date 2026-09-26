@@ -3,6 +3,7 @@ import {
   type DurationNumericUnit,
   type NumericWireEncoding,
 } from "@typespex/codec";
+import { defineDataProperty } from "./object-properties.js";
 import type { Validator } from "./validation.js";
 
 /** Error raised when a handler result cannot be converted to its declared JSON wire shape. */
@@ -156,9 +157,12 @@ function objectJsonSerializer<A extends object>(
   validateObjectSchema(erased);
 
   // The parent path varies for nested values, but each modeled suffix is fixed.
+  // Wire names that exist on Object.prototype, such as __proto__, are defined
+  // as own data properties so the output can stay an ordinary object.
   const prepared = erased.map((property) => ({
     ...property,
     pathSuffix: appendPropertyPath("", property.property),
+    prototypeSensitive: property.wireName in Object.prototype,
   }));
 
   const declaredProperties = new Set(erased.map((property) => property.property));
@@ -167,8 +171,9 @@ function objectJsonSerializer<A extends object>(
 
   return JsonSerializer.of((value, path) => {
     const source = expectObject(value, path);
-    // Wire and additional property names may include __proto__.
-    const output: Record<string, unknown> = Object.create(null);
+    // Ordinary objects take the platform JSON serializer's fast path. Names
+    // that could reach a prototype setter are defined instead of assigned.
+    const output: Record<string, unknown> = {};
 
     for (const property of prepared) {
       const present = Object.prototype.hasOwnProperty.call(source, property.property);
@@ -180,11 +185,13 @@ function objectJsonSerializer<A extends object>(
           "Required property is missing.",
         );
       }
-      output[property.wireName] = serializeNested(
+      const serialized = serializeNested(
         property.serializer,
         propertyValue,
         path + property.pathSuffix,
       );
+      if (property.prototypeSensitive) defineDataProperty(output, property.wireName, serialized);
+      else output[property.wireName] = serialized;
     }
 
     if (additionalProperties) {
@@ -198,10 +205,10 @@ function objectJsonSerializer<A extends object>(
         }
         const propertyValue = source[key];
         if (propertyValue === undefined) continue;
-        output[key] = serializeNested(
-          additionalProperties,
-          propertyValue,
-          appendPropertyPath(path, key),
+        defineDataProperty(
+          output,
+          key,
+          serializeNested(additionalProperties, propertyValue, appendPropertyPath(path, key)),
         );
       }
     }

@@ -908,3 +908,117 @@ describe("ResponseEncoders", () => {
     expect(defaulted.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ResponseEncoders.nativeJson
+// ---------------------------------------------------------------------------
+
+describe("ResponseEncoders.nativeJson", () => {
+  test("encodes native wire values with the same status and content type as json", async () => {
+    const value = {
+      id: "p-1",
+      count: 3,
+      ratio: 0.5,
+      active: true,
+      missing: null,
+      tags: ["a", "b"],
+      nested: { label: 'quote " and \\ backslash', items: [1, 2, 3] },
+      omitted: undefined,
+    };
+    const response = ResponseEncoders.nativeJson<typeof value>(201).encode(value);
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe(JSON.stringify(value));
+    expect(await ResponseEncoders.json<typeof value>(201).encode(value).text()).toBe(
+      JSON.stringify(value),
+    );
+  });
+
+  test("escapes strings and property names like json", async () => {
+    const codePoints = [0, 0x1f, 0x22, 0x5c, 0x7f, 0x2028, 0xd800, 0xdfff, 0x1f98a, 0x10ffff];
+    for (const codePoint of codePoints) {
+      const text = `prefix${String.fromCodePoint(codePoint)}suffix`;
+      const value = { [text]: text };
+      expect(await ResponseEncoders.nativeJson().encode(value).text()).toBe(
+        await ResponseEncoders.json().encode(value).text(),
+      );
+    }
+  });
+
+  test("reads getters and serialization hooks once", async () => {
+    let reads = 0;
+    let hooks = 0;
+    const value = {
+      get name() {
+        reads += 1;
+        return "pet";
+      },
+      when: {
+        toJSON() {
+          hooks += 1;
+          return "2026-09-26";
+        },
+      },
+    };
+    const response = ResponseEncoders.nativeJson<typeof value>(200).encode(value);
+    expect(await response.text()).toBe('{"name":"pet","when":"2026-09-26"}');
+    expect(reads).toBe(1);
+    expect(hooks).toBe(1);
+  });
+
+  test("keeps body-forbidden statuses, live options, and status validation", async () => {
+    const empty = ResponseEncoders.nativeJson(204).encode({ ignored: true });
+    expect(empty.status).toBe(204);
+    expect(await empty.text()).toBe("");
+
+    const headers = new Headers({ "x-value": "first" });
+    const custom = ResponseEncoders.nativeJson(202, { headers });
+    headers.set("x-value", "second");
+    const response = custom.encode({ id: 1 });
+    expect(response.status).toBe(202);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("x-value")).toBe("second");
+    expect(await response.text()).toBe('{"id":1}');
+
+    expect(() => ResponseEncoders.nativeJson(199).encode({})).toThrow(RangeError);
+  });
+
+  test("rejects values without a JSON representation", () => {
+    expect(() => ResponseEncoders.nativeJson().encode(undefined)).toThrow(TypeError);
+    expect(() => ResponseEncoders.nativeJson().encode(() => 1)).toThrow(TypeError);
+    // Contracts flagged native exclude bigint; a violating handler fails loudly.
+    expect(() => ResponseEncoders.nativeJson().encode({ value: 1n })).toThrow(TypeError);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => ResponseEncoders.nativeJson().encode(cyclic)).toThrow(TypeError);
+  });
+
+  test("variant serializes the resolved body natively after omit and transform", async () => {
+    const response = ResponseEncoders.variant<{ _: number; code: string; message: string }>({
+      status: 404,
+      contentType: "application/json",
+      omit: ["_"],
+      transformBody: (body) => ({ ...(body as object), transformed: true }),
+      nativeJson: true,
+    }).encode({ _: 404, code: "NOT_FOUND", message: "missing" });
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe(
+      '{"code":"NOT_FOUND","message":"missing","transformed":true}',
+    );
+  });
+
+  test("variant headers stay independent of native bodies", async () => {
+    const response = ResponseEncoders.variant<{ etag: string; id: string }>({
+      status: 200,
+      headers: [["etag", "etag"]],
+      nativeJson: true,
+    }).encode({ etag: '"v1"', id: "p-1" });
+
+    expect(response.headers.get("etag")).toBe('"v1"');
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe('{"id":"p-1"}');
+  });
+});
