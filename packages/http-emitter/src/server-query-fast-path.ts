@@ -74,7 +74,7 @@ export function emitFlatQueryDecoder(
         : field.kind === "boolean"
           ? 'text === "true"'
           : "text";
-    return `if (name === ${tsLiteral(field.wireName)}) {
+    return `if (length === ${field.wireName.length} && raw.startsWith(${tsLiteral(field.wireName)}, start)) {
           if (${value} !== undefined) return fallback.decode(input);
           const text = equals === end ? "" : raw.substring(equals + 1, end);
           ${convert}
@@ -105,16 +105,22 @@ export function emitFlatQueryDecoder(
       const raw = input.rawQuery;
       ${fields.map((field, index) => `let value${index}: ${valueTs(field)} | undefined;`).join("\n")}
       if (raw !== undefined && raw !== "") {
+        // Names are matched in place; an encoded name may spell a declared
+        // parameter, so encoded spellings defer to the generic decoder.
+        const encoded = raw.includes("%") || raw.includes("+");
         let start = 0;
         for (;;) {
           const ampersand = raw.indexOf("&", start);
           const end = ampersand === -1 ? raw.length : ampersand;
           let equals = raw.indexOf("=", start);
           if (equals === -1 || equals > end) equals = end;
-          const name = raw.substring(start, equals);
-          ${reads.join(" else ")} else if (name.includes("%") || name.includes("+")) {
-            // An encoded name may spell a declared parameter.
-            return fallback.decode(input);
+          const length = equals - start;
+          ${reads.join(" else ")} else if (encoded) {
+            const percent = raw.indexOf("%", start);
+            const plus = raw.indexOf("+", start);
+            if ((percent !== -1 && percent < equals) || (plus !== -1 && plus < equals)) {
+              return fallback.decode(input);
+            }
           }
           if (ampersand === -1) break;
           start = ampersand + 1;

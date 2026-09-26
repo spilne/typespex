@@ -34,7 +34,7 @@ test("flat query decoders agree with the generic decoders on every input", async
   result.typecheck("flat-query-api");
   const source = result.readFile("flat-query-api", "server-operations.ts");
   expect(source).toContain("const raw = input.rawQuery;");
-  expect(source).toContain('if (name === "include-all")');
+  expect(source).toContain('length === 11 && raw.startsWith("include-all", start)');
   // Array inputs keep the generic decoders.
   expect(source).toMatch(/encoded: RequestDecoders\.combine\(/);
   appendFileSync(
