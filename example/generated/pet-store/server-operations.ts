@@ -208,12 +208,12 @@ const PetsInput = {
 };
 
 const PetsOutput = {
-  list: ResponseEncoders.json<Pet[]>(200),
+  list: ResponseEncoders.nativeJson<Pet[]>(200),
   create: ResponseEncoders.matchVariant<Pet | _TypespexPayload_ConflictError_response_1_payload>([
     {
       when: (result): result is Pet =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
-      encoder: ResponseEncoders.json<Pet>(200),
+      encoder: ResponseEncoders.nativeJson<Pet>(200),
     },
     {
       when: (result): result is _TypespexPayload_ConflictError_response_1_payload =>
@@ -231,7 +231,7 @@ const PetsOutput = {
     {
       when: (result): result is Pet =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
-      encoder: ResponseEncoders.json<Pet>(200),
+      encoder: ResponseEncoders.nativeJson<Pet>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
@@ -289,7 +289,7 @@ const PetsOutput = {
     {
       when: (result): result is UploadResult =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
-      encoder: ResponseEncoders.json<UploadResult>(200),
+      encoder: ResponseEncoders.nativeJson<UploadResult>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>

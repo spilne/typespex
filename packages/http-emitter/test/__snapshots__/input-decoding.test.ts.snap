@@ -68,7 +68,7 @@ const ItemsInput = {
 };
 
 const ItemsOutput = {
-  list: ResponseEncoders.json<Item[]>(200),
+  list: ResponseEncoders.nativeJson<Item[]>(200),
 };
 
 export const ItemsOperations = {
@@ -227,9 +227,9 @@ const ItemsInput = {
 };
 
 const ItemsOutput = {
-  list: ResponseEncoders.json<CreateItem[]>(200),
-  read: ResponseEncoders.json<CreateItem>(200),
-  create: ResponseEncoders.json<CreateItem>(200),
+  list: ResponseEncoders.nativeJson<CreateItem[]>(200),
+  read: ResponseEncoders.nativeJson<CreateItem>(200),
+  create: ResponseEncoders.nativeJson<CreateItem>(200),
 };
 
 export const ItemsOperations = {
@@ -339,7 +339,7 @@ const ItemsInput = {
 };
 
 const ItemsOutput = {
-  update: ResponseEncoders.json<Item>(200),
+  update: ResponseEncoders.nativeJson<Item>(200),
 };
 
 export const ItemsOperations = {
@@ -412,7 +412,7 @@ const UsersInput = {
 };
 
 const UsersOutput = {
-  me: ResponseEncoders.json<Profile>(200),
+  me: ResponseEncoders.nativeJson<Profile>(200),
 };
 
 export const UsersOperations = {
@@ -498,7 +498,7 @@ const TreeInput = {
 };
 
 const TreeOutput = {
-  create: ResponseEncoders.json<TreeNode>(200),
+  create: ResponseEncoders.nativeJson<TreeNode>(200),
 };
 
 export const TreeOperations = {
@@ -607,9 +607,9 @@ const UploadsInput = {
 };
 
 const UploadsOutput = {
-  single: ResponseEncoders.json<UploadResult>(200),
-  multi: ResponseEncoders.json<UploadResult>(200),
-  optional: ResponseEncoders.json<UploadResult>(200),
+  single: ResponseEncoders.nativeJson<UploadResult>(200),
+  multi: ResponseEncoders.nativeJson<UploadResult>(200),
+  optional: ResponseEncoders.nativeJson<UploadResult>(200),
 };
 
 export const UploadsOperations = {
@@ -784,9 +784,9 @@ const ShapesInput = {
 };
 
 const ShapesOutput = {
-  create: ResponseEncoders.json<Circle>(200),
-  adopt: ResponseEncoders.json<Cat>(200),
-  mix: ResponseEncoders.json<Left>(200),
+  create: ResponseEncoders.nativeJson<Circle>(200),
+  adopt: ResponseEncoders.nativeJson<Cat>(200),
+  mix: ResponseEncoders.nativeJson<Left>(200),
 };
 
 export const ShapesOperations = {

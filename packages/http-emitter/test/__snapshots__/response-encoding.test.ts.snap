@@ -387,7 +387,7 @@ const ItemsOutput = {
     {
       when: (result): result is Item =>
         typeof result === "object" && result !== null && "id" in result && !("code" in result),
-      encoder: ResponseEncoders.json<Item>(200),
+      encoder: ResponseEncoders.nativeJson<Item>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
@@ -451,7 +451,7 @@ const ItemsOutput = {
         "id" in result &&
         !("code" in result) &&
         !("conflictId" in result),
-      encoder: ResponseEncoders.json<Item>(200),
+      encoder: ResponseEncoders.nativeJson<Item>(200),
     },
     {
       when: (result): result is _TypespexPayload_NotFoundError_response_1_payload =>
@@ -786,7 +786,7 @@ const ShapesInput = {
 };
 
 const ShapesOutput = {
-  create: ResponseEncoders.json<Circle | Square>(200),
+  create: ResponseEncoders.nativeJson<Circle | Square>(200),
 };
 
 export const ShapesOperations = {

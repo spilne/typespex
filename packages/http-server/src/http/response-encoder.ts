@@ -1,4 +1,4 @@
-import { bytesToBase64, jsonResponse, stringifyJson } from "./json.js";
+import { bytesToBase64, jsonResponse, nativeJsonResponse, stringifyJson } from "./json.js";
 import { isContentTypeAccepted, parseMediaType } from "./media-type.js";
 
 // Response copies Headers, so each response can reuse this private template
@@ -37,6 +37,25 @@ function responseInit(status: number, init?: ResponseInit): ResponseInit {
 }
 
 function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEncoder<A> {
+  return jsonBodyEncoder(status, init, jsonResponse);
+}
+
+/**
+ * JSON encoder for handler values the emitter proved free of bigint and bytes
+ * members. The platform serializer handles the value directly; see
+ * `nativeJsonResponse` for the resulting behavior on contract violations.
+ * Plain objects and arrays take JavaScriptCore's fast path; frozen or
+ * null-prototype values still serialize correctly but more slowly.
+ */
+function nativeJsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEncoder<A> {
+  return jsonBodyEncoder(status, init, nativeJsonResponse);
+}
+
+function jsonBodyEncoder<A>(
+  status: number,
+  init: ResponseInit | undefined,
+  encode: (value: unknown, init: ResponseInit) => Response,
+): ResponseEncoder<A> {
   // Fixed defaults can be prepared once. Response copies the private headers;
   // caller-provided options remain live and invalid statuses still fail at encode.
   if (init === undefined && Number.isInteger(status) && status >= 200 && status <= 599) {
@@ -45,13 +64,13 @@ function jsonResponseEncoder<A>(status = 200, init?: ResponseInit): ResponseEnco
       return ResponseEncoder.of(() => new Response(null, base));
     }
     const response = withContentType(base, "application/json");
-    return ResponseEncoder.of((value) => jsonResponse(value, response));
+    return ResponseEncoder.of((value) => encode(value, response));
   }
   return ResponseEncoder.of((value) => {
     const response = responseInit(status, init);
     return isBodyForbiddenStatus(status)
       ? new Response(null, response)
-      : jsonResponse(value, withContentType(response, "application/json"));
+      : encode(value, withContentType(response, "application/json"));
   });
 }
 
@@ -391,6 +410,12 @@ export interface ResponseVariant {
   readonly emitFileContentDisposition?: boolean;
   /** Converts the resolved handler-facing body to its declared wire representation. */
   readonly transformBody?: (value: unknown) => unknown;
+  /**
+   * The resolved body is a plain value without bigint or bytes members; see
+   * `ResponseEncoders.nativeJson`. Bodies rebuilt by `omit`, `headers`, or
+   * `transformBody` have null prototypes, which native JSON serializes slowly.
+   */
+  readonly nativeJson?: boolean;
 }
 
 export interface ResponseVariantMatch<A, B extends A = A> {
@@ -470,7 +495,9 @@ function encodeVariantResponse<A>(value: A, variant: ResponseVariant): Response 
   if (!contentType && !responseHeaders?.has("content-type")) {
     return new Response(stringifyJson(body), { status, headers });
   }
-  return jsonResponse(body, { status, headers });
+  return variant.nativeJson
+    ? nativeJsonResponse(body, { status, headers })
+    : jsonResponse(body, { status, headers });
 }
 
 function encodeFileResponse(
@@ -713,6 +740,7 @@ function unsupportedResponseEncoder<A>(reason: string): ResponseEncoder<A> {
 
 export const ResponseEncoders = {
   json: jsonResponseEncoder,
+  nativeJson: nativeJsonResponseEncoder,
   jsonl: jsonlResponseEncoder,
   sse: sseResponseEncoder,
   jsonWithHeaders: jsonWithHeadersResponseEncoder,
