@@ -348,6 +348,13 @@ export const ItemsOperations = {
       decodeJsonBody<CreateItem>(request, ItemsInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<CreateItem, Response>(
+        request,
+        ItemsInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: CreateItem) => ItemsOutput.create.encode(result),
   } satisfies ServerOperation<CreateItem, CreateItem>,
 } as const;
@@ -573,6 +580,13 @@ export const TreeOperations = {
       decodeJsonBody<TreeNode>(request, TreeInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<TreeNode, Response>(
+        request,
+        TreeInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: TreeNode) => TreeOutput.create.encode(result),
   } satisfies ServerOperation<TreeNode, TreeNode>,
 } as const;
@@ -861,6 +875,13 @@ export const ShapesOperations = {
       decodeJsonBody<Shape>(request, ShapesInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<Shape, Response>(
+        request,
+        ShapesInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Circle) => ShapesOutput.create.encode(result),
   } satisfies ServerOperation<Shape, Circle>,
 
@@ -882,6 +903,13 @@ export const ShapesOperations = {
     },
     decodeInput: (request) =>
       decodeJsonBody<Pet>(request, ShapesInput.adopt.json, { contentTypes: ["application/json"] }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<Pet, Response>(
+        request,
+        ShapesInput.adopt.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Cat) => ShapesOutput.adopt.encode(result),
   } satisfies ServerOperation<Pet, Cat>,
 
@@ -903,6 +931,13 @@ export const ShapesOperations = {
     },
     decodeInput: (request) =>
       decodeJsonBody<Mixed>(request, ShapesInput.mix.json, { contentTypes: ["application/json"] }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<Mixed, Response>(
+        request,
+        ShapesInput.mix.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Left) => ShapesOutput.mix.encode(result),
   } satisfies ServerOperation<Mixed, Left>,
 } as const;

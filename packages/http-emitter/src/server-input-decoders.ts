@@ -99,6 +99,8 @@ export interface InputDecoderPlan {
   readonly isAsync: boolean;
   /** The runtime helper already returns a Promise and needs no async wrapper. */
   readonly forwardsPromise?: boolean;
+  /** Decodes and finishes the request in one asynchronous frame (body-only JSON operations). */
+  readonly decodeThenExpression?: string;
   /** Hoisted lazy decoder declarations for recursive models. */
   readonly hoistedDecoders: readonly string[];
 }
@@ -353,6 +355,9 @@ export function buildInputDecoderPlan(
       decodeExpression: jsonOnly
         ? `decodeJsonBody<${bodyType}>(request, ${ref}.json${bodyOptionsArg})`
         : `decodeBody<${bodyType}>(request, ${ref}${bodyOptionsArg})`,
+      decodeThenExpression: jsonOnly
+        ? `decodeJsonBody<${bodyType}, Response>(request, ${ref}.json, ${bodyOptionsArg ? bodyOptionsArg.slice(2) : "undefined"}, finish)`
+        : undefined,
       needsPathParams: false,
       isAsync: true,
       forwardsPromise: true,

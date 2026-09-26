@@ -139,6 +139,10 @@ export function renderServerOperations(plan: ServerPlan): string {
         lines.push(`    decodeNativePathInput: (pathParams) =>`);
         lines.push(`      ${decoder.decodeNativePathExpression},`);
       }
+      if (decoder.decodeThenExpression) {
+        lines.push(`    decodeInputThen: (request, _pathParams, finish) =>`);
+        lines.push(`      ${decoder.decodeThenExpression},`);
+      }
 
       emitResultEncoderLine(lines, operation, outputsName);
 

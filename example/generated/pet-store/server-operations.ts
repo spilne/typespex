@@ -402,6 +402,13 @@ export const PetsOperations = {
       decodeJsonBody<CreatePetInput>(request, PetsInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<CreatePetInput, Response>(
+        request,
+        PetsInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Pet | _TypespexPayload_ConflictError_response_1_payload) =>
       PetsOutput.create.encode(result),
   } satisfies ServerOperation<

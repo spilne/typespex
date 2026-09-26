@@ -808,6 +808,13 @@ export const ShapesOperations = {
       decodeJsonBody<Circle>(request, ShapesInput.create.json, {
         contentTypes: ["application/json"],
       }),
+    decodeInputThen: (request, _pathParams, finish) =>
+      decodeJsonBody<Circle, Response>(
+        request,
+        ShapesInput.create.json,
+        { contentTypes: ["application/json"] },
+        finish,
+      ),
     encodeResult: (result: Circle | Square) => ShapesOutput.create.encode(result),
   } satisfies ServerOperation<Circle, Circle | Square>,
 } as const;
