@@ -35,6 +35,7 @@ test("flat query decoders agree with the generic decoders on every input", async
   const source = result.readFile("flat-query-api", "server-operations.ts");
   expect(source).toContain("const raw = input.rawQuery;");
   expect(source).toContain('length === 11 && raw.startsWith("include-all", start)');
+  expect(source).toContain('raw.indexOf("include-all")');
   // Array inputs keep the generic decoders.
   expect(source).toMatch(/encoded: RequestDecoders\.combine\(/);
   appendFileSync(
@@ -120,6 +121,18 @@ test("flat query decoders agree with the generic decoders on every input", async
     "?=a&kind=b",
     "?kind=a#limit=5",
     "?kind=a&limit=5&" + Array.from({ length: 29 }, (_, i) => `u${i}=${i}`).join("&"),
+    "?xlimit=5&kind=a",
+    "?limit2=5&kind=a",
+    "?kind=limit=5",
+    "?limit&kind=a",
+    "?kind=a&limit",
+    "?limitx&limit=5&kind=a",
+    "?limit=5&limit&kind=a",
+    "?kind=a&offset=1&limit=5&offset=2",
+    "?tag=abc&kind=a&tag=abd",
+    "?include-all&kind=a",
+    "?kind=a&include-all=",
+    "?limit=5&kind=a&" + Array.from({ length: 29 }, (_, i) => `u${i}=%${i}`).join("&"),
   ];
   for (const query of queries) {
     const request = new Request(`http://localhost/items${query}`);

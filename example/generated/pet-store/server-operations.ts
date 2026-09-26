@@ -112,56 +112,107 @@ const PetsInput = {
       let value0: number | undefined;
       let value1: number | undefined;
       if (raw !== undefined && raw !== "") {
-        // Names are matched in place; an encoded name may spell a declared
-        // parameter, so encoded spellings defer to the generic decoder.
-        const encoded = raw.includes("%") || raw.includes("+");
-        let start = 0;
-        for (;;) {
-          const ampersand = raw.indexOf("&", start);
-          const end = ampersand === -1 ? raw.length : ampersand;
-          let equals = raw.indexOf("=", start);
-          if (equals === -1 || equals > end) equals = end;
-          const length = equals - start;
-          if (length === 5 && raw.startsWith("limit", start)) {
-            if (value0 !== undefined) return fallback.decode(input);
-            const text = equals === end ? "" : raw.substring(equals + 1, end);
-            if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
-            const number = Number(text);
-            if (
-              !(
-                Number.isSafeInteger(number) &&
-                number >= -2147483648 &&
-                number <= 2147483647 &&
-                number >= 1 &&
-                number <= 100
+        if (raw.includes("%") || raw.includes("+")) {
+          let start = 0;
+          for (;;) {
+            const ampersand = raw.indexOf("&", start);
+            const end = ampersand === -1 ? raw.length : ampersand;
+            let equals = raw.indexOf("=", start);
+            if (equals === -1 || equals > end) equals = end;
+            const length = equals - start;
+            if (length === 5 && raw.startsWith("limit", start)) {
+              if (value0 !== undefined) return fallback.decode(input);
+              const text = equals === end ? "" : raw.substring(equals + 1, end);
+              if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
+              const number = Number(text);
+              if (
+                !(
+                  Number.isSafeInteger(number) &&
+                  number >= -2147483648 &&
+                  number <= 2147483647 &&
+                  number >= 1 &&
+                  number <= 100
+                )
               )
-            )
-              return fallback.decode(input);
-            value0 = number;
-          } else if (length === 6 && raw.startsWith("offset", start)) {
-            if (value1 !== undefined) return fallback.decode(input);
-            const text = equals === end ? "" : raw.substring(equals + 1, end);
-            if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
-            const number = Number(text);
-            if (
-              !(
-                Number.isSafeInteger(number) &&
-                number >= -2147483648 &&
-                number <= 2147483647 &&
-                number >= 0
+                return fallback.decode(input);
+              value0 = number;
+            } else if (length === 6 && raw.startsWith("offset", start)) {
+              if (value1 !== undefined) return fallback.decode(input);
+              const text = equals === end ? "" : raw.substring(equals + 1, end);
+              if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
+              const number = Number(text);
+              if (
+                !(
+                  Number.isSafeInteger(number) &&
+                  number >= -2147483648 &&
+                  number <= 2147483647 &&
+                  number >= 0
+                )
               )
-            )
-              return fallback.decode(input);
-            value1 = number;
-          } else if (encoded) {
-            const percent = raw.indexOf("%", start);
-            const plus = raw.indexOf("+", start);
-            if ((percent !== -1 && percent < equals) || (plus !== -1 && plus < equals)) {
-              return fallback.decode(input);
+                return fallback.decode(input);
+              value1 = number;
+            } else {
+              const percent = raw.indexOf("%", start);
+              const plus = raw.indexOf("+", start);
+              if ((percent !== -1 && percent < equals) || (plus !== -1 && plus < equals)) {
+                return fallback.decode(input);
+              }
             }
+            if (ampersand === -1) break;
+            start = ampersand + 1;
           }
-          if (ampersand === -1) break;
-          start = ampersand + 1;
+        } else {
+          for (let at = raw.indexOf("limit"); at !== -1;) {
+            const afterIndex = at + 5;
+            const after = afterIndex < raw.length ? raw.charCodeAt(afterIndex) : 38;
+            if ((at === 0 || raw.charCodeAt(at - 1) === 38) && (after === 38 || after === 61)) {
+              if (value0 !== undefined) return fallback.decode(input);
+              let text = "";
+              if (after === 61) {
+                const stop = raw.indexOf("&", afterIndex + 1);
+                text = raw.substring(afterIndex + 1, stop === -1 ? raw.length : stop);
+              }
+              if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
+              const number = Number(text);
+              if (
+                !(
+                  Number.isSafeInteger(number) &&
+                  number >= -2147483648 &&
+                  number <= 2147483647 &&
+                  number >= 1 &&
+                  number <= 100
+                )
+              )
+                return fallback.decode(input);
+              value0 = number;
+            }
+            at = raw.indexOf("limit", afterIndex);
+          }
+          for (let at = raw.indexOf("offset"); at !== -1;) {
+            const afterIndex = at + 6;
+            const after = afterIndex < raw.length ? raw.charCodeAt(afterIndex) : 38;
+            if ((at === 0 || raw.charCodeAt(at - 1) === 38) && (after === 38 || after === 61)) {
+              if (value1 !== undefined) return fallback.decode(input);
+              let text = "";
+              if (after === 61) {
+                const stop = raw.indexOf("&", afterIndex + 1);
+                text = raw.substring(afterIndex + 1, stop === -1 ? raw.length : stop);
+              }
+              if (!INTEGER_TEXT.test(text)) return fallback.decode(input);
+              const number = Number(text);
+              if (
+                !(
+                  Number.isSafeInteger(number) &&
+                  number >= -2147483648 &&
+                  number <= 2147483647 &&
+                  number >= 0
+                )
+              )
+                return fallback.decode(input);
+              value1 = number;
+            }
+            at = raw.indexOf("offset", afterIndex);
+          }
         }
       }
 

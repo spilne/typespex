@@ -46,7 +46,8 @@ export function emitFlatQueryDecoder(
   }
   if (new Set(fields.map((field) => field.wireName)).size !== fields.length) return undefined;
 
-  const reads = fields.map((field, index) => {
+  // Shared conversion and checks for one field's raw text.
+  const bodies = fields.map((field, index) => {
     const value = `value${index}`;
     const checks = [...field.conditions];
     let convert: string;
@@ -74,14 +75,40 @@ export function emitFlatQueryDecoder(
         : field.kind === "boolean"
           ? 'text === "true"'
           : "text";
-    return `if (length === ${field.wireName.length} && raw.startsWith(${tsLiteral(field.wireName)}, start)) {
-          if (${value} !== undefined) return fallback.decode(input);
-          const text = equals === end ? "" : raw.substring(equals + 1, end);
-          ${convert}
+    return `${convert}
           ${checks.length > 0 ? `if (!(${checks.join(" && ")})) return fallback.decode(input);` : ""}
-          ${value} = ${result};
-        }`;
+          ${value} = ${result};`;
   });
+  // Encoded queries walk every pair, because an encoded name may spell a
+  // declared parameter.
+  const pairReads = fields.map(
+    (
+      field,
+      index,
+    ) => `if (length === ${field.wireName.length} && raw.startsWith(${tsLiteral(field.wireName)}, start)) {
+          if (value${index} !== undefined) return fallback.decode(input);
+          const text = equals === end ? "" : raw.substring(equals + 1, end);
+          ${bodies[index]}
+        }`,
+  );
+  // Plain queries look each declared name up directly, so unrelated fields
+  // cost nothing beyond the native substring search.
+  const directReads = fields.map(
+    (field, index) => `for (let at = raw.indexOf(${tsLiteral(field.wireName)}); at !== -1; ) {
+          const afterIndex = at + ${field.wireName.length};
+          const after = afterIndex < raw.length ? raw.charCodeAt(afterIndex) : 38;
+          if ((at === 0 || raw.charCodeAt(at - 1) === 38) && (after === 38 || after === 61)) {
+            if (value${index} !== undefined) return fallback.decode(input);
+            let text = "";
+            if (after === 61) {
+              const stop = raw.indexOf("&", afterIndex + 1);
+              text = raw.substring(afterIndex + 1, stop === -1 ? raw.length : stop);
+            }
+            ${bodies[index]}
+          }
+          at = raw.indexOf(${tsLiteral(field.wireName)}, afterIndex);
+        }`,
+  );
   const required = fields
     .map((field, index) => (field.optional ? undefined : `value${index} === undefined`))
     .filter((check): check is string => check !== undefined);
@@ -105,25 +132,26 @@ export function emitFlatQueryDecoder(
       const raw = input.rawQuery;
       ${fields.map((field, index) => `let value${index}: ${valueTs(field)} | undefined;`).join("\n")}
       if (raw !== undefined && raw !== "") {
-        // Names are matched in place; an encoded name may spell a declared
-        // parameter, so encoded spellings defer to the generic decoder.
-        const encoded = raw.includes("%") || raw.includes("+");
-        let start = 0;
-        for (;;) {
-          const ampersand = raw.indexOf("&", start);
-          const end = ampersand === -1 ? raw.length : ampersand;
-          let equals = raw.indexOf("=", start);
-          if (equals === -1 || equals > end) equals = end;
-          const length = equals - start;
-          ${reads.join(" else ")} else if (encoded) {
-            const percent = raw.indexOf("%", start);
-            const plus = raw.indexOf("+", start);
-            if ((percent !== -1 && percent < equals) || (plus !== -1 && plus < equals)) {
-              return fallback.decode(input);
+        if (raw.includes("%") || raw.includes("+")) {
+          let start = 0;
+          for (;;) {
+            const ampersand = raw.indexOf("&", start);
+            const end = ampersand === -1 ? raw.length : ampersand;
+            let equals = raw.indexOf("=", start);
+            if (equals === -1 || equals > end) equals = end;
+            const length = equals - start;
+            ${pairReads.join(" else ")} else {
+              const percent = raw.indexOf("%", start);
+              const plus = raw.indexOf("+", start);
+              if ((percent !== -1 && percent < equals) || (plus !== -1 && plus < equals)) {
+                return fallback.decode(input);
+              }
             }
+            if (ampersand === -1) break;
+            start = ampersand + 1;
           }
-          if (ampersand === -1) break;
-          start = ampersand + 1;
+        } else {
+          ${directReads.join("\n")}
         }
       }
       ${required.length > 0 ? `if (${required.join(" || ")}) return fallback.decode(input);` : ""}
