@@ -39,6 +39,23 @@ export function stringifyJson(value: unknown): string {
   return serialized;
 }
 
+/**
+ * Encodes a wire value that contains only JSON strings, finite numbers,
+ * booleans, null, arrays, and plain objects, as proven by the emitter for the
+ * declared response type. The platform serializer runs on the value itself, so
+ * no snapshot is prepared and hooks and getters are read once. A bigint, bytes,
+ * or cyclic value, which such contracts exclude, fails like `JSON.stringify`.
+ */
+export function nativeJsonResponse(value: unknown, init: ResponseInit): Response {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+    throw new TypeError("Value is not JSON serializable.");
+  }
+  if (NATIVE_JSON_RESPONSE) return Response.json(value, init);
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new TypeError("Value is not JSON serializable.");
+  return new Response(serialized, init);
+}
+
 /** Encodes a prepared wire value. Callers supply an explicit content type. */
 export function jsonResponse(value: unknown, init: ResponseInit): Response {
   if (!NATIVE_JSON_RESPONSE) {

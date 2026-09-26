@@ -20,5 +20,17 @@ export interface ServerOperation<I, R> {
    * @internal
    */
   decodeNativePathInput?(pathParams: Readonly<Record<string, string>>): DecodeResult<I>;
+  /**
+   * Optional generated entry point that decodes the input and finishes the
+   * request inside the body decoder's own asynchronous frame, so a request
+   * with a body settles one promise instead of two. The router supplies
+   * `finish`, which never throws.
+   * @internal
+   */
+  decodeInputThen?(
+    request: Request,
+    pathParams: Readonly<Record<string, string>>,
+    finish: (result: Either<DecodeError, I>) => Response | Promise<Response>,
+  ): Promise<Response>;
   encodeResult(result: R): Response;
 }

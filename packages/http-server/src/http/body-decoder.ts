@@ -299,15 +299,30 @@ export function decodeJsonBody<A>(
   decoder: Decoder<A>,
   options?: BodyDecodeOptions,
 ): Promise<EitherT<BodyDecodeError, A | undefined>>;
-export function decodeJsonBody<A>(
+/**
+ * Decodes a required JSON body and applies `finish` to the result inside the
+ * same asynchronous frame, so callers settle one promise instead of two.
+ */
+export function decodeJsonBody<A, T>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: (BodyDecodeOptions & { readonly optional?: false }) | undefined,
+  finish: (result: EitherT<BodyDecodeError, A>) => T | Promise<T>,
+): Promise<T>;
+export function decodeJsonBody<A, T>(
   request: Request,
   decoder: Decoder<A>,
   options: BodyDecodeOptions = {},
-): Promise<EitherT<BodyDecodeError, A | undefined>> {
+  finish?: (result: EitherT<BodyDecodeError, A>) => T | Promise<T>,
+): Promise<EitherT<BodyDecodeError, A | undefined> | T> {
   try {
-    return options.optional
-      ? decodeOptionalJsonBody(request, decoder, options)
-      : decodeParsedBody(request, decoder, options, BODY_PARSERS.json);
+    if (options.optional) {
+      const decoded = decodeOptionalJsonBody(request, decoder, options);
+      return finish
+        ? decoded.then((result) => finish(result as EitherT<BodyDecodeError, A>))
+        : decoded;
+    }
+    return decodeParsedBody(request, decoder, options, BODY_PARSERS.json, false, finish);
   } catch (error) {
     return Promise.reject(error);
   }
@@ -517,43 +532,65 @@ export function decodeMultipartBody<A>(
   return decodeParsedBody(request, decoder, options, BODY_PARSERS.multipart);
 }
 
-async function decodeParsedBody<A>(
+function decodeParsedBody<A>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions,
+  parser: BodyParser,
+  contentTypeChecked?: boolean,
+): Promise<EitherT<BodyDecodeError, A>>;
+function decodeParsedBody<A, T>(
+  request: Request,
+  decoder: Decoder<A>,
+  options: BodyDecodeOptions,
+  parser: BodyParser,
+  contentTypeChecked: boolean,
+  finish: ((result: EitherT<BodyDecodeError, A>) => T | Promise<T>) | undefined,
+): Promise<EitherT<BodyDecodeError, A> | T>;
+// One asynchronous frame reads, decodes, and finishes, so `finish` adds no promise.
+async function decodeParsedBody<A, T>(
   request: Request,
   decoder: Decoder<A>,
   options: BodyDecodeOptions,
   parser: BodyParser,
   contentTypeChecked = false,
-): Promise<EitherT<BodyDecodeError, A>> {
+  finish?: (result: EitherT<BodyDecodeError, A>) => T | Promise<T>,
+): Promise<EitherT<BodyDecodeError, A> | T> {
+  let result: EitherT<BodyDecodeError, A>;
   const limitedRequest = requestForBodyDecoding(request, options.maxRequestBodyBytes);
-  if (isLeft(limitedRequest)) return limitedRequest;
-  request = limitedRequest.right;
-
-  const root = options.root ?? "$body";
-  if (!contentTypeChecked) {
-    const ctError = checkContentType(
-      request,
-      options.contentTypes,
-      options.allowMissingContentType,
-    );
-    if (ctError) return Either.left(ctError);
+  if (isLeft(limitedRequest)) {
+    result = limitedRequest;
+  } else {
+    request = limitedRequest.right;
+    const root = options.root ?? "$body";
+    const ctError = contentTypeChecked
+      ? undefined
+      : checkContentType(request, options.contentTypes, options.allowMissingContentType);
+    if (ctError) {
+      result = Either.left(ctError);
+    } else {
+      let value: unknown;
+      let failure: EitherT<BodyDecodeError, never> | undefined;
+      try {
+        value = await parser.read(request, options);
+        if (parser.transform) value = parser.transform(value);
+      } catch (error) {
+        failure = Either.left(
+          error instanceof RequestBodyTooLargeError
+            ? error
+            : new ValidationError([
+                {
+                  path: root,
+                  message:
+                    error instanceof MultipartSyntaxError ? error.message : parser.failureMessage,
+                },
+              ]),
+        );
+      }
+      result = failure ?? toValidationResult(decoder.decode(value), root);
+    }
   }
-
-  let value: unknown;
-  try {
-    value = await parser.read(request, options);
-    if (parser.transform) value = parser.transform(value);
-  } catch (error) {
-    if (error instanceof RequestBodyTooLargeError) return Either.left(error);
-    return Either.left(
-      new ValidationError([
-        {
-          path: root,
-          message: error instanceof MultipartSyntaxError ? error.message : parser.failureMessage,
-        },
-      ]),
-    );
-  }
-  return toValidationResult(decoder.decode(value), root);
+  return finish ? finish(result) : result;
 }
 
 function requestForBodyDecoding(
