@@ -53,9 +53,9 @@
     "@typespex/codec": "workspace:*"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
-    "@types/node": "22.12.0",
+    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
+    "@types/node": "22.20.4",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {

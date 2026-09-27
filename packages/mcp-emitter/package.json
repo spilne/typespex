@@ -51,9 +51,9 @@
     "@typespex/mcp": "workspace:*"
   },
   "devDependencies": {
-    "@typespec/compiler": "^1.15.0",
-    "@typespec/http": "^1.15.0",
-    "@typespec/streams": "^0.85.0",
+    "@typespec/compiler": "^1.16.0",
+    "@typespec/http": "^1.16.0",
+    "@typespec/streams": "^0.86.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
