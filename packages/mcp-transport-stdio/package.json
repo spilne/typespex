@@ -46,9 +46,9 @@
     "test": "bun test --timeout 30000"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
-    "@types/node": "22.12.0",
+    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
+    "@types/node": "22.20.4",
     "@typespex/mcp-server": "workspace:*",
     "typescript": "^5.7.0"
   },
