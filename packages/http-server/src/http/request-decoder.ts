@@ -517,7 +517,7 @@ function mirrorFileNameMetadata<A extends object>(value: A, options: BodyDecodeO
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a RequestInputSource with lazy query/cookie parsing. */
+/** Builds a RequestInputSource with lazy query, cookie, and header access. */
 function createRequestInputSource(
   request: Request,
   pathParams: Readonly<Record<string, string>>,
@@ -533,7 +533,11 @@ function createRequestInputSource(
     get cookies() {
       return (_cookies ??= parseCookies(request.headers.get("cookie")));
     },
-    headers: request.headers,
+    // The platform builds the Headers object on first access; inputs without
+    // header or cookie parameters never pay for it.
+    get headers() {
+      return request.headers;
+    },
   };
 }
 
@@ -821,7 +825,10 @@ function splitCommaSeparated(value: string): string[] {
 }
 
 function extractRawQuery(url: string): string | undefined {
-  const question = url.indexOf("?");
+  // The query follows the path; an authority containing "?" must not start it.
+  const scheme = url.indexOf("://");
+  const path = scheme === -1 ? 0 : url.indexOf("/", scheme + 3);
+  const question = url.indexOf("?", path === -1 ? scheme + 3 : path);
   if (question === -1) return undefined;
   const hash = url.indexOf("#", question + 1);
   return url.substring(question + 1, hash === -1 ? url.length : hash);

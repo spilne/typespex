@@ -15,6 +15,16 @@ an optional `onUnhandledError` mapper. Without that mapper, unexpected failures
 escape to the host boundary: Node and Bun adapters provide a standalone 500,
 while Hono and Express use their framework-native error handling.
 
+## JSON responses
+
+`ResponseEncoders.json` serializes TypeSpec wire values, including bigint integers and base64
+bytes, and reads user getters and `toJSON` hooks once. `ResponseEncoders.nativeJson` and the
+`nativeJson` variant flag are emitted for contracts whose handler values reach the encoder
+unchanged and hold only JSON strings, finite numbers, booleans, null, arrays, and plain objects.
+Those responses go to the platform serializer directly, without a prepared snapshot, so a bigint
+or bytes value in such a response fails like `JSON.stringify`. Frozen or null-prototype values are
+still serialized correctly, but JavaScriptCore serializes them more slowly than plain values.
+
 ## XML payloads
 
 Generated XML operations use `XmlCodec` values to decode and encode the same TypeSpec model.

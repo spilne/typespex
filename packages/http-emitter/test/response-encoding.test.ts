@@ -407,7 +407,7 @@ describe("response encoding", () => {
     const r = compileFixture("implicit-error-status", implicitErrorStatusSpec);
     const operations = r.readFile("implicit-error-api", "server-operations.ts");
 
-    expect(operations).toContain("ResponseEncoders.json<Oops>(500)");
+    expect(operations).toContain("ResponseEncoders.nativeJson<Oops>(500)");
     r.typecheck("implicit-error-api");
   });
 
@@ -424,7 +424,7 @@ describe("response encoding", () => {
 
     // TypeSpec exposes same-status, same-media responses as one union body.
     // The generated encoder and handler must retain every union member.
-    expect(operations).toContain("ResponseEncoders.json<Circle | Square>(200)");
+    expect(operations).toContain("ResponseEncoders.nativeJson<Circle | Square>(200)");
     expect(operations).toContain("(result: Circle | Square)");
     expect(operations).toMatchSnapshot();
     r.typecheck("same-status-api");

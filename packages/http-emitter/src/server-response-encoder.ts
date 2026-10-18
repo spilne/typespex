@@ -10,6 +10,7 @@ import {
 } from "./body-media-kinds.js";
 import type { EmitterCtx } from "./ctx.js";
 import { getHttpPartType } from "./http-models.js";
+import { isNativeJsonWireType } from "./json-native-safety.js";
 import {
   emitJsonWireSerializer,
   unsupportedJsonWireTransformReason,
@@ -91,6 +92,7 @@ export function buildResponseEncoder(
     return emitUnsupportedEncoder(resultType, op.operation.name, response.contentType);
   }
   const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
+  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response);
 
   if (kind === "sse") {
     const result = buildSseResponsePlan(ctx, response.streamType!, response.projection);
@@ -117,7 +119,7 @@ export function buildResponseEncoder(
   }
 
   if (shouldUseVariantEncoder(response, bodyTransform)) {
-    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
+    return `ResponseEncoders.variant<${resultType}>(${emitResponseVariant(kind, response, bodyTransform, nativeJson)})`;
   }
 
   const headers = response.headers;
@@ -127,6 +129,8 @@ export function buildResponseEncoder(
     response.statusCode,
     response.contentType,
     bodyTransform,
+    undefined,
+    nativeJson,
   );
 
   if (headers.length > 0 && kind === "json") {
@@ -138,6 +142,23 @@ export function buildResponseEncoder(
   }
 
   return encoder;
+}
+
+/**
+ * The JSON wire body, after any generated serializer or metadata projection,
+ * holds only native JSON values.
+ */
+function isNativeJsonResponse(ctx: EmitterCtx, response: ResponseVariant): boolean {
+  const body = response.body;
+  const serializationType = response.serializationType;
+  if (!body || body.bodyKind !== "single" || !serializationType) return false;
+  return isNativeJsonWireType(
+    ctx,
+    serializationType,
+    response.projection,
+    response.streamType ? undefined : body.property,
+    "value",
+  );
 }
 
 function shouldUseVariantEncoder(
@@ -288,11 +309,7 @@ function emitResponseDecisionEncoder(
             op.operation.name,
             branch.response.contentType,
           )
-        : emitResponseBranchEncoder(
-            kind,
-            branch.response,
-            getResponseBodyTransform(ctx, op, branch.response, kind),
-          );
+        : emitResponseBranchEncoder(ctx, op, kind, branch.response);
     lines.push("{");
     lines.push(`when: (result): result is ${branch.response.tsType} => ${branch.condition},`);
     lines.push(`encoder: ${branchEncoder},`);
@@ -304,10 +321,13 @@ function emitResponseDecisionEncoder(
 }
 
 function emitResponseBranchEncoder(
+  ctx: EmitterCtx,
+  op: HttpOperation,
   kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl" | "sse">,
   response: ResponseVariant,
-  bodyTransform?: ResponseBodyTransform,
 ): string {
+  const bodyTransform = getResponseBodyTransform(ctx, op, response, kind);
+  const nativeJson = kind === "json" && isNativeJsonResponse(ctx, response);
   // A required model body with a fixed status needs no envelope resolution.
   if (
     kind === "json" &&
@@ -322,15 +342,18 @@ function emitResponseBranchEncoder(
       response.statusCode,
       response.contentType,
       bodyTransform,
+      undefined,
+      nativeJson,
     );
   }
-  return `ResponseEncoders.variant<${response.tsType}>(${emitResponseVariant(kind, response, bodyTransform)})`;
+  return `ResponseEncoders.variant<${response.tsType}>(${emitResponseVariant(kind, response, bodyTransform, nativeJson)})`;
 }
 
 function emitResponseVariant(
   kind: Exclude<ResponseEncoderKind, "unsupported" | "jsonl" | "sse">,
   response: ResponseVariant,
   bodyTransform?: ResponseBodyTransform,
+  nativeJson = false,
 ): string {
   const fields = [`status: ${emitResponseStatus(response)}`];
   if (kind !== "json") fields.push(`kind: ${tsLiteral(kind)}`);
@@ -352,6 +375,7 @@ function emitResponseVariant(
   if (bodyTransform) {
     fields.push(`transformBody: (body) => ${emitResponseBodyTransform("body", bodyTransform)}`);
   }
+  if (nativeJson) fields.push("nativeJson: true");
   return `{ ${fields.join(", ")} }`;
 }
 
@@ -560,6 +584,7 @@ function encoderForKind(
   contentType: string | undefined,
   bodyTransform?: ResponseBodyTransform,
   streamItemType?: string,
+  nativeJson = false,
 ): string {
   switch (kind) {
     case "empty":
@@ -577,10 +602,12 @@ function encoderForKind(
       return `ResponseEncoders.bytes(${status})`;
     case "file":
       return `ResponseEncoders.file(${status})`;
-    case "json":
+    case "json": {
+      const encoder = nativeJson ? "nativeJson" : "json";
       return bodyTransform
-        ? `ResponseEncoders.json<unknown>(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`
-        : `ResponseEncoders.json<${tsType}>(${status})`;
+        ? `ResponseEncoders.${encoder}<unknown>(${status}).mapInput((value: ${tsType}) => ${emitResponseBodyTransform("value", bodyTransform)})`
+        : `ResponseEncoders.${encoder}<${tsType}>(${status})`;
+    }
     case "jsonl": {
       if (!streamItemType) {
         throw new Error("JSONL response encoder emission requires a stream item type");

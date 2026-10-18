@@ -106,9 +106,7 @@ export function emitDecoderExpression(
     case "Model":
       const collection = getPayloadCollection(ctx, type);
       if (collection?.kind === "array") {
-        const arrayFn =
-          mode === "json" || mode === "binary" ? "Decoders.strictArray" : "Decoders.array";
-        expression = `${arrayFn}(${emitDecoderExpression(
+        expression = `${arrayDecoderFunction(mode)}(${emitDecoderExpression(
           ctx,
           dec,
           collection.value,
@@ -290,6 +288,10 @@ function emitUnencodedScalarDecoder(scalar: Scalar, mode: DecoderMode): string {
   }
 }
 
+function arrayDecoderFunction(mode: DecoderMode): string {
+  return mode === "json" || mode === "binary" ? "Decoders.strictArray" : "Decoders.array";
+}
+
 function withNumericRange(decoder: string, min: string, max: string): string {
   return `${decoder}.validate(Validators.minValue(${min}), Validators.maxValue(${max}))`;
 }
@@ -338,18 +340,34 @@ function emitObjectDecoderBody(
       ctx,
       properties,
       projection,
-      (property) =>
-        emitDecoderExpression(
-          ctx,
-          dec,
-          property.type,
-          mode,
-          seenTypes,
-          property,
-          projection,
-          property,
-          false,
-        ),
+      {
+        property: (property) =>
+          emitDecoderExpression(
+            ctx,
+            dec,
+            property.type,
+            mode,
+            seenTypes,
+            property,
+            projection,
+            property,
+            false,
+          ),
+        type: (type, itemProjection, encodingTarget) =>
+          emitDecoderExpression(
+            ctx,
+            dec,
+            type,
+            mode,
+            seenTypes,
+            undefined,
+            itemProjection,
+            encodingTarget,
+            false,
+          ),
+        array: (type, target, element) =>
+          applyValidationDecorators(ctx, `${arrayDecoderFunction(mode)}(${element})`, type, target),
+      },
       payloadTypeToTs(ctx, model, projection),
     );
     if (flat !== undefined) return flat;

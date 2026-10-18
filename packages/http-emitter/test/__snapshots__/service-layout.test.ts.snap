@@ -71,7 +71,7 @@ import * as ServerHints from "./PublicApi.server-hints.js";
 import type { Item } from "./PublicApi.models.js";
 
 const PublicApiOutput = {
-  listItems: ResponseEncoders.json<Item[]>(200),
+  listItems: ResponseEncoders.nativeJson<Item[]>(200),
 };
 
 export const PublicApiOperations = {
@@ -142,7 +142,7 @@ import * as ServerHints from "./server-hints.gen.js";
 import type { Invoice } from "./models.gen.js";
 
 const BillingAPIOutput = {
-  listInvoices: ResponseEncoders.json<Invoice[]>(200),
+  listInvoices: ResponseEncoders.nativeJson<Invoice[]>(200),
 };
 
 export const BillingAPIOperations = {

@@ -37,6 +37,7 @@ export function renderServerOperations(plan: ServerPlan): string {
 
   // --- Imports (multi-line) ---
   const runtimeTypes = ["ServerOperation"];
+  if (inputDecoderText.includes("RequestInputSource")) runtimeTypes.push("RequestInputSource");
   if (plan.jsonSerializerDeclarations.length > 0) runtimeTypes.push("JsonSerializer");
   if (plan.xmlCodecDeclarations.length > 0) runtimeTypes.push("XmlCodec");
   lines.push(`import type { ${runtimeTypes.join(", ")} } from "@typespex/http-server";`);
@@ -137,6 +138,10 @@ export function renderServerOperations(plan: ServerPlan): string {
       if (decoder.decodeNativePathExpression) {
         lines.push(`    decodeNativePathInput: (pathParams) =>`);
         lines.push(`      ${decoder.decodeNativePathExpression},`);
+      }
+      if (decoder.decodeThenExpression) {
+        lines.push(`    decodeInputThen: (request, _pathParams, finish) =>`);
+        lines.push(`      ${decoder.decodeThenExpression},`);
       }
 
       emitResultEncoderLine(lines, operation, outputsName);

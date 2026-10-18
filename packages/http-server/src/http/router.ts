@@ -186,6 +186,12 @@ interface NativePathInput {
   readonly nativeDecoder: NonNullable<ServerOperation<unknown, unknown>["decodeNativePathInput"]>;
 }
 
+/** A generated body decoder that finishes the request in its own frame. */
+interface InlineBodyDecoder {
+  readonly originalDecoder: ServerOperation<unknown, unknown>["decodeInput"];
+  readonly decodeThen: NonNullable<ServerOperation<unknown, unknown>["decodeInputThen"]>;
+}
+
 /**
  * Adapter registrations for a router with ordinary, unconstrained routing.
  * Custom matchers and router wrappers retain their own dispatch. Each returned
@@ -326,6 +332,7 @@ export function createHttpRouter<Ctx extends RequestContext>(
     peek: HttpPromiseInspector,
     transport?: HttpRequestTransportInfo,
     nativePath?: NativePathInput,
+    inlineBody?: InlineBodyDecoder,
   ): Response | Promise<Response> {
     let context: Ctx | undefined;
     try {
@@ -351,6 +358,22 @@ export function createHttpRouter<Ctx extends RequestContext>(
           }
         : { endpoint: route.operation.endpoint, pathParams };
       context = createDefaultContext(request, match) as Ctx;
+      // A generated body decoder finishes inside its own frame. Replaced
+      // decoders retain control, including custom authorization.
+      if (
+        inlineBody &&
+        route.operation.decodeInput === inlineBody.originalDecoder &&
+        route.operation.decodeInputThen === inlineBody.decodeThen
+      ) {
+        const settled = context;
+        return inlineBody.decodeThen.call(route.operation, request, pathParams, (result) => {
+          try {
+            return finishDirect(result as Either<DecodeError, I>, route, settled, peek);
+          } catch (error) {
+            return directFailure(error, settled);
+          }
+        });
+      }
       // Replaced decoders retain control, including custom authorization.
       const useNativeDecoder =
         nativePath &&
@@ -439,6 +462,10 @@ export function createHttpRouter<Ctx extends RequestContext>(
           (transportRoutes ??= normalizedRoutes.map(({ method, pattern, route }) => {
             const nativeDecoder = route.operation.decodeNativePathInput;
             const originalDecoder = nativeDecoder ? route.operation.decodeInput : undefined;
+            const decodeThen = route.operation.decodeInputThen;
+            const inlineBody: InlineBodyDecoder | undefined = decodeThen
+              ? { originalDecoder: route.operation.decodeInput, decodeThen }
+              : undefined;
             return {
               method,
               pattern,
@@ -468,7 +495,15 @@ export function createHttpRouter<Ctx extends RequestContext>(
               dispatch(request, pathParams, peek, transport) {
                 try {
                   if (router.handle !== originalHandle) return router.handle(request);
-                  return executeDirect(request, route, pathParams, peek, transport);
+                  return executeDirect(
+                    request,
+                    route,
+                    pathParams,
+                    peek,
+                    transport,
+                    undefined,
+                    inlineBody,
+                  );
                 } catch (error) {
                   return Promise.reject(error);
                 }

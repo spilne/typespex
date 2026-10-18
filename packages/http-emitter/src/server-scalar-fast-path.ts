@@ -77,36 +77,56 @@ export function emitScalarFastPath(
   })()`;
 }
 
-/** A strict JSON scalar check for an enclosing generated object decoder. */
-export function emitStrictScalarGuard(
+/**
+ * A strict JSON check for a scalar type, with the rules of the optional
+ * target property and the encoding of the optional encoding target. Strings,
+ * integers, numbers, and booleans are supported; encoded scalars and
+ * unsupported rule combinations return undefined.
+ */
+export function emitStrictScalarTypeGuard(
   ctx: EmitterCtx,
-  property: ModelProperty,
+  scalar: Scalar,
+  target: ModelProperty | undefined,
+  encodingTarget: ModelProperty | undefined,
   value: string,
   declarations: string[],
 ): string | undefined {
-  if (property.type.kind !== "Scalar") return undefined;
-  const scalar = property.type;
   const intrinsic = getIntrinsicScalarName(scalar);
-  const string = intrinsic === "string";
   const range = scalarIntegerRange(intrinsic);
-  const integer =
-    intrinsic === "integer" ||
-    intrinsic === "safeint" ||
-    (range !== undefined && intrinsic !== "int64" && intrinsic !== "uint64");
-  if (!string && !integer) return undefined;
-  const context = isHeader(ctx.program, property) ? "header" : "value";
-  if (resolveScalarEncoding(ctx, scalar, property, context).status !== "none") return undefined;
-  const kind = string ? "string" : "number";
-  const conditions = string
-    ? [`typeof ${value} === "string"`]
-    : [`typeof ${value} === "number"`, `Number.isSafeInteger(${value})`];
+  const kind: "string" | "integer" | "number" | "boolean" | undefined =
+    intrinsic === "string"
+      ? "string"
+      : intrinsic === "boolean"
+        ? "boolean"
+        : intrinsic === "integer" ||
+            intrinsic === "safeint" ||
+            (range !== undefined && intrinsic !== "int64" && intrinsic !== "uint64")
+          ? "integer"
+          : ["float32", "float64", "float", "numeric", "decimal", "decimal128"].includes(intrinsic)
+            ? "number"
+            : undefined;
+  if (kind === undefined) return undefined;
+  const context = encodingTarget && isHeader(ctx.program, encodingTarget) ? "header" : "value";
+  if (resolveScalarEncoding(ctx, scalar, encodingTarget, context).status !== "none") {
+    return undefined;
+  }
+  const conditions =
+    kind === "string"
+      ? [`typeof ${value} === "string"`]
+      : kind === "boolean"
+        ? [`typeof ${value} === "boolean"`]
+        : kind === "integer"
+          ? [`typeof ${value} === "number"`, `Number.isSafeInteger(${value})`]
+          : [`typeof ${value} === "number"`, `Number.isFinite(${value})`];
   if (range) conditions.push(`${value} >= ${range[0]}`, `${value} <= ${range[1]}`);
+  const ruleKind = kind === "string" ? "string" : "number";
   for (const rule of [
-    ...getValidationRules(ctx, scalar, kind),
-    ...getValidationRules(ctx, property, kind),
+    ...getValidationRules(ctx, scalar, ruleKind),
+    ...(target ? getValidationRules(ctx, target, ruleKind) : []),
   ]) {
+    if (kind === "boolean") return undefined;
     if (
-      string
+      kind === "string"
         ? ["minValue", "maxValue", "minValueExclusive", "maxValueExclusive"].includes(rule.kind)
         : ["minLength", "maxLength", "minItems", "maxItems", "pattern"].includes(rule.kind)
     ) {
