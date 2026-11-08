@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@typespex/codec": "workspace:*",
-    "lossless-json": "^4.3.1",
+    "lossless-json": "^4.3.3",
     "saxes": "^6.0.0"
   },
   "devDependencies": {
